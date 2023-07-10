@@ -1,0 +1,5 @@
+#!/data/data/com.termux/files/usr/bin/bash
+
+python -m venv "$1"
+ln -s "$1/bin/activate"
+ln -s "$1/bin/deactivate"

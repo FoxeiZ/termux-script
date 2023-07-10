@@ -1,0 +1,6 @@
+*.py
+*log*
+*.db
+*tmp*
+*test*
+tasks/*

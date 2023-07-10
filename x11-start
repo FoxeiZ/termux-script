@@ -1,0 +1,24 @@
+#!/bin/bash
+
+
+# setup phase
+trap "exit" INT TERM
+trap "kill 0" EXIT
+
+termux-x11 :1 &
+sleep 2  # make sure the service started
+
+OPTSENV="DISPLAY=:1"
+if [ "$1" = "--gpu" ]; then
+    OPTSENV="${OPTSENV} GALLIUM_DRIVER=virpipe MESA_GL_VERSION_OVERRIDE=4.5"
+    virgl_test_server_android &
+    shift
+fi
+
+if [ $# -lt 1 ]; then
+    set -- "xfce4-session"
+fi
+
+# env GALLIUM_DRIVER=virpipe DISPLAY=:1 xfce4-session
+# env GALLIUM_DRIVER=virpipe DISPLAY=:1 scrcpy --no-audio --display 5
+env $OPTSENV "$@"

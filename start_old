@@ -1,0 +1,27 @@
+#!/data/data/com.termux/files/usr/bin/env /data/data/com.termux/files/usr/bin/python
+
+import sys
+import subprocess
+
+name = sys.argv[1]
+pkg  = subprocess.check_output(f"pm list packages -f {name} | sed -e 's/.*=//'", shell=True, encoding="utf-8").split('\n')
+
+if len(pkg) > 2:
+    for index, app in enumerate(pkg[:-1]):
+        print(index, app)
+    choice = int(input())
+    pkg_name = pkg[choice]
+elif len(pkg) <= 1:
+    print('cant find any')
+    exit(1)
+else:
+    pkg_name = pkg[0]
+
+print(f'Starting {pkg_name}...')
+subprocess.call(
+    ['su', '-c', 'monkey', '-p', pkg_name, '1'],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.STDOUT
+)
+# Turn off auto-rotate
+subprocess.call(['su', '-c', 'settings', 'put', 'system', 'accelerometer_rotation', '0'])

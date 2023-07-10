@@ -1,0 +1,36 @@
+#!/data/data/com.termux/files/usr/bin/bash
+
+helper(){
+    echo -e "Usage: litterbox -h <hours> filename\n" >&2
+    echo -e "-h --hours    - use 1, 12, 24 or 72\n" >&2
+    exit 1
+}
+
+# long argv passer
+for arg in "$@"; do
+    shift
+    case "$arg" in
+        "--hours") set -- "$@" "-h" ;;
+        *)         set -- "$@" "$arg";:
+    esac
+done
+
+if [ $# -lt 1 ]
+then
+    helper
+fi
+
+# default value
+hours="time=1h"
+
+while getopts 'h:' OPTION; do
+    case "$OPTION" in
+        h) hours="time=${OPTARG}h";;
+        *) helper;;
+    esac
+done
+shift "$(($OPTIND-1))"
+
+url=$(curl -s -F "reqtype=fileupload" -F "$hours" -F "fileToUpload=@$1" https://litterbox.catbox.moe/resources/internals/api.php)
+echo $url
+# termux-clipboard-set $url

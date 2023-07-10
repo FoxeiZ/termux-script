@@ -1,0 +1,36 @@
+#!/data/data/com.termux/files/usr/bin/bash
+GLTOOL_PATH="/data/user/0/com.superpaninbros.glng/shared_prefs/com.mopub.adtoken.xml"
+
+
+if [ "$EUID" -ne 0 ]
+  then echo "Please run as root"
+  exit
+fi
+
+# first, kill gltools
+/system/bin/am force-stop com.superpaninbros.glng
+
+# create new file
+rm -f "$GLTOOL_PATH"
+touch "$GLTOOL_PATH"
+
+# change permission and start the injection
+chown 10807:10807 "$GLTOOL_PATH"
+chmod 666 "$GLTOOL_PATH"
+
+INJECT=$(cat << EOF
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="__androidx_security_crypto_encrypted_prefs_key_keyset__">12a9018f7cea2733ffa0849bd47f87c11f36c43b73dbbf45f0d4a6a2388bab70bcd63ac8cb153c5f02c2d4fbe15eddcf9d40f88ac97b31e118ff7ab9ed8df732d77c64b16e4ca36ae88e263ef15ae8b308f52285770991b105790d415463926f14d30e776a46a463452e6d84e5d923a7e8bf85f7dd608ad7a72ffeec5cf64400dadfa17b114a6d5165dfa5bf368adbe985f65ce973f5c15030892d1d5741efcec22d885949d2d11eaaacede41a4408a7b086d804123c0a30747970652e676f6f676c65617069732e636f6d2f676f6f676c652e63727970746f2e74696e6b2e4165735369764b6579100118a7b086d8042001</string>
+    <string name="__androidx_security_crypto_encrypted_prefs_value_keyset__">1288013679020de3d56bb1d829febdb3880fc36e797bfb5e63945178df04aa30def85c0c4cca2424119f0c850dff890e166cb386c3da34a0e0a00188ab604fb3a3dad6b8841ba61439da2c3d2f6d73f609d181f19952841cd552478086c4ac4c68b27ac580258f3e48bec21d1d221bc29f274f2c3936f5b7928780f1fdf95266f3e0a101f2f6e4c2a650801a440885b8b9e604123c0a30747970652e676f6f676c65617069732e636f6d2f676f6f676c652e63727970746f2e74696e6b2e41657347636d4b657910011885b8b9e6042001</string>
+    <string name="AUsBmCdvevBgRFhgQ/k8eFSXYxWezfCcOQSm7g==">AUzOXAX6ovRAR7h5QigXNbkwKTggvZQJOO1Ht4LiUrHUlCJfn/gIdVcHffgsncDU6s2yiHz4Rxo84dR8uPgXsFmi9dQ+c6QBTBed5rPiWH+DLP2B4DbC+TA/</string>
+</map>
+EOF
+)
+INJECT="$INJECT"
+echo "$INJECT" > "$GLTOOL_PATH"
+# give back ownership
+chown 10846:10846 "$GLTOOL_PATH"
+
+# start gltools
+/system/bin/am start com.superpaninbros.glng/com.superpaninbros.glng.ui.MainActivity

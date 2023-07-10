@@ -1,0 +1,3 @@
+#!/data/data/com.termux/files/usr/bin/sh
+
+su -c am start -a android.intent.action.VIEW -d "$1" is.xyz.mpv

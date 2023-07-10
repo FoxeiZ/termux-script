@@ -1,0 +1,197 @@
+#!/data/data/com.termux/files/usr/bin/env /data/data/com.termux/files/usr/bin/python
+import sqlite3
+import subprocess
+import re
+import sys
+from typing import Iterator
+import io
+
+
+DATABASE_BIN = b""
+DATABASE_IO  = io.BytesIO(DATABASE_BIN)
+
+
+class NotFound(Exception):
+    pass
+
+
+class AppContainer:
+    def __init__(self, app: tuple):
+        self.id = app[0]
+        self.name = app[1]
+
+    def __repr__(self):
+        return f"{self.name} | {self.id[:40]}{'...' if len(self.id) > 40 else ''}"
+
+
+def run_as_root(cmd: list, *args, **kwargs):
+    return subprocess.run(["su", "-c"] + cmd, *args, **kwargs)
+
+
+class DatabaseClass:
+    def __init__(self, db_file):
+        self.force = False
+        self.conn = sqlite3.connect(db_file)
+        self.cursor = self.conn.cursor()
+
+        self.create()
+
+    def insert_data(self, id, name):
+        try:
+            self.cursor.execute(
+                "INSERT INTO package_name(id, name) VALUES (?, ?);", (id, name)
+            )
+        except sqlite3.OperationalError:
+            self.create()
+            self.insert_data(id, name)
+
+    def create(self):
+        self.cursor.execute("CREATE VIRTUAL TABLE IF NOT EXISTS package_name USING FTS5(id, name)")
+        self.conn.commit()
+
+    def fetch(self) -> Iterator[AppContainer]:
+        search_operator = self.cursor.execute(
+            f"SELECT id, name FROM package_name"
+        )
+        for item in search_operator:
+            yield AppContainer(item)
+
+    def findbyName(self, search) -> Iterator[AppContainer]:
+        search_operator = self.cursor.execute(
+            f"SELECT id, name FROM package_name WHERE name MATCH '{search}*'"
+        )
+        for item in search_operator:
+            yield AppContainer(item)
+
+    def findbyID(self, search: str) -> Iterator[str]:
+        search_operator = self.cursor.execute(
+            f"SELECT name FROM package_name WHERE id == '{search}'"
+        )
+        for item in search_operator:
+            for name in item:
+                yield name
+
+    @staticmethod
+    def __clean_up_data(data: bytes) -> str:
+        """Basically this remove 'package:' from data"""
+        with memoryview(data) as mv:
+            return mv[8:].tobytes().decode("utf-8")
+
+    def _check_dup(self, pkg_id) -> bool:
+        data = list(self.findbyID(pkg_id))
+        return True if data else False
+
+    def _get_path(self, pkg_id: str) -> str:
+        try:
+            paths = run_as_root(["pm", "path", pkg_id], capture_output=True).stdout
+        except subprocess.CalledProcessError:
+            raise NotFound
+
+        paths = paths.split(b"\n")
+        for path in paths:
+            if path[-8:] == "base.apk":
+                return self.__clean_up_data(path)
+
+        return self.__clean_up_data(paths[0])
+
+    def _get_package_name(self, pkg_id: str) -> str:
+        path = self._get_path(pkg_id)
+
+        data = run_as_root(
+            ["aapt", "d", "badging", path], capture_output=True
+        ).stdout
+        print(path)
+
+        if not data:
+            print("no base path")
+            raise NotFound
+
+        with memoryview(data) as string:
+            regex = re.search(rb"(?<=application: label=').*(?=' icon)", string)
+            pkg_name = regex.group(0).decode("utf-8")
+
+        if not pkg_name:
+            return pkg_id
+
+        return pkg_name
+
+    def buildDb(self):
+        pkg_id_list = run_as_root(
+            ["pm", "list", "packages"],
+            capture_output=True
+        ).stdout.split(b"\n")
+        for id in pkg_id_list:
+            pkg_id = self.__clean_up_data(id)
+
+            if self._check_dup(pkg_id) and not self.force:
+                print(f"Skipped {pkg_id}")
+                continue
+
+            try:
+                pkg_name = self._get_package_name(pkg_id)
+            except NotFound:
+                continue
+
+            print(f"Added {pkg_id}: {pkg_name}")
+            self.insert_data(pkg_id, pkg_name)
+
+        self.conn.commit()
+
+
+if __name__ == "__main__":
+
+    def print_help():
+        print(
+            f"""{args[0]} [--alias <package_id> <alias_name>] [--build [--force-update]] SEARCH_QUERY
+
+    --alias \t\t Set an alias for your application. Setting this up mean the program gonna search from alias first, then the normal one after
+        package_id \t The id of the app (ex: com.termux)
+        alias_name \t The custom name you want to set for package_id
+
+    --build \t\t Build app database(run this if this is the first time you start this script)
+    --force-update \t Don't check for duplicate app (affect --build)"""
+        )
+
+    args = sys.argv
+    db = DatabaseClass("/data/data/com.termux/files/home/scripts/mydatabase.db")
+
+    if len(args) == 1:
+        print_help()
+        exit(1)
+
+    if args[1] == "--build":
+        if len(args) >= 3 and args[2] == "--force-update":
+            db.force = True
+        db.buildDb()
+
+    elif args[1] in ("help", "-h", "--help"):
+        print_help()
+
+    elif args[1] == "--list":
+        results = list(db.fetch())
+        for app in results:
+            print(app)
+
+    else:
+        results = list(db.findbyName(" ".join(args[1:])))
+        if len(results) > 1:
+            for idx, app in enumerate(results):
+                print(idx, app)
+            choice = int(input())
+            to_be_started = results[choice]
+        elif not results:
+            print("cant find any")
+            exit(2)
+        else:
+            to_be_started = results[0]
+
+        print(f"Starting {to_be_started.name}...")
+        subprocess.call(
+            ["su", "-c", "monkey", "-p", to_be_started.id, "1"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+        )
+        # Turn off auto-rotate
+        subprocess.call(
+            ["su", "-c", "settings", "put", "system", "accelerometer_rotation", "0"]
+        )
