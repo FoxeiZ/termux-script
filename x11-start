@@ -1,12 +1,14 @@
-#!/bin/bash
+#!/data/data/com.termux/files/usr/bin/bash
 
 
 # setup phase
 trap "exit" INT TERM
 trap "kill 0" EXIT
 
-termux-x11 :1 &
+termux-x11 -ac :1 &
 sleep 2  # make sure the service started
+
+am start com.termux.x11/com.termux.x11.MainActivity
 
 OPTSENV="DISPLAY=:1"
 ARGS=""
@@ -27,6 +29,8 @@ if [ "$1" = "--gpu" ]; then
     # shift again if ARGS is set
     if [ -n "$ARGS" ]; then
         shift
+    else
+        ARGS="--angle-gl"
     fi
 
     virgl_test_server_android "$ARGS" &
