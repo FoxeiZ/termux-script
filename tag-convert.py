@@ -319,7 +319,7 @@ class ComicParser:
             return content
 
         try:
-            with zipfile.ZipFile(path, "r", zipfile.ZIP_STORED) as zf:
+            with ZFile(path, "r", zipfile.ZIP_STORED) as zf:
                 names = zf.namelist()
                 names.remove("ComicInfo.xml")
                 with zf.open("ComicInfo.xml", "r") as f:
