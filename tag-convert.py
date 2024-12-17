@@ -17,7 +17,7 @@ finally:
     import xmltodict
 
 
-FORCE = True  # Force re-parse
+FORCE = False  # Force re-parse
 LOG_LEVEL = 2  # 0: Error, 1: Warning, 2: Info, 3: Debug
 SIMULATE = False  # Do not write to disk
 FAVORITE_THRESHOLD = 2000  # 2000 favorites = 5.0 rating
