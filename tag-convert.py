@@ -126,13 +126,13 @@ class ThresholdCounter:
         self.threshold = threshold
         self.counter = 0
 
+    def is_threshold_reached(self):
+        return self.threshold >= 0 and self.counter >= self.threshold
+
     def increment(self):
-        if self.counter >= self.threshold:
+        if self.is_threshold_reached():
             raise SkipThresholdReached
         self.counter += 1
-
-    def is_threshold_reached(self):
-        return self.counter >= self.threshold
 
 
 threshold_counter = ThresholdCounter(SKIP_THRESHOLD)
