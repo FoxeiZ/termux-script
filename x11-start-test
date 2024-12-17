@@ -1,0 +1,89 @@
+#!/data/data/com.termux/files/usr/bin/bash
+
+
+# setup phase
+trap "exit" INT TERM
+trap "kill 0" EXIT
+
+termux-x11 -ac +iglx +extension GLX -fakescreenfps 60 :1 &
+am start com.termux.x11/com.termux.x11.MainActivity -W
+sleep 2  # make sure the service started
+
+
+OPTSENV="DISPLAY=:1"
+VIRGL_ARGS=""
+ARGS=""
+GPU=0
+
+_additional_ld_lib_path=""
+_skip=0
+for arg in "$@"
+do
+    case "$arg" in
+        --no-fork | --no-loop-or-fork | --multi-clients | --angle-gl | --angle-vulkan | --angle-null)
+            VIRGL_ARGS="${VIRGL_ARGS} ${arg}"
+        ;;
+        --rendernode | --socket-path)
+            _skip=1
+        ;;
+        --gpu)
+            GPU=1
+            OPTSENV="${OPTSENV} GALLIUM_DRIVER=virpipe MESA_GL_VERSION_OVERRIDE=4.5"
+#            if [ x"$_additional_ld_lib_path" == x"" ]; then
+#                _additional_ld_lib_path="/data/data/com.termux/files/usr/opt/angle-android/gl"
+#            fi
+        ;;
+#        --gl)
+#            _additional_ld_lib_path="/data/data/com.termux/files/usr/opt/angle-android/gl"
+#        ;;
+#        --vulkan)
+#            _additional_ld_lib_path="/data/data/com.termux/files/usr/opt/angle-android/vulkan"
+#        ;;
+#        --vulkan-null | --null)
+#            _additional_ld_lib_path="/data/data/com.termux/files/usr/opt/angle-android/vulkan-null"
+#        ;;
+        *)
+            if [ "${_skip}" = 1 ];
+            then
+                VIRGL_ARGS="${VIRGL_ARGS} ${arg}"
+                _skip=0
+            else
+                ARGS="${ARGS} ${arg}"
+            fi
+        ;;
+    esac
+done
+
+#if [ x"$_additional_ld_lib_path" != x"" ]; then
+#        export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$_additional_ld_lib_path"
+#        export EPOXY_USE_ANGLE=1
+#fi
+
+if [ $GPU -eq 1 ]; then
+    /data/data/com.termux/files/usr/bin/virgl_test_server_android $VIRGL_ARGS &
+fi
+
+echo
+echo '` args debug'
+echo "  | $VIRGL_ARGS"
+echo "  | $OPTSENV"
+echo "  | $ARGS"
+echo "  | $_additional_ld_lib_path"
+echo '`'
+echo
+#if [ $GPU -eq 1 ]; then
+#    virgl_test_server_android "$VIRGL_ARGS" &
+#fi
+
+
+
+if [ -z "$ARGS" ]; then
+    set -- "xfce4-session"
+else
+    env $OPTSENV jwm &
+    env $OPTSENV $ARGS
+fi
+
+# env GALLIUM_DRIVER=virpipe DISPLAY=:1 xfce4-session
+# env GALLIUM_DRIVER=virpipe DISPLAY=:1 scrcpy --no-audio --display 5
+am start com.termux/com.termux.app.TermuxActivity
