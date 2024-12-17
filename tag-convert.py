@@ -346,6 +346,12 @@ class ComicParser:
             return None
 
     def save(self, output_path: Path):
+        if LOG_LEVEL >= 3:
+            cprint.debug(self.to_dict())
+
+        if SIMULATE:  # check here in case of fix-only = true and simulate = true
+            return
+
         def __info():
             content = {}
             fields = {
@@ -379,9 +385,6 @@ class ComicParser:
                 f.write(
                     xmltodict.unparse({"ComicInfo": __info()}, pretty=True).encode()
                 )
-
-        if LOG_LEVEL >= 3:
-            cprint.debug(self.to_dict())
 
     @staticmethod
     def default_attr(value: Any) -> Any:
