@@ -380,6 +380,9 @@ class ComicParser:
                     xmltodict.unparse({"ComicInfo": __info()}, pretty=True).encode()
                 )
 
+        if LOG_LEVEL >= 3:
+            cprint.debug(self.to_dict())
+
     @staticmethod
     def default_attr(value: Any) -> Any:
         if value in (int, float):
@@ -595,7 +598,6 @@ def parse_cbz(file_path: Path, output_path: Path | None = None) -> None:
 
     if SIMULATE:
         cprint.info(f"Simulating {file_path}")
-        cprint.debug(comic_from_cbz.to_dict())
         return
 
     # cbz_content = comic_from_cbz.pack()
