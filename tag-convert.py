@@ -18,10 +18,16 @@ finally:
 
 
 FORCE = False  # Force re-parse
-LOG_LEVEL = 2  # 0: Error, 1: Warning, 2: Info, 3: Debug
+LOG_LEVEL = 3  # 0: Error, 1: Warning, 2: Info, 3: Debug
 SIMULATE = False  # Do not write to disk
 FAVORITE_THRESHOLD = 2000  # 2000 favorites = 5.0 rating
 SKIP_THRESHOLD = 20  # Skip if found this many already parsed
+FIX_ONLY = False  # Only apply fixes, also implies FORCE
+
+# Apply fixes
+MOVE_CHARACTERS_TO_GENRE = True
+FIX_MULTIPLE_VALUES = True
+FIX_DUPLICATE_SUMMARY = True
 
 
 class ZFile(zipfile.ZipFile):
@@ -123,16 +129,24 @@ class SkipThresholdReached(Exception):
 
 class ThresholdCounter:
     def __init__(self, threshold: int):
-        self.threshold = threshold
-        self.counter = 0
+        self._threshold = threshold
+        self._counter = 0
+        self._skip = False
+
+    def skip_increment(self):
+        self._skip = True
 
     def is_threshold_reached(self):
-        return self.threshold >= 0 and self.counter >= self.threshold
+        return self._threshold >= 0 and self._counter >= self._threshold
 
     def increment(self):
+        if self._skip:
+            self._skip = False
+            return
+
         if self.is_threshold_reached():
             raise SkipThresholdReached
-        self.counter += 1
+        self._counter += 1
 
 
 threshold_counter = ThresholdCounter(SKIP_THRESHOLD)
@@ -366,17 +380,6 @@ class ComicParser:
                     xmltodict.unparse({"ComicInfo": __info()}, pretty=True).encode()
                 )
 
-    # def save(self, path: Path | str | None = None):
-    #     if not path:
-    #         path = self.path
-    #     elif isinstance(path, str):
-    #         path = Path(path)
-
-    #     if not path.is_file():
-    #         path = path / self.path.name
-
-    #     path.write_bytes(self.pack())
-
     @staticmethod
     def default_attr(value: Any) -> Any:
         if value in (int, float):
@@ -387,6 +390,13 @@ class ComicParser:
             return ""
         else:
             return value()
+
+    def to_dict(self) -> dict:
+        return {
+            k: v
+            for k in self.__annotations__
+            if not k.startswith("__") and (v := getattr(self, k)) not in ("", None)
+        }
 
 
 def clean_manga_title(manga_title):
@@ -406,10 +416,26 @@ def clean_manga_title(manga_title):
     return edited_title
 
 
+def fix_summary(comic_parser: ComicParser):
+    first_len = len(comic_parser.summary)
+    comic_parser.summary = "\n".join(set(comic_parser.summary.split("\n")))
+    second_len = len(comic_parser.summary)
+    if first_len != second_len:
+        cprint.info("Fixed duplicate summary")
+
+
 def fix_multiple_values(comic_parser: ComicParser):
     for key, value in comic_parser.__dict__.items():
         if "__" not in key and isinstance(value, str) and " | " in value:
             setattr(comic_parser, key, ", ".join(set(value.split(" | "))))
+
+
+def fix_characters_to_genre(comic_parser: ComicParser):
+    if comic_parser.characters != "":
+        cprint.info(f"Copy characters field to genre: {comic_parser.characters}")
+        comic_parser.genre = (
+            f"#field-characters, {comic_parser.characters}, #end-field-characters"
+        )
 
 
 def calc_rating(rating: str) -> float:
@@ -418,7 +444,21 @@ def calc_rating(rating: str) -> float:
     return min((int_rating / FAVORITE_THRESHOLD) * 5, 5.0)
 
 
+def remove_extra_fields(comic_parser: ComicParser) -> ComicParser:
+    if (
+        "#field-characters" in comic_parser.genre
+        or "#end-field-characters" in comic_parser.genre
+    ):
+        cprint.warning(f"{comic_parser.path}: Contains #field-characters")
+        idx_start = comic_parser.genre.index("#field-characters") + len(
+            "#field-characters, "
+        )
+        idx_end = comic_parser.genre.index("#end-field-characters") - 2
+        comic_parser.genre = comic_parser.genre[idx_start:idx_end].strip()
+
+
 def parse_tag_v1(comic_parser: ComicParser) -> ComicParser | None:
+    remove_extra_fields(comic_parser)
     comic_parser.tags = comic_parser.genre
     comic_parser.genre = ""
 
@@ -493,6 +533,28 @@ def parse_tag_v2(comic_parser: ComicParser) -> ComicParser | None:
     return comic_parser
 
 
+def apply_fixes(comic_parser: ComicParser, save: bool = False) -> ComicParser:
+    is_apply = False
+    if FIX_MULTIPLE_VALUES:
+        fix_multiple_values(comic_parser)
+        is_apply = True
+
+    if MOVE_CHARACTERS_TO_GENRE:
+        fix_characters_to_genre(comic_parser)
+        is_apply = True
+
+    if FIX_DUPLICATE_SUMMARY:
+        fix_summary(comic_parser)
+        is_apply = True
+
+    if is_apply:
+        cprint.info(f"Applied fixes to {comic_parser.path}")
+        if save:
+            comic_parser.save(comic_parser.path)
+
+    return comic_parser
+
+
 def parse_cbz(file_path: Path, output_path: Path | None = None) -> None:
     comic_from_cbz = ComicParser(file_path)
     if comic_from_cbz is None:
@@ -501,9 +563,13 @@ def parse_cbz(file_path: Path, output_path: Path | None = None) -> None:
     if comic_from_cbz.series == "":
         return cprint.error(f"Failed to obtain metadata from {file_path}")
 
+    if FIX_ONLY:
+        apply_fixes(comic_from_cbz, save=True)
+        return
+
     if comic_from_cbz.notes == "parsed" and not FORCE:
-        # fix_summary(comic_from_cbz)
         cprint.debug(f"Metadata already parsed for {file_path}")
+        apply_fixes(comic_from_cbz, save=True)
         threshold_counter.increment()
         return
 
@@ -525,8 +591,12 @@ def parse_cbz(file_path: Path, output_path: Path | None = None) -> None:
     elif comic_from_cbz.writer != "" and comic_from_cbz.penciller == "":
         comic_from_cbz.penciller = comic_from_cbz.writer
 
+    apply_fixes(comic_from_cbz)
+
     if SIMULATE:
-        return cprint.info(f"Simulating {file_path}")
+        cprint.info(f"Simulating {file_path}")
+        cprint.debug(comic_from_cbz.to_dict())
+        return
 
     # cbz_content = comic_from_cbz.pack()
     # (output_path if output_path is not None else file_path).write_bytes(cbz_content)
