@@ -45,3 +45,6 @@ Like the previous one but start with expriment GPU support
 
 ### iface.py
 Monitor the network interface and post it to discord webhook
+
+### tag-convert.py
+Parser for Tachiyomi -> Komga

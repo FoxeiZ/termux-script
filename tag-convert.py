@@ -1,27 +1,120 @@
 import re
+import shutil
 import sys
 import zipfile
 from pathlib import Path
 from typing import Any, Union
+import subprocess
 from threading import Lock
 
 try:
     import langcodes
     import xmltodict
 except ImportError:
-    import subprocess
-
     subprocess.run([sys.executable, "-m", "pip", "install", "langcodes", "xmltodict"])
 finally:
     import langcodes
     import xmltodict
 
 
-FORCE = False  # Force re-parse
+FORCE = True  # Force re-parse
 LOG_LEVEL = 2  # 0: Error, 1: Warning, 2: Info, 3: Debug
 SIMULATE = False  # Do not write to disk
 FAVORITE_THRESHOLD = 2000  # 2000 favorites = 5.0 rating
 SKIP_THRESHOLD = 20  # Skip if found this many already parsed
+
+
+class ZFile(zipfile.ZipFile):
+    def remove(self, zinfo_or_arcname):
+        """Remove a member from the archive."""
+
+        if self.mode not in ("w", "x", "a"):
+            raise ValueError("remove() requires mode 'w', 'x', or 'a'")
+        if not self.fp:
+            raise ValueError("Attempt to write to ZIP archive that was already closed")
+        if self._writing:  # type: ignore
+            raise ValueError(
+                "Can't write to ZIP archive while an open writing handle exists"
+            )
+
+        # Make sure we have an existing info object
+        if isinstance(zinfo_or_arcname, zipfile.ZipInfo):
+            zinfo = zinfo_or_arcname
+            # make sure zinfo exists
+            if zinfo not in self.filelist:
+                raise KeyError("There is no item %r in the archive" % zinfo_or_arcname)
+        else:
+            # get the info object
+            zinfo = self.getinfo(zinfo_or_arcname)
+
+        return self._remove_members({zinfo})
+
+    def _remove_members(self, members, *, remove_physical=True, chunk_size=2**20):
+        """Remove members in a zip file.
+        All members (as zinfo) should exist in the zip; otherwise the zip file
+        will erroneously end in an inconsistent state.
+        """
+        fp = self.fp
+        if not fp:
+            raise ValueError("Attempt to write to ZIP archive that was already closed")
+
+        entry_offset = 0
+        member_seen = False
+
+        # get a sorted filelist by header offset, in case the dir order
+        # doesn't match the actual entry order
+        filelist = sorted(self.filelist, key=lambda x: x.header_offset)
+        for i in range(len(filelist)):
+            info = filelist[i]
+            is_member = info in members
+
+            if not (member_seen or is_member):
+                continue
+
+            # get the total size of the entry
+            try:
+                offset = filelist[i + 1].header_offset
+            except IndexError:
+                offset = self.start_dir
+            entry_size = offset - info.header_offset
+
+            if is_member:
+                member_seen = True
+                entry_offset += entry_size
+
+                # update caches
+                self.filelist.remove(info)
+                try:
+                    del self.NameToInfo[info.filename]
+                except KeyError:
+                    pass
+                continue
+
+            # update the header and move entry data to the new position
+            if remove_physical:
+                old_header_offset = info.header_offset
+                info.header_offset -= entry_offset
+                read_size = 0
+                while read_size < entry_size:
+                    fp.seek(old_header_offset + read_size)
+                    data = fp.read(min(entry_size - read_size, chunk_size))
+                    fp.seek(info.header_offset + read_size)
+                    fp.write(data)
+                    fp.flush()
+                    read_size += len(data)
+
+        # Avoid missing entry if entries have a duplicated name.
+        # Reverse the order as NameToInfo normally stores the last added one.
+        for info in reversed(self.filelist):
+            self.NameToInfo.setdefault(info.filename, info)
+
+        # update state
+        if remove_physical:
+            self.start_dir -= entry_offset
+        self._didModify = True
+
+        # seek to the start of the central dir
+        fp.seek(self.start_dir)
 
 
 class SkipThresholdReached(Exception):
@@ -266,7 +359,8 @@ class ComicParser:
         #     output_path.parent.mkdir(parents=True, exist_ok=True)
         #     shutil.copy2(self.path, output_path)
 
-        with zipfile.ZipFile(output_path, "a", zipfile.ZIP_STORED) as zf:
+        with ZFile(output_path, "a", zipfile.ZIP_STORED) as zf:
+            zf.remove("ComicInfo.xml")
             with zf.open("ComicInfo.xml", "w") as f:
                 f.write(
                     xmltodict.unparse({"ComicInfo": __info()}, pretty=True).encode()
@@ -437,6 +531,8 @@ def parse_cbz(file_path: Path, output_path: Path | None = None) -> None:
     # cbz_content = comic_from_cbz.pack()
     # (output_path if output_path is not None else file_path).write_bytes(cbz_content)
     path_to_write = (output_path / file_path.name) if output_path else file_path
+    if path_to_write != file_path:
+        shutil.copy2(file_path, path_to_write)
     comic_from_cbz.save(path_to_write)
     cprint.success(f"Parsed {file_path}")
 
