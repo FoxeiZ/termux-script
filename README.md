@@ -39,3 +39,7 @@ Start the X11 server with a listening socket for Proot to connect to.
 
 ### x11-start
 Start the X11 server with the input program (or the default XFCE desktop).
+
+### x11-start-test
+Like the previous one but start with expriment GPU support
+
