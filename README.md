@@ -13,9 +13,6 @@ package installer
 ### litterbox
 Upload files to the litterbox service.
 
-### mac
-Change the MAC address.
-
 ### mkvenv
 Make a Python virtual environment.
 
