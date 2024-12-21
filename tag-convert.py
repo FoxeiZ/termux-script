@@ -332,18 +332,16 @@ class ComicParser:
             self.__other_fields.update(copycat)
             return content
 
-        try:
-            with ZFile(path, "r", zipfile.ZIP_STORED) as zf:
-                names = zf.namelist()
-                names.remove("ComicInfo.xml")
-                with zf.open("ComicInfo.xml", "r") as f:
-                    comic_info = xmltodict.parse(f.read()).get("ComicInfo", {})
-                    __info(items=comic_info)
-                self.page_count = len(names)
+        with ZFile(path, "r", zipfile.ZIP_STORED) as zf:
+            names = zf.namelist()
+            if names.count("ComicInfo.xml") > 1:
+                raise ValueError(f"{path} contains more than one ComicInfo.xml")
 
-        except Exception as e:
-            cprint.error(f"Failed to unpack {path}: {e}")
-            return None
+            names.remove("ComicInfo.xml")
+            with zf.open("ComicInfo.xml", "r") as f:
+                comic_info = xmltodict.parse(f.read()).get("ComicInfo", {})
+                __info(items=comic_info)
+            self.page_count = len(names)
 
     def save(self, output_path: Path):
         if LOG_LEVEL >= 3:
