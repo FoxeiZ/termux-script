@@ -569,6 +569,9 @@ def parse_cbz(file_path: Path, output_path: Path | None = None) -> None:
     if comic_from_cbz.series == "":
         return cprint.error(f"Failed to obtain metadata from {file_path}")
 
+    if comic_from_cbz.tags == "" and comic_from_cbz.genre == "":
+        return cprint.warning(f"Skipping {file_path}: No tags or genre found")
+
     if FIX_ONLY:
         apply_fixes(comic_from_cbz, save=True)
         return
