@@ -30,6 +30,8 @@ class Tailscaled(subprocess.Popen):
         if not state_dir.exists():
             state_dir.mkdir()
 
+        self.logging_file = self.home_dir / "tailscaled.log"
+
         self.output_queue: Queue[str] = Queue()
         self.output_thread = threading.Thread(target=self._output_reader, daemon=True)
         logging.debug("Tailscaled initialized successfully")
@@ -47,6 +49,20 @@ class Tailscaled(subprocess.Popen):
             self.output_queue.put_nowait(line)
             print(line, end="")
         logging.debug("Output reader thread stopped")
+
+    def bring_up_connection(self):
+        logging.debug("Bringing up connection")
+        sp = subprocess.run(
+            [
+                str(self.home_dir / "tailscale"),
+                "up",
+                "--authkey",
+                os.getenv("TAILSCALE_AUTHKEY") or "",
+            ],
+            check=True,
+        )
+        if sp.returncode != 0:
+            raise Exception("Failed to bring up connection")
 
     def wait_for_connection(self, timeout: int = 60):
         logging.debug("Waiting for connection with timeout: %d seconds", timeout)
@@ -93,7 +109,6 @@ class Tailscaled(subprocess.Popen):
         if self.stopped:
             return
 
-        self.stopped = True
         if self.output_thread.is_alive():
             self.output_thread.join(1)
 
@@ -103,6 +118,8 @@ class Tailscaled(subprocess.Popen):
                 self.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 self.kill()  # force kill if sigint failed
+
+        self.stopped = True
         logging.debug("Tailscaled process stopped")
 
 
@@ -131,13 +148,14 @@ class Socatd(subprocess.Popen):
         if self.stopped:
             return
 
-        self.stopped = True
         if self.poll() is None:  # if running
             self.send_signal(signal.SIGINT)
             try:
                 self.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 self.kill()  # force kill if sigint failed
+
+        self.stopped = True
         logging.debug("Socatd process stopped")
 
 
@@ -155,15 +173,7 @@ class Manager:
         if not self.tailscaled.wait_for_connection():
             raise Exception("Tailscaled failed to connect")
 
-        subprocess.run(
-            [
-                "tailscale",
-                "up",
-                "--authkey",
-                os.getenv("TAILSCALE_AUTHKEY") or "",
-            ],
-            check=True,
-        )
+        self.tailscaled.bring_up_connection()
         self.socatd.start()
         logging.debug("Manager started successfully")
 
@@ -182,12 +192,11 @@ if __name__ == "__main__":
         sys.exit(1)
 
     manager = Manager(sys.argv[1] if len(sys.argv) >= 2 else "~/.tailscale")
-    manager.start()
     try:
+        manager.start()
         input("Press Enter to stop tailscale")
     except KeyboardInterrupt:
         logging.debug("KeyboardInterrupt received")
         manager.stop()
     finally:
         manager.stop()
-        logging.debug("Script finished")
