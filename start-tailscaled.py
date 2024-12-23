@@ -36,6 +36,7 @@ class Tailscaled(subprocess.Popen):
 
     def _output_reader(self):
         logging.debug("Starting output reader thread")
+        logging.debug(str(self.stdout))
         for line in self.stdout.readlines():  # type: ignore
             if not line or self.stopped:
                 break
@@ -67,10 +68,11 @@ class Tailscaled(subprocess.Popen):
         logging.debug("Starting Tailscaled process")
         self.args = [
             str(self.home_dir / "tailscaled"),
-            "--statedir",
-            str(self.home_dir / "state"),
-            "--socket",
-            str(self.home_dir / "tailscaled.sock"),
+            "--statedir=" + str(self.home_dir / "state"),
+            "--socket=" + str(self.home_dir / "tailscaled.sock"),
+            "--tun=userspace-networking",
+            "--socks5-server=localhost:1055"
+            "--outbound-http-proxy-listen=localhost:1055",
         ]
 
         super().__init__(
