@@ -71,7 +71,7 @@ class Tailscaled(subprocess.Popen):
             "--statedir=" + str(self.home_dir / "state"),
             "--socket=" + str(self.home_dir / "tailscaled.sock"),
             "--tun=userspace-networking",
-            "--socks5-server=localhost:1055"
+            "--socks5-server=localhost:1055",
             "--outbound-http-proxy-listen=localhost:1055",
         ]
 
