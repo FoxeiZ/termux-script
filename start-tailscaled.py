@@ -24,7 +24,7 @@ class Tailscaled(subprocess.Popen):
             state_dir.mkdir()
 
         self.output_queue: Queue[str] = Queue()
-        self.output_thread = threading.Thread(target=self._output_reader)
+        self.output_thread = threading.Thread(target=self._output_reader, daemon=True)
 
     def _output_reader(self):
         for line in self.stdout.readlines():  # type: ignore
