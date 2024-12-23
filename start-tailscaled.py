@@ -42,7 +42,8 @@ class Tailscaled(subprocess.Popen):
 
             if isinstance(line, bytes):
                 line = line.decode("utf-8")
-            self.output_queue.put(line)
+
+            self.output_queue.put_nowait(line)
             print(line, end="")
         logging.debug("Output reader thread stopped")
 
