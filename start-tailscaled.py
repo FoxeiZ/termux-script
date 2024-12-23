@@ -53,8 +53,8 @@ class Tailscaled(subprocess.Popen):
     def start(self):
         self.args = [
             str(self.home_dir / "tailscaled"),
-            "--state",
-            str(self.home_dir / "statedir"),
+            "--statedir",
+            str(self.home_dir / "state"),
             "--socket",
             str(self.home_dir / "tailscaled.sock"),
         ]
