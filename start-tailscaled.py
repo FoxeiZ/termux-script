@@ -11,7 +11,7 @@ import time
 
 class Tailscaled(subprocess.Popen):
     def __init__(self, home_dir: Path | str):
-        self.home_dir = Path(home_dir)
+        self.home_dir = Path(home_dir).absolute()
         self.stopped = False
 
         # find binary  # TODO: maybe auto download?
@@ -50,11 +50,16 @@ class Tailscaled(subprocess.Popen):
         return False
 
     def start(self):
-        self.args = ["tailscaled", "--state=state/"]
+        self.args = [
+            str(self.home_dir / "tailscaled"),
+            "--state",
+            str(self.home_dir / "state"),
+            "--socket",
+            str(self.home_dir / "tailscaled.sock"),
+        ]
 
         super().__init__(
             self.args,
-            cwd=self.home_dir,
             start_new_session=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
