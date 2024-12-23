@@ -192,13 +192,13 @@ if __name__ == "__main__":
     logging.debug("Script started")
     if os.getuid() != 0:  # type: ignore
         logging.error("Please run as root")
-        print("Please run as root")
         sys.exit(1)
 
     manager = Manager(sys.argv[1] if len(sys.argv) >= 2 else "~/.tailscale")
     try:
         manager.start()
-        input("Press Enter to stop tailscale")
+        logging.debug("Press Enter or Ctrl+C to stop")
+        input()
     except KeyboardInterrupt:
         logging.debug("KeyboardInterrupt received")
         manager.stop()
