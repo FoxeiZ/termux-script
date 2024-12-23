@@ -20,6 +20,7 @@ class Tailscaled(subprocess.Popen):
         self.home_dir = Path(home_dir).absolute()
         self.started = False
         self.stopped = False
+        self.is_up = False
 
         # find binary  # TODO: maybe auto download?
         tailscaled_bin = self.home_dir / "tailscaled"
@@ -39,16 +40,21 @@ class Tailscaled(subprocess.Popen):
 
     def _output_reader(self):
         logging.debug("Starting output reader thread")
-        logging.debug(str(self.stdout))
-        for line in self.stdout:  # type: ignore
+        stdout = self.stdout  # cache reference
+        if stdout is None:
+            return
+
+        for line in stdout:
             if not line or self.stopped:
                 break
 
             if isinstance(line, bytes):
                 line = line.decode("utf-8")
 
-            self.output_queue.put_nowait(line)
             print(line, end="")
+            if not self.is_up:
+                self.output_queue.put_nowait(line)
+
         logging.debug("Output reader thread stopped")
 
     def bring_up_connection(self):
@@ -190,17 +196,16 @@ class Manager:
 
 if __name__ == "__main__":
     logging.debug("Script started")
-    if os.getuid() != 0:  # type: ignore
+    if not os.getuid() == 0:  # type: ignore
         logging.error("Please run as root")
         sys.exit(1)
 
-    manager = Manager(sys.argv[1] if len(sys.argv) >= 2 else "~/.tailscale")
+    manager = Manager(sys.argv[1] if len(sys.argv) > 1 else "~/.tailscale")
     try:
         manager.start()
         logging.debug("Press Enter or Ctrl+C to stop")
         input()
     except KeyboardInterrupt:
         logging.debug("KeyboardInterrupt received")
-        manager.stop()
     finally:
         manager.stop()
