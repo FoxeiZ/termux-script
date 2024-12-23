@@ -204,7 +204,7 @@ if __name__ == "__main__":
     try:
         manager.start()
         logging.debug("Press Enter or Ctrl+C to stop")
-        # input()
+        input()
     except KeyboardInterrupt:
         logging.debug("KeyboardInterrupt received")
     finally:
