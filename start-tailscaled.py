@@ -37,7 +37,7 @@ class Tailscaled(subprocess.Popen):
     def _output_reader(self):
         logging.debug("Starting output reader thread")
         logging.debug(str(self.stdout))
-        for line in self.stdout.readlines():  # type: ignore
+        for line in self.stdout:  # type: ignore
             if not line or self.stopped:
                 break
 
