@@ -31,9 +31,10 @@ class Tailscaled(subprocess.Popen):
             if not line or self.stopped:
                 break
 
-            decode_line = line.decode("utf-8")
-            self.output_queue.put(decode_line)
-            print(decode_line, end="")
+            if isinstance(line, bytes):
+                line = line.decode("utf-8")
+            self.output_queue.put(line)
+            print(line, end="")
 
     def wait_for_connection(self, timeout: int = 60):
         pattern = re.compile(r"magicsock.*connected")
