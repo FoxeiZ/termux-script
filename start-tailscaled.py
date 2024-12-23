@@ -18,6 +18,7 @@ class Tailscaled(subprocess.Popen):
     def __init__(self, home_dir: Path | str):
         logging.debug("Initializing Tailscaled with home_dir: %s", home_dir)
         self.home_dir = Path(home_dir).absolute()
+        self.started = False
         self.stopped = False
 
         # find binary  # TODO: maybe auto download?
@@ -102,13 +103,14 @@ class Tailscaled(subprocess.Popen):
             universal_newlines=True,
         )
         self.output_thread.start()
+        self.started = True
         logging.debug("Tailscaled process started")
 
     def stop(self, timeout: int = 15):
-        logging.debug("Stopping Tailscaled process with timeout: %d seconds", timeout)
-        if self.stopped:
+        if self.stopped or not self.started:
             return
 
+        logging.debug("Stopping Tailscaled process with timeout: %d seconds", timeout)
         if self.output_thread.is_alive():
             self.output_thread.join(1)
 
@@ -126,6 +128,7 @@ class Tailscaled(subprocess.Popen):
 class Socatd(subprocess.Popen):
     def __init__(self):
         logging.debug("Initializing Socatd")
+        self.started = False
         self.stopped = False
         logging.debug("Socatd initialized successfully")
 
@@ -141,13 +144,14 @@ class Socatd(subprocess.Popen):
             self.args,
             start_new_session=True,
         )
+        self.started = True
         logging.debug("Socatd process started")
 
     def stop(self, timeout: int = 15):
-        logging.debug("Stopping Socatd process with timeout: %d seconds", timeout)
-        if self.stopped:
+        if self.stopped or not self.started:
             return
 
+        logging.debug("Stopping Socatd process with timeout: %d seconds", timeout)
         if self.poll() is None:  # if running
             self.send_signal(signal.SIGINT)
             try:
