@@ -1,5 +1,5 @@
 from pathlib import Path
-from queue import Queue
+from queue import Queue, Empty
 import os
 import re
 import sys
@@ -54,13 +54,15 @@ class Tailscaled(subprocess.Popen):
         start_time = time.time()
 
         while time.time() - start_time < timeout:
-            line = self.output_queue.get()
-            if pattern.search(line):
-                logging.debug("Connection established")
-                return True
-
-            if self.poll() is not None:
-                raise Exception("Tailscaled stopped unexpectedly")
+            try:
+                line = self.output_queue.get(timeout=1)
+                if pattern.search(line):
+                    logging.debug("Connection established")
+                    return True
+            except Empty:
+                if self.poll() is not None:
+                    raise Exception("Tailscaled stopped unexpectedly")
+                continue
 
         return False
 
