@@ -125,6 +125,15 @@ class Manager:
         if not self.tailscaled.wait_for_connection():
             raise Exception("Tailscaled failed to connect")
 
+        subprocess.run(
+            [
+                "tailscale",
+                "up",
+                "--authkey",
+                os.getenv("TAILSCALE_AUTHKEY") or "",
+            ],
+            check=True,
+        )
         self.socatd.start()
 
     def stop(self):
