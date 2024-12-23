@@ -436,7 +436,7 @@ def fix_multiple_values(comic_parser: ComicParser):
 
 def fix_characters_to_genre(comic_parser: ComicParser):
     if comic_parser.characters != "":
-        cprint.info(f"Copy characters field to genre: {comic_parser.characters}")
+        cprint.debug(f"Copy characters field to genre: {comic_parser.characters}")
         comic_parser.genre = (
             f"#field-characters, {comic_parser.characters}, #end-field-characters"
         )
