@@ -45,7 +45,12 @@ class Tailscaled(subprocess.Popen):
             if not line:
                 break
 
-            print(line.decode("utf-8") if isinstance(line, bytes) else line, end="")
+            print(
+                line.decode("utf-8", errors="surrogateescape")
+                if isinstance(line, bytes)
+                else line,
+                end="",
+            )
 
         logging.debug("Output reader thread stopped")
 
@@ -76,7 +81,9 @@ class Tailscaled(subprocess.Popen):
             try:
                 line = stdout.readline()
                 if pattern.search(
-                    line.decode("utf-8") if isinstance(line, bytes) else line
+                    line.decode("utf-8", errors="surrogateescape")
+                    if isinstance(line, bytes)
+                    else line
                 ):
                     logging.debug("Connection established")
                     return True
