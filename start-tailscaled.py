@@ -1,11 +1,10 @@
 from pathlib import Path
-from queue import Queue, Empty
+from queue import Empty
 import os
 import re
 import sys
 import signal
 import subprocess
-import threading
 import time
 import logging
 
@@ -33,27 +32,20 @@ class Tailscaled(subprocess.Popen):
             state_dir.mkdir()
 
         self.logging_file = self.home_dir / "tailscaled.log"
-
-        self.output_queue: Queue[str] = Queue()
-        self.output_thread = threading.Thread(target=self._output_reader, daemon=True)
         logging.debug("Tailscaled initialized successfully")
 
-    def _output_reader(self):
+    def stdout_reader(self):
         logging.debug("Starting output reader thread")
         stdout = self.stdout  # cache reference
         if stdout is None:
             return
 
-        for line in stdout:
-            if not line or self.stopped:
+        while not self.stopped:
+            line = stdout.readline(1)
+            if not line:
                 break
 
-            if isinstance(line, bytes):
-                line = line.decode("utf-8")
-
-            print(line, end="")
-            if not self.is_up:
-                self.output_queue.put_nowait(line)
+            print(line.decode("utf-8") if isinstance(line, bytes) else line, end="")
 
         logging.debug("Output reader thread stopped")
 
@@ -76,9 +68,13 @@ class Tailscaled(subprocess.Popen):
         pattern = re.compile(r"magicsock.*connected")
         start_time = time.time()
 
+        stdout = self.stdout
+        if stdout is None:
+            raise Exception("stdout is None")
+
         while time.time() - start_time < timeout:
             try:
-                line = self.output_queue.get(timeout=1)
+                line = stdout.readline().decode("utf-8")
                 if pattern.search(line):
                     logging.debug("Connection established")
                     return True
@@ -108,7 +104,6 @@ class Tailscaled(subprocess.Popen):
             bufsize=1,
             universal_newlines=True,
         )
-        self.output_thread.start()
         self.started = True
         logging.debug("Tailscaled process started")
 
@@ -117,9 +112,6 @@ class Tailscaled(subprocess.Popen):
             return
 
         logging.debug("Stopping Tailscaled process with timeout: %d seconds", timeout)
-        if self.output_thread.is_alive():
-            self.output_thread.join(1)
-
         if self.poll() is None:  # if running
             self.send_signal(signal.SIGINT)
             try:
@@ -187,6 +179,9 @@ class Manager:
         self.socatd.start()
         logging.debug("Manager started successfully")
 
+        # main loop start here
+        self.tailscaled.stdout_reader()
+
     def stop(self):
         logging.debug("Stopping Manager")
         self.socatd.stop()
@@ -203,8 +198,7 @@ if __name__ == "__main__":
     manager = Manager(sys.argv[1] if len(sys.argv) > 1 else "~/.tailscale")
     try:
         manager.start()
-        logging.debug("Press Enter or Ctrl+C to stop")
-        input()
+        logging.debug("Press Ctrl+C to stop")
     except KeyboardInterrupt:
         logging.debug("KeyboardInterrupt received")
     finally:
