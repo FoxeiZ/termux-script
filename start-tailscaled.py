@@ -74,8 +74,10 @@ class Tailscaled(subprocess.Popen):
 
         while time.time() - start_time < timeout:
             try:
-                line = stdout.readline().decode("utf-8")
-                if pattern.search(line):
+                line = stdout.readline()
+                if pattern.search(
+                    line.decode("utf-8") if isinstance(line, bytes) else line
+                ):
                     logging.debug("Connection established")
                     return True
             except Empty:
