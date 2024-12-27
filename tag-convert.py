@@ -31,7 +31,7 @@ FAVORITE_THRESHOLD = 2000  # 2000 favorites = 5.0 rating
 SKIP_THRESHOLD = 20  # Skip if found this many already parsed
 
 # Fixes
-APPLY_FIX = True  # Apply fixes when parsing
+APPLY_FIX = True  # Apply fixes when parsing skipped files
 FIX_ONLY = False  # Only apply fixes, also implies FORCE
 
 # Apply fixes
