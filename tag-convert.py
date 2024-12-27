@@ -29,6 +29,9 @@ LOG_LEVEL = 3  # 0: Error, 1: Warning, 2: Info, 3: Debug
 SIMULATE = False  # Do not write to disk
 FAVORITE_THRESHOLD = 2000  # 2000 favorites = 5.0 rating
 SKIP_THRESHOLD = 20  # Skip if found this many already parsed
+
+# Fixes
+APPLY_FIX = True  # Apply fixes when parsing
 FIX_ONLY = False  # Only apply fixes, also implies FORCE
 
 # Apply fixes
@@ -505,8 +508,10 @@ def parse_cbz(file_path: Path, output_path: Path | None = None) -> None:
         return
 
     if comic_from_cbz.notes == "parsed" and not FORCE:
+        if APPLY_FIX:
+            apply_fixes(comic_from_cbz, save=True)
+
         cprint.debug(f"Metadata already parsed for {file_path}")
-        apply_fixes(comic_from_cbz, save=True)
         threshold_counter.increment()
         return
 
