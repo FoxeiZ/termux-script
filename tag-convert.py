@@ -1,11 +1,11 @@
 import re
 import shutil
-import sys
-import zipfile
-from pathlib import Path
-from typing import Any, Union
 import subprocess
+import sys
+from pathlib import Path
 from threading import Lock
+from typing import Any, Union
+import zipfile
 
 try:
     import langcodes
@@ -28,99 +28,6 @@ FIX_ONLY = False  # Only apply fixes, also implies FORCE
 MOVE_CHARACTERS_TO_GENRE = True
 FIX_MULTIPLE_VALUES = True
 FIX_DUPLICATE_SUMMARY = True
-
-
-class ZFile(zipfile.ZipFile):
-    def remove(self, zinfo_or_arcname):
-        """Remove a member from the archive."""
-
-        if self.mode not in ("w", "x", "a"):
-            raise ValueError("remove() requires mode 'w', 'x', or 'a'")
-        if not self.fp:
-            raise ValueError("Attempt to write to ZIP archive that was already closed")
-        if self._writing:  # type: ignore
-            raise ValueError(
-                "Can't write to ZIP archive while an open writing handle exists"
-            )
-
-        # Make sure we have an existing info object
-        if isinstance(zinfo_or_arcname, zipfile.ZipInfo):
-            zinfo = zinfo_or_arcname
-            # make sure zinfo exists
-            if zinfo not in self.filelist:
-                raise KeyError("There is no item %r in the archive" % zinfo_or_arcname)
-        else:
-            # get the info object
-            zinfo = self.getinfo(zinfo_or_arcname)
-
-        return self._remove_members({zinfo})
-
-    def _remove_members(self, members, *, remove_physical=True, chunk_size=2**20):
-        """Remove members in a zip file.
-        All members (as zinfo) should exist in the zip; otherwise the zip file
-        will erroneously end in an inconsistent state.
-        """
-        fp = self.fp
-        if not fp:
-            raise ValueError("Attempt to write to ZIP archive that was already closed")
-
-        entry_offset = 0
-        member_seen = False
-
-        # get a sorted filelist by header offset, in case the dir order
-        # doesn't match the actual entry order
-        filelist = sorted(self.filelist, key=lambda x: x.header_offset)
-        for i in range(len(filelist)):
-            info = filelist[i]
-            is_member = info in members
-
-            if not (member_seen or is_member):
-                continue
-
-            # get the total size of the entry
-            try:
-                offset = filelist[i + 1].header_offset
-            except IndexError:
-                offset = self.start_dir
-            entry_size = offset - info.header_offset
-
-            if is_member:
-                member_seen = True
-                entry_offset += entry_size
-
-                # update caches
-                self.filelist.remove(info)
-                try:
-                    del self.NameToInfo[info.filename]
-                except KeyError:
-                    pass
-                continue
-
-            # update the header and move entry data to the new position
-            if remove_physical:
-                old_header_offset = info.header_offset
-                info.header_offset -= entry_offset
-                read_size = 0
-                while read_size < entry_size:
-                    fp.seek(old_header_offset + read_size)
-                    data = fp.read(min(entry_size - read_size, chunk_size))
-                    fp.seek(info.header_offset + read_size)
-                    fp.write(data)
-                    fp.flush()
-                    read_size += len(data)
-
-        # Avoid missing entry if entries have a duplicated name.
-        # Reverse the order as NameToInfo normally stores the last added one.
-        for info in reversed(self.filelist):
-            self.NameToInfo.setdefault(info.filename, info)
-
-        # update state
-        if remove_physical:
-            self.start_dir -= entry_offset
-        self._didModify = True
-
-        # seek to the start of the central dir
-        fp.seek(self.start_dir)
 
 
 class SkipThresholdReached(Exception):
@@ -202,7 +109,7 @@ class cprint:
             print(color + cprint._to_string(*args, delimiter) + colors.reset, **kwargs)
 
     @staticmethod
-    def info(*args: str, delimiter=" ", **kwargs):
+    def info(*args: Any, delimiter=" ", **kwargs):
         if LOG_LEVEL < 2:
             return
         cprint._base_print(
@@ -213,7 +120,7 @@ class cprint:
         )
 
     @staticmethod
-    def error(*args: str, delimiter=" ", **kwargs):
+    def error(*args: Any, delimiter=" ", **kwargs):
         if LOG_LEVEL < 0:
             return
         cprint._base_print(
@@ -224,7 +131,7 @@ class cprint:
         )
 
     @staticmethod
-    def success(*args: str, delimiter=" ", **kwargs):
+    def success(*args: Any, delimiter=" ", **kwargs):
         cprint._base_print(
             colors.fg.green,
             delimiter,
@@ -233,7 +140,7 @@ class cprint:
         )
 
     @staticmethod
-    def warning(*args: str, delimiter=" ", **kwargs):
+    def warning(*args: Any, delimiter=" ", **kwargs):
         if LOG_LEVEL < 1:
             return
         cprint._base_print(
@@ -244,7 +151,7 @@ class cprint:
         )
 
     @staticmethod
-    def debug(*args: str, delimiter=" ", **kwargs):
+    def debug(*args: Any, delimiter=" ", **kwargs):
         if LOG_LEVEL < 3:
             return
         cprint._base_print(
@@ -332,7 +239,7 @@ class ComicParser:
             self.__other_fields.update(copycat)
             return content
 
-        with ZFile(path, "r", zipfile.ZIP_STORED) as zf:
+        with zipfile.ZipFile(path, "r", zipfile.ZIP_STORED) as zf:
             names = zf.namelist()
             if names.count("ComicInfo.xml") > 1:
                 raise ValueError(f"{path} contains more than one ComicInfo.xml")
@@ -349,6 +256,16 @@ class ComicParser:
 
         if SIMULATE:  # check here in case of fix-only = true and simulate = true
             return
+
+        if not output_path.exists():
+            cprint.warning(f"Output path does not exist: {output_path}, assuming copy")
+            shutil.copy2(self.path, output_path)
+
+        if not output_path.is_file():
+            cprint.warning(
+                f"Output path is not a file: {output_path}, assuming path as a file"
+            )
+            output_path = output_path.with_suffix(".cbz")
 
         def __info():
             content = {}
@@ -377,8 +294,14 @@ class ComicParser:
         #     output_path.parent.mkdir(parents=True, exist_ok=True)
         #     shutil.copy2(self.path, output_path)
 
-        with ZFile(output_path, "a", zipfile.ZIP_STORED) as zf:
-            zf.remove("ComicInfo.xml")
+        # introduce overhead but more reliable
+        subprocess.run(
+            ["7z", "d", str(output_path), "ComicInfo.xml"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+        with zipfile.ZipFile(output_path, "a", zipfile.ZIP_STORED) as zf:
             with zf.open("ComicInfo.xml", "w") as f:
                 f.write(
                     xmltodict.unparse({"ComicInfo": __info()}, pretty=True).encode()
@@ -448,7 +371,7 @@ def calc_rating(rating: str) -> float:
     return min((int_rating / FAVORITE_THRESHOLD) * 5, 5.0)
 
 
-def remove_extra_fields(comic_parser: ComicParser) -> ComicParser:
+def remove_extra_fields(comic_parser: ComicParser):
     if (
         "#field-characters" in comic_parser.genre
         or "#end-field-characters" in comic_parser.genre
