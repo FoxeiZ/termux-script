@@ -17,6 +17,12 @@ finally:
     import langcodes
     import xmltodict
 
+try:
+    subprocess.run(["7z"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+except FileNotFoundError:
+    print("7z is not installed, please install it and add to PATH")
+    sys.exit(1)
+
 
 FORCE = False  # Force re-parse
 LOG_LEVEL = 3  # 0: Error, 1: Warning, 2: Info, 3: Debug
