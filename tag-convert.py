@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 from threading import Lock
+import time
 from typing import Any, Union
 import zipfile
 
@@ -533,7 +534,6 @@ def parse_cbz(file_path: Path, output_path: Path | None = None) -> None:
     if path_to_write != file_path:
         shutil.copy2(file_path, path_to_write)
     comic_from_cbz.save(path_to_write)
-    cprint.success(f"Parsed {file_path}")
 
 
 def parser_callback(
@@ -543,9 +543,12 @@ def parser_callback(
     if threshold_counter.is_threshold_reached():
         raise SkipThresholdReached
 
+    start_time = time.time()
     try:
         cprint.info(f"Parsing {file_path}")
         parse_cbz(file_path, output_path)
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        cprint.success(f"Finished parsing {file_path} ({elapsed_ms}ms)")
     except Exception as e:
         cprint.error(f"Error parsing {file_path} [{e.__class__.__name__}]: {e}")
 
