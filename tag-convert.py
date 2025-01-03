@@ -28,10 +28,10 @@ FORCE = False  # Force re-parse
 LOG_LEVEL = 3  # 0: Error, 1: Warning, 2: Info, 3: Debug
 SIMULATE = False  # Do not write to disk
 FAVORITE_THRESHOLD = 2000  # 2000 favorites = 5.0 rating
-SKIP_THRESHOLD = 20  # Skip if found this many already parsed
+SKIP_THRESHOLD = -1  # Skip if found this many already parsed
 
 # Fixes
-APPLY_FIX = True  # Apply fixes when parsing skipped files
+APPLY_FIX = False  # Apply fixes when parsing
 FIX_ONLY = False  # Only apply fixes, also implies FORCE
 
 # Apply fixes
