@@ -375,6 +375,18 @@ def fix_characters_to_genre(comic_parser: ComicParser):
         )
 
 
+def fix_language(comic_parser: ComicParser):
+    # missing language tag, check in path for code or use default: EN
+    if comic_parser.language_iso == "":
+        regex = re.compile(r"\((\w+)\)")
+        match = regex.search(str(comic_parser.path.parent))
+        final_match = match.groups()[-1] if match else "en"
+
+        lang = langcodes.find(final_match)
+        comic_parser.language_iso = lang.to_tag()
+        cprint.debug(f"Add language tag: {comic_parser.language_iso}")
+
+
 def calc_rating(rating: str) -> float:
     cprint.debug(f"Rating: {rating}")
     int_rating = int(rating.strip())
@@ -407,7 +419,7 @@ def parse_tag_v1(comic_parser: ComicParser) -> ComicParser | None:
         if s1:
             s1 = s1.strip().replace(" | ", ", ")
 
-        if "Language" == s0:
+        if "Languages" == s0:
             if (lang := langcodes.find(s1)).is_valid():
                 comic_parser.language_iso = lang.to_tag()
         elif "Pages" == s0 or "Categories" == s0:
