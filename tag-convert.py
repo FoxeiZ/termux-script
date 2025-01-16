@@ -540,10 +540,6 @@ def parse_cbz(file_path: Path, output_path: Path | None = None) -> None:
     comic_from_cbz.series = clean_manga_title(comic_from_cbz.series)
     comic_from_cbz.notes = "parsed"
     comic_from_cbz.age_rating = "Adults Only 18+"
-    if comic_from_cbz.writer == "" and comic_from_cbz.penciller != "":
-        comic_from_cbz.writer = comic_from_cbz.penciller
-    elif comic_from_cbz.writer != "" and comic_from_cbz.penciller == "":
-        comic_from_cbz.penciller = comic_from_cbz.writer
 
     apply_fixes(comic_from_cbz)
 
