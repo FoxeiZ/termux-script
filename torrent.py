@@ -180,32 +180,30 @@ class LocalParser:
             print(file)
 
 
-def compare(obj_1, obj_2, calc_diff: bool = True, calc_dup: bool = True):
+def compare(
+    obj_1, obj_2, calc_diff: bool = True, calc_dup: bool = True, two_way: bool = False
+):
     for _type in ("folders", "images", "videos"):
+        set1 = set(getattr(obj_1, _type))
+        set2 = set(getattr(obj_2, _type))
+
         if calc_diff:
-            diff_1 = set(getattr(obj_1, _type)) - set(getattr(obj_2, _type))
-            print(
-                f"\nDifferent {obj_1.name} / {obj_2.name} {_type}:",
-                diff_1,
-                f"The number of different {_type}: {len(diff_1)}",
-                sep="\n",
-            )
-            diff_2 = set(getattr(obj_2, _type)) - set(getattr(obj_1, _type))
-            print(
-                f"\nDifferent {obj_2.name} / {obj_1.name} {_type}:",
-                diff_2,
-                f"The number of different {_type}: {len(diff_2)}",
-                sep="\n",
-            )
+            diff1 = set1 - set2
+            print(f"\nDifferent {obj_1.name} / {obj_2.name} {_type}:")
+            print(diff1)
+            print(f"The number of different {_type}: {len(diff1)}")
+
+            if two_way:
+                diff2 = set2 - set1
+                print(f"\nDifferent {obj_2.name} / {obj_1.name} {_type}:")
+                print(diff2)
+                print(f"The number of different {_type}: {len(diff2)}")
 
         if calc_dup:
-            duplicate = set(getattr(obj_1, _type)) & set(getattr(obj_2, _type))
-            print(
-                f"\nDuplicate {obj_1.name} / {obj_2.name} {_type}:",
-                duplicate,
-                f"The number of duplicate {_type}: {len(duplicate)}",
-                sep="\n",
-            )
+            dups = set1 & set2
+            print(f"\nDuplicate {obj_1.name} / {obj_2.name} {_type}:")
+            print(dups)
+            print(f"The number of duplicate {_type}: {len(dups)}")
 
 
 def get_btdig(url: str):
@@ -236,4 +234,4 @@ if __name__ == "__main__":
     )
     local = get_local("D:\\qBittorent\\download\\猫爪呸罗呸罗2024粉丝圈")
     torrent = get_torrent("D:\\qBittorent\\torrent\\猫と爪呸罗呸罗.torrent")
-    compare(torrent, btdig, calc_diff=True, calc_dup=False)
+    compare(torrent, local, calc_diff=True, calc_dup=False, two_way=True)
