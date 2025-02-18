@@ -383,7 +383,10 @@ def fix_language(comic_parser: ComicParser):
         match = regex.search(str(comic_parser.path.parent))
         final_match = match.groups()[-1] if match else "en"
 
-        lang = langcodes.find(final_match)
+        if final_match == "jp":
+            final_match = "ja"
+
+        lang = langcodes.get(final_match)
         comic_parser.language_iso = lang.to_tag()
         cprint.debug(f"Add language tag: {comic_parser.language_iso}")
 
