@@ -38,6 +38,7 @@ FIX_ONLY = False  # Only apply fixes, also implies FORCE
 MOVE_CHARACTERS_TO_GENRE = True
 FIX_MULTIPLE_VALUES = True
 FIX_DUPLICATE_SUMMARY = True
+FIX_LANGUAGE = True
 
 
 class SkipThresholdReached(Exception):
@@ -484,17 +485,17 @@ def parse_tag_v2(comic_parser: ComicParser) -> ComicParser | None:
 
 def apply_fixes(comic_parser: ComicParser, save: bool = False) -> ComicParser:
     is_apply = False
-    if FIX_MULTIPLE_VALUES:
-        fix_multiple_values(comic_parser)
-        is_apply = True
+    fixes = [
+        (FIX_MULTIPLE_VALUES, fix_multiple_values),
+        (MOVE_CHARACTERS_TO_GENRE, fix_characters_to_genre),
+        (FIX_DUPLICATE_SUMMARY, fix_summary),
+        (FIX_LANGUAGE, fix_language),
+    ]
 
-    if MOVE_CHARACTERS_TO_GENRE:
-        fix_characters_to_genre(comic_parser)
-        is_apply = True
-
-    if FIX_DUPLICATE_SUMMARY:
-        fix_summary(comic_parser)
-        is_apply = True
+    for enabled, fix_func in fixes:
+        if enabled:
+            fix_func(comic_parser)
+            is_apply = True
 
     if is_apply:
         cprint.info(f"Applied fixes to {comic_parser.path}")
