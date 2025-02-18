@@ -14,7 +14,10 @@ AVATAR_URL = (
 )
 
 
-def send_discord_message(embed: dict) -> None:
+def send_discord_message(embed: str | dict) -> None:
+    if embed and isinstance(embed, dict):
+        embed = json.dumps(embed)
+
     try:
         url = urlparse(DISCORD_WEBHOOK_URL)
 
