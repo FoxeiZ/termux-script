@@ -7,7 +7,7 @@ from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import threading
-    from manager import PluginManager
+    from .manager import PluginManager
 
 
 class Plugin:

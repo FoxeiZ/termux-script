@@ -5,7 +5,6 @@ import time
 import logging
 
 from lib.plugin import IntervalPlugin
-from lib.manager import PluginManager
 
 
 logger = logging.getLogger("IfacePlugin")
@@ -215,6 +214,8 @@ class IfacePlugin(IntervalPlugin):
 
 
 if __name__ == "__main__":
+    from lib.manager import PluginManager
+
     manager = PluginManager()
     manager.register_plugin(IfacePlugin(manager))
     manager.run()

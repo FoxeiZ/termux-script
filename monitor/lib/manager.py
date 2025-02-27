@@ -9,8 +9,8 @@ import time
 from urllib.parse import ParseResult, urlparse
 import logging
 
-from errors import DuplicatePluginError
-from plugin import OneTimePlugin, DaemonPlugin, IntervalPlugin
+from .errors import DuplicatePluginError
+from .plugin import OneTimePlugin, DaemonPlugin, IntervalPlugin
 
 
 __all__ = ["PluginManager", "get_logger", "PluginTypeDict"]
