@@ -2,14 +2,11 @@ import json
 import re
 import subprocess
 import time
-import logging
 
 from lib.plugin import IntervalPlugin
+from lib.manager import get_logger
 
-
-logger = logging.getLogger("IfacePlugin")
-logger.setLevel(logging.INFO)
-logger.addHandler(logging.StreamHandler())
+logger = get_logger("IfacePlugin")
 
 
 def default_ifconfig_output():
