@@ -176,7 +176,7 @@ class TailscalePlugin(DaemonPlugin):
         self,
         manager: PluginManager,
         webhook_url: str = "",
-        home_dir: Path | str = "~/.tailscale",
+        home_dir: Path | str = "tailscale",
     ):
         super().__init__(manager, webhook_url=webhook_url)
 
