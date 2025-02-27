@@ -166,7 +166,6 @@ class PluginManager:
                 elif isinstance(plugin, IntervalPlugin):
                     thread = threading.Thread(
                         target=plugin._interval_runner,
-                        args=(plugin,),
                         daemon=True,
                     )
                     thread.start()
