@@ -15,9 +15,11 @@ logger = get_logger("TailscalePlugin")
 
 
 class Tailscaled(subprocess.Popen):
-    def __init__(self, home_dir: Path | str):
+    def __init__(self, home_dir: Path | str, authkey: str = ""):
         logger.debug("Initializing Tailscaled with home_dir: %s", home_dir)
         self.home_dir = Path(home_dir).absolute()
+        self.authkey = authkey
+
         self.started = False
         self.stopped = False
         self.is_up = False
@@ -62,7 +64,7 @@ class Tailscaled(subprocess.Popen):
                 str(self.home_dir / "tailscale"),
                 "up",
                 "--authkey",
-                os.getenv("TAILSCALE_AUTHKEY") or "",
+                self.authkey or os.getenv("TAILSCALE_AUTHKEY") or "",
             ],
             check=True,
         )
@@ -177,12 +179,13 @@ class TailscalePlugin(DaemonPlugin):
         manager: PluginManager,
         webhook_url: str = "",
         home_dir: Path | str = "tailscale",
+        authkey: str = "",
     ):
         super().__init__(manager, webhook_url=webhook_url)
 
         logger.debug("Initializing Manager with home_dir: %s", home_dir)
         self.home_dir = Path(home_dir)
-        self.tailscaled = Tailscaled(self.home_dir)
+        self.tailscaled = Tailscaled(self.home_dir, authkey)
         self.socatd = Socatd()
         logger.debug("Manager initialized successfully")
 
