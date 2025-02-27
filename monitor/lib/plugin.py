@@ -77,9 +77,7 @@ class IntervalPlugin(Plugin):
 
     def stop(self) -> None:
         """Stop the plugin."""
-        if self._thread and self._thread.is_alive():
-            self._stop_event.set()
-            self._thread.join()
+        self._stop_event.set()
 
     @abstractmethod
     def run(self) -> Any:
