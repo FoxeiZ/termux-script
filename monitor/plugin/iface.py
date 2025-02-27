@@ -75,6 +75,8 @@ wlan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
 
 
 class IfacePlugin(IntervalPlugin):
+    exclude_interfaces = ["dummy0", "lo", "r_rmnet_data0", "rmnet_data0", "rmnet_ipa0"]
+
     def __init__(self, manager, interval: int = 5, webhook_url: str = "") -> None:
         super().__init__(
             manager,
@@ -127,6 +129,10 @@ class IfacePlugin(IntervalPlugin):
             interface_match = re.match(interface_pattern, line)
             if interface_match:
                 current_interface = interface_match.group(1)
+                if current_interface in self.exclude_interfaces:
+                    current_interface = None
+                    continue
+
                 interfaces[current_interface] = {"ipv4": [], "ipv6": []}
                 continue
 
