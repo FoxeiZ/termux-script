@@ -7,8 +7,8 @@ import subprocess
 import time
 
 
-from ..lib.plugin import DaemonPlugin
-from ..lib.manager import PluginManager, get_logger
+from lib.plugin import DaemonPlugin
+from lib.manager import PluginManager, get_logger
 
 
 logger = get_logger("TailscalePlugin")

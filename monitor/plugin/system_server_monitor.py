@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 import subprocess
 import psutil
 
-from ..lib import IntervalPlugin
-from ..lib.manager import get_logger
+from lib.plugin import IntervalPlugin
+from lib.manager import get_logger
 
 
 logger = get_logger("SystemServerMonitor")

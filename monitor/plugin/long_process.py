@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from subprocess import Popen, PIPE
-from ..lib import OneTimePlugin
+from lib.plugin import OneTimePlugin
 
 
 class LongProcess(OneTimePlugin):

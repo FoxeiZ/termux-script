@@ -4,8 +4,8 @@ import subprocess
 import time
 import logging
 
-from ..lib.plugin import IntervalPlugin
-from ..lib.manager import PluginManager
+from lib.plugin import IntervalPlugin
+from lib.manager import PluginManager
 
 
 logger = logging.getLogger("IfacePlugin")
