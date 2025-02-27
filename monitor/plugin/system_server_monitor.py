@@ -15,11 +15,12 @@ logger = get_logger("SystemServerMonitor")
 
 class SystemServerMonitor(IntervalPlugin):
     if TYPE_CHECKING:
+        cpu_threshold: int
         _cpu_tracker_proc: psutil.Process | None
 
-    def __init__(self, manager, interval=10, webhook_url=""):
+    def __init__(self, manager, interval=10, webhook_url="", cpu_threshold: int = 100):
         super().__init__(manager, interval, webhook_url)
-
+        self.cpu_threshold = cpu_threshold
         self._cpu_tracker_proc = None
 
     def _find_process(self, name="CpuTracker"):
@@ -57,7 +58,7 @@ class SystemServerMonitor(IntervalPlugin):
             return
 
         cpu_percent = process.cpu_percent(interval=1)
-        if cpu_percent > 90:
+        if cpu_percent >= self.cpu_threshold:
             logger.warning(
                 f"system_server is abnormally using {cpu_percent}% CPU. Rebooting."
             )
