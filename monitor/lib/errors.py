@@ -1,0 +1,2 @@
+class DuplicatePluginError(Exception):
+    pass
