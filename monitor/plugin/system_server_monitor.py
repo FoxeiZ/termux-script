@@ -1,14 +1,9 @@
-from __future__ import annotations
-
+import subprocess
 from typing import TYPE_CHECKING
 
-
-import subprocess
 import psutil
-
-from lib.plugin import IntervalPlugin
 from lib.manager import get_logger
-
+from lib.plugin import IntervalPlugin
 
 logger = get_logger("SystemServerMonitor")
 
@@ -16,11 +11,18 @@ logger = get_logger("SystemServerMonitor")
 class SystemServerMonitor(IntervalPlugin):
     if TYPE_CHECKING:
         cpu_threshold: int
+        threshold_count_max: int
+        _threshold_count: int
         _cpu_tracker_proc: psutil.Process | None
 
-    def __init__(self, manager, interval=10, webhook_url="", cpu_threshold: int = 100):
+    def __init__(
+        self, manager, interval=10, webhook_url="", cpu_threshold: int = 100, **kwargs
+    ):
         super().__init__(manager, interval, webhook_url)
         self.cpu_threshold = cpu_threshold
+        self.threshold_count_max = kwargs.get("threshold_count_max", 3)
+
+        self._threshold_count = 0
         self._cpu_tracker_proc = None
 
     def _find_process(self, name="CpuTracker"):
@@ -59,14 +61,20 @@ class SystemServerMonitor(IntervalPlugin):
 
         cpu_percent = process.cpu_percent(interval=1)
         if cpu_percent >= self.cpu_threshold:
-            logger.warning(
-                f"system_server is abnormally using {cpu_percent}% CPU. Rebooting."
-            )
-            self.manager.send_webhook(
+            self._threshold_count += 1
+        else:
+            self._threshold_count = 0
+
+        if self._threshold_count >= self.threshold_count_max:
+            msg = f"system_server-CpuTracker is abnormally using {cpu_percent}% CPU. Rebooting."
+            logger.warning(msg)
+            self.send_webhook(
                 self.webhook_url,
-                {
-                    "title": "Damn phone gone wild",
-                    "description": f"CpuTracker is abnormally using {cpu_percent}% CPU. Rebooting.",
-                },
+                embeds=[
+                    {
+                        "title": "Damn phone gone wild",
+                        "description": msg,
+                    }
+                ],
             )
             subprocess.run(["reboot"])

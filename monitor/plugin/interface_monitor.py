@@ -1,10 +1,10 @@
-import json
 import re
 import subprocess
 import time
+from typing import TYPE_CHECKING, Any
 
-from lib.plugin import IntervalPlugin
 from lib.manager import get_logger
+from lib.plugin import IntervalPlugin
 
 logger = get_logger("IfacePlugin")
 
@@ -74,7 +74,13 @@ wlan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
     """
 
 
-class IfacePlugin(IntervalPlugin):
+class InterfaceMonitorPlugin(IntervalPlugin):
+    if TYPE_CHECKING:
+        username: str
+        avatar_url: str
+        exclude_interfaces: list[str]
+        _previous_state: dict[str, Any]
+
     exclude_interfaces = ["dummy0", "lo", "r_rmnet_data0", "rmnet_data0", "rmnet_ipa0"]
 
     def __init__(self, manager, interval: int = 5, webhook_url: str = "") -> None:
@@ -87,7 +93,7 @@ class IfacePlugin(IntervalPlugin):
         self.username = "RN10P"
         self.avatar_url = "https://cdn.discordapp.com/app-assets/1049685078508314696/1249009769075703888.png"
 
-        self.previous_state = {}
+        self._previous_state = {}
 
     def compare_states(self, old_state: dict, new_state: dict) -> bool:
         if set(old_state.keys()) != set(new_state.keys()):
@@ -186,7 +192,7 @@ class IfacePlugin(IntervalPlugin):
             "inline": False,
         }
 
-    def build_embed(self, interfaces: dict) -> str:
+    def build_embeds(self, interfaces: dict) -> list[dict]:
         embeds_list = []
         for interface, data in interfaces.items():
             embed = {
@@ -196,29 +202,27 @@ class IfacePlugin(IntervalPlugin):
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }
             embeds_list.append(embed)
-
-        payload = {
-            "username": self.username,
-            "avatar_url": self.avatar_url,
-            "content": "## Network interface information",
-            "embeds": embeds_list,
-        }
-        return json.dumps(payload)
+        return embeds_list
 
     def run(self):
         current_state = self.parse_network_interfaces(self.get_ifconfig_output())
-        changes = self.compare_states(self.previous_state, current_state)
+        changes = self.compare_states(self._previous_state, current_state)
         if changes and "wlan0" in current_state:
-            embed = self.build_embed(current_state)
-            self.manager.send_webhook(self.webhook_url, embed)
+            embeds = self.build_embeds(current_state)
+            self.send_webhook(
+                username=self.name,
+                avatar_url=self.avatar_url,
+                content="## Network interface information",
+                embeds=embeds,
+            )
             logger.info("Network change detected, sent update to Discord")
 
-        self.previous_state = current_state
+        self._previous_state = current_state
 
 
 if __name__ == "__main__":
     from lib.manager import PluginManager
 
     manager = PluginManager()
-    manager.register_plugin(IfacePlugin(manager))
+    manager.register_plugin(InterfaceMonitorPlugin(manager))
     manager.run()

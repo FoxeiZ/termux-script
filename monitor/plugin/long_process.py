@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from subprocess import PIPE, Popen
 from typing import TYPE_CHECKING
 
-from subprocess import Popen, PIPE
 from lib.plugin import OneTimePlugin
 
 

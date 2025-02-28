@@ -1,15 +1,13 @@
-from pathlib import Path
-from queue import Empty
 import os
 import re
 import signal
 import subprocess
 import time
+from pathlib import Path
+from queue import Empty
 
-
-from lib.plugin import DaemonPlugin
 from lib.manager import PluginManager, get_logger
-
+from lib.plugin import DaemonPlugin
 
 logger = get_logger("TailscalePlugin")
 

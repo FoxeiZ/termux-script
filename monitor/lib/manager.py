@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
-
-import json
-import http.client
+import logging
 import threading
 import time
-from urllib.parse import ParseResult, urlparse
-import logging
+from typing import TYPE_CHECKING, Literal
 
 from .errors import DuplicatePluginError
-from .plugin import OneTimePlugin, DaemonPlugin, IntervalPlugin
-
+from .plugin import DaemonPlugin, IntervalPlugin, OneTimePlugin
 
 __all__ = ["PluginManager", "get_logger", "PluginTypeDict"]
 
@@ -63,77 +58,6 @@ class PluginManager:
             raise DuplicatePluginError(f"Plugin {plugin.name} already registered")
 
         self.plugins.append(plugin)
-
-    def _create_connection(self, url: ParseResult) -> http.client.HTTPSConnection:
-        """Create HTTPS connection for Discord webhook."""
-        return http.client.HTTPSConnection(url.netloc)
-
-    def _make_http_request(
-        self,
-        method: str,
-        url: str,
-        data: str | None = None,
-        headers: dict | None = None,
-    ) -> http.client.HTTPResponse:
-        """Make HTTP request with specified method."""
-        parsed_url = urlparse(url)
-        conn = self._create_connection(parsed_url)
-
-        try:
-            default_headers = {"Content-Type": "application/json"}
-            headers = headers or default_headers
-
-            conn.request(
-                method=method,
-                url=parsed_url.path
-                + ("?" + parsed_url.query if parsed_url.query else ""),
-                body=data,
-                headers=headers,
-            )
-            return conn.getresponse()
-        finally:
-            conn.close()
-
-    def _check_response(self, response: http.client.HTTPResponse) -> bool:
-        """Validate response from Discord webhook."""
-        if response.status not in (200, 201, 204):
-            self._handle_error(f"Discord API error. Status: {response.status}")
-            return False
-        return True
-
-    def _handle_error(self, message: str, exception: Exception | None = None) -> None:
-        """Log errors with consistent format."""
-        if exception:
-            logger.error(f"{message}: {str(exception)}")
-        else:
-            logger.error(message)
-
-    def get(self, url: str, headers: dict | None = None) -> dict:
-        """Send GET request."""
-        try:
-            response = self._make_http_request("GET", url, headers=headers)
-            if self._check_response(response):
-                return json.loads(response.read())
-            return {}
-        except Exception as e:
-            self._handle_error("GET request failed", e)
-            return {}
-
-    def post(self, url: str, data: str | dict, headers: dict | None = None) -> bool:
-        """Send POST request."""
-        try:
-            if isinstance(data, dict):
-                data = json.dumps(data)
-
-            response = self._make_http_request("POST", url, data, headers)
-            return self._check_response(response)
-        except Exception as e:
-            self._handle_error("POST request failed", e)
-            return False
-
-    def send_webhook(self, webhook_url: str, embed: str | dict) -> None:
-        """Send message to Discord webhook."""
-        self.post(webhook_url, embed)
 
     def start(self) -> None:
         """

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from abc import abstractmethod
 import threading
-from typing import Any, TYPE_CHECKING
+from abc import abstractmethod
+from typing import TYPE_CHECKING, Any
 
+import requests
 
 if TYPE_CHECKING:
     import threading
+
     from .manager import PluginManager
 
 
@@ -18,6 +20,7 @@ class Plugin:
         manager: PluginManager
         webhook_url: str
         _thread: threading.Thread | None
+        _http_session: requests.Session
 
     def __init__(self, manager: PluginManager, webhook_url: str = "") -> None:
         """Initialize plugin."""
@@ -26,6 +29,39 @@ class Plugin:
         self.webhook_url = webhook_url
 
         self._thread = None
+        if self.webhook_url:
+            self._http_session = requests.Session()
+
+    @property
+    def http_session(self) -> requests.Session:
+        if not self._http_session:
+            self._http_session = requests.Session()
+        return self._http_session
+
+    def send_webhook(
+        self,
+        username: str | None = None,
+        avatar_url: str | None = None,
+        content: str | None = None,
+        embeds: list[dict] | None = None,
+    ) -> None:
+        """Send a message to the webhook."""
+        if not self.webhook_url:
+            return
+
+        if not username:
+            username = self.name
+
+        payload = {
+            "username": username,
+            "avatar_url": avatar_url,
+            "content": content,
+            "embeds": embeds,
+        }
+        # remove None from payload
+        payload = {k: v for k, v in payload.items() if v is not None}
+
+        self._http_session.post(self.webhook_url, json=payload)
 
 
 class OneTimePlugin(Plugin):
