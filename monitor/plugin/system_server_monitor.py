@@ -69,12 +69,6 @@ class SystemServerMonitor(IntervalPlugin):
             msg = f"system_server-CpuTracker is abnormally using {cpu_percent}% CPU. Rebooting."
             logger.warning(msg)
             self.send_webhook(
-                self.webhook_url,
-                embeds=[
-                    {
-                        "title": "Damn phone gone wild",
-                        "description": msg,
-                    }
-                ],
+                {"embeds": [{"title": "System Server Monitor", "description": msg}]}
             )
             subprocess.run(["reboot"])

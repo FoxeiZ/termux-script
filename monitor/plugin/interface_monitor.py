@@ -3,6 +3,7 @@ import subprocess
 import time
 from typing import TYPE_CHECKING, Any
 
+from lib._types import Embed, EmbedField
 from lib.manager import get_logger
 from lib.plugin import IntervalPlugin
 
@@ -164,7 +165,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
 
         return interfaces
 
-    def format_interface_info(self, interface_name: str, data: dict) -> dict:
+    def format_interface_info(self, interface_name: str, data: dict) -> EmbedField:
         ipv4_info = []
         for ip in data["ipv4"]:
             info = f"Address: {ip['address']}"
@@ -192,7 +193,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
             "inline": False,
         }
 
-    def build_embeds(self, interfaces: dict) -> list[dict]:
+    def build_embeds(self, interfaces: dict) -> list[Embed]:
         embeds_list = []
         for interface, data in interfaces.items():
             embed = {
@@ -210,10 +211,12 @@ class InterfaceMonitorPlugin(IntervalPlugin):
         if changes and "wlan0" in current_state:
             embeds = self.build_embeds(current_state)
             self.send_webhook(
-                username=self.name,
-                avatar_url=self.avatar_url,
-                content="## Network interface information",
-                embeds=embeds,
+                {
+                    "username": self.name,
+                    "avatar_url": self.avatar_url,
+                    "content": "## Network interface information",
+                    "embeds": embeds,
+                }
             )
             logger.info("Network change detected, sent update to Discord")
 

@@ -9,6 +9,7 @@ import requests
 if TYPE_CHECKING:
     import threading
 
+    from ._types import WebhookPayload
     from .manager import PluginManager
 
 
@@ -19,6 +20,7 @@ class Plugin:
         name: str
         manager: PluginManager
         webhook_url: str
+        _message_id: str | None
         _thread: threading.Thread | None
         _http_session: requests.Session
 
@@ -38,30 +40,35 @@ class Plugin:
             self._http_session = requests.Session()
         return self._http_session
 
-    def send_webhook(
-        self,
-        username: str | None = None,
-        avatar_url: str | None = None,
-        content: str | None = None,
-        embeds: list[dict] | None = None,
-    ) -> None:
+    def send_webhook(self, payload: WebhookPayload, wait: bool = False) -> None:
         """Send a message to the webhook."""
         if not self.webhook_url:
             return
 
-        if not username:
-            username = self.name
-
-        payload = {
-            "username": username,
-            "avatar_url": avatar_url,
-            "content": content,
-            "embeds": embeds,
-        }
+        payload.setdefault("username", self.name)
         # remove None from payload
-        payload = {k: v for k, v in payload.items() if v is not None}
+        # payload = {k: v for k, v in payload.items() if v is not None}
 
-        self._http_session.post(self.webhook_url, json=payload)
+        resp = self._http_session.post(
+            self.webhook_url, json=payload, params={"wait": wait}
+        )
+        resp.raise_for_status()
+        if wait:
+            data = resp.json()
+            self._message_id = data["id"]
+            return data
+
+    def edit_webhook(
+        self,
+        payload: WebhookPayload,
+        msg_id: str | None = None,
+    ) -> None:
+        """Edit the webhook URL."""
+        if not msg_id:
+            msg_id = self._message_id
+
+        url = f"{self.webhook_url}/messages/{msg_id}"
+        self._http_session.patch(url, json=payload)
 
 
 class OneTimePlugin(Plugin):
