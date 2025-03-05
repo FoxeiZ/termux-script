@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from html.parser import HTMLParser
 import mimetypes
@@ -5,11 +6,27 @@ from torf import Torrent
 import requests
 
 
-def get_type(path: Path) -> str:
+def get_type(path: Path | str) -> str:
+    if isinstance(path, str):
+        path = Path(path)
+
     mime, _ = mimetypes.guess_type(path)
     if mime:
         return mime.split("/")[0]
     return "folder"
+
+
+def clean_string(
+    string: str, remove: bool = False, replace: bool = False, str_replace: str = ""
+) -> str:
+    pattern = r"2048\.cc@|SaveTwitter\.Net - |\(\d*p\)"
+    if remove:
+        return re.sub(pattern, "", string)
+
+    if replace:
+        return re.sub(pattern, str_replace, string)
+
+    return string
 
 
 class BtDigParser(HTMLParser):
@@ -28,6 +45,8 @@ class BtDigParser(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         data = data.strip()
+        if not data:
+            return
 
         if data == "Name:":
             self.name_hit = True
@@ -41,6 +60,7 @@ class BtDigParser(HTMLParser):
         if not self.hit:
             return
 
+        data = clean_string(data, remove=True)
         if self.type == "files":
             match get_type(Path(data)):
                 case "image":
@@ -101,6 +121,7 @@ class TorrentParser:
         self.folders: list[str] = []
         self.images: list[str] = []
         self.videos: list[str] = []
+        self.files: list[str] = []
 
     @property
     def name(self) -> str:
@@ -109,8 +130,11 @@ class TorrentParser:
     def build(self):
         file: Path
         for file in self.torrent.files:
+            name = clean_string(file.name, remove=True)
+
             if file.is_dir():
-                self.folders.append(file.name)
+                self.folders.append(name)
+
             else:
                 self.folders.extend(
                     folder for folder in file.parts[:-1] if folder not in self.folders
@@ -118,11 +142,11 @@ class TorrentParser:
 
                 match get_type(file):
                     case "image":
-                        self.images.append(file.name)
+                        self.images.append(name)
                     case "video":
-                        self.videos.append(file.name)
+                        self.videos.append(name)
                     case _:
-                        pass
+                        self.files.append(name)
 
 
 class LocalParser:
@@ -139,16 +163,17 @@ class LocalParser:
         return self.path.name
 
     def build_file(self, path: Path) -> None:
+        name = clean_string(path.name, remove=True)
         match get_type(path):
             case "folder":
-                print(path.name)
+                print(name)
                 print("huh?")
             case "image":
-                self.images.append(path.name)
+                self.images.append(name)
             case "video":
-                self.videos.append(path.name)
+                self.videos.append(name)
             case _:  # default
-                self.files.append(path.name)
+                self.files.append(name)
 
     def build(self, path: Path | str | None = None) -> None:
         if not path:
@@ -216,6 +241,12 @@ def get_btdig(url: str):
     return parser
 
 
+def get_btdig_html(html: str):
+    parser = BtDigParser()
+    parser.feed(html)
+    return parser
+
+
 def get_local(path: Path | str):
     torrent = LocalParser(path)
     torrent.build()
@@ -230,8 +261,9 @@ def get_torrent(path: Path | str):
 
 if __name__ == "__main__":
     btdig = get_btdig(
-        "https://btdig.com/b05fc8c4d7e545083f269e49360ba1cc5a5c5601/%E7%8C%AB%E7%88%AA%E5%91%B8%E7%BD%97"
+        r"https://btdig.com/b05fc8c4d7e545083f269e49360ba1cc5a5c5601/%E7%8C%AB%E3%81%A8%E7%88%AA%E5%91%B8%E7%BD%97%E5%91%B8%E7%BD%97"
     )
     local = get_local("D:\\qBittorent\\download\\猫爪呸罗呸罗2024粉丝圈")
-    torrent = get_torrent("D:\\qBittorent\\torrent\\猫と爪呸罗呸罗.torrent")
-    compare(torrent, local, calc_diff=True, calc_dup=False, two_way=True)
+    # btdig_html = get_btdig_html("猫と爪呸罗呸罗 torrent.html")
+    # torrent = get_torrent("D:\\qBittorent\\torrent\\猫と爪呸罗呸罗.torrent")
+    compare(btdig, local, calc_diff=True, calc_dup=False, two_way=True)
