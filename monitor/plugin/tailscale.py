@@ -182,9 +182,15 @@ class TailscalePlugin(DaemonPlugin):
         super().__init__(manager, webhook_url=webhook_url)
 
         logger.debug("Initializing Manager with home_dir: %s", home_dir)
+
+        self.authkey = os.environ.get("TAILSCALE_AUTHKEY", authkey)
+        if not self.authkey:
+            raise ValueError("TAILSCALE_AUTHKEY not found")
+
         self.home_dir = Path(home_dir)
-        self.tailscaled = Tailscaled(self.home_dir, authkey)
+        self.tailscaled = Tailscaled(self.home_dir, self.authkey)
         self.socatd = Socatd()
+
         logger.debug("Manager initialized successfully")
 
     def start(self):
