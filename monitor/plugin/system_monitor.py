@@ -23,6 +23,16 @@ class SystemMonitor(IntervalPlugin):
 
         self.first_run = True
 
+    def get_uptime(self) -> str:
+        return str(
+            datetime.timedelta(
+                seconds=(
+                    datetime.datetime.now()
+                    - datetime.datetime.fromtimestamp(psutil.boot_time())
+                ).seconds
+            )
+        )
+
     def run(self):
         cpu_percent = psutil.cpu_percent()
         memory = psutil.virtual_memory()
@@ -55,6 +65,9 @@ class SystemMonitor(IntervalPlugin):
                             "inline": True,
                         },
                     ],
+                    "footer": {
+                        "text": f"Uptime: {self.get_uptime()}",
+                    },
                     # "timestamp": datetime.datetime.now(datetime.UTC).strftime(
                     #     r"%Y-%m-%dT%H:%M:%SZ"
                     # ),
