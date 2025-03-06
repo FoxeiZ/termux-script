@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from lib.plugin import OneTimePlugin
 
 
-class LongProcess(OneTimePlugin):
+class LongProcessPlugin(OneTimePlugin):
     if TYPE_CHECKING:
         _process: Popen | None
 

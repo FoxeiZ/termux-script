@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 logger = get_logger("SystemMonitor")
 
 
-class SystemMonitor(IntervalPlugin):
+class SystemMonitorPlugin(IntervalPlugin):
     if TYPE_CHECKING:
         first_run: bool
 

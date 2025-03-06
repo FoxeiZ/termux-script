@@ -8,7 +8,7 @@ from lib.plugin import IntervalPlugin
 logger = get_logger("SystemServerMonitor")
 
 
-class SystemServerMonitor(IntervalPlugin):
+class SystemServerPlugin(IntervalPlugin):
     if TYPE_CHECKING:
         cpu_threshold: int
         threshold_count_max: int
