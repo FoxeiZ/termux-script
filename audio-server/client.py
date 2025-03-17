@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import socket
+import threading
 import time
 from typing import TYPE_CHECKING
 
@@ -28,6 +29,9 @@ class AudioClient:
         self.stream = None
         self.stream_info = None
 
+        self._avg_latency = 0
+        self._print_latency_thread = None
+
     def receive_stream_info(self) -> StreamInfo:
         data = self.socket.recv(4)
         data_len = int.from_bytes(data, "big")
@@ -47,6 +51,11 @@ class AudioClient:
             output=True,
         )
 
+    def print_latency(self, interval=1):
+        while True:
+            print(f"Average latency: {self._avg_latency * 1000:.2f} ms")
+            time.sleep(interval)
+
     def start(self):
         if not self.stream:
             raise ValueError("Stream is not initialized")
@@ -54,18 +63,27 @@ class AudioClient:
         if self.stream_info is None:
             raise ValueError("Stream info is not initialized")
 
-        buffer_size = self.stream_info.get("frames_per_buffer", 1024)
+        self._print_latency_thread = threading.Thread(
+            target=self.print_latency,
+            daemon=True,
+        )
+        self._print_latency_thread.start()
+
         last_time = None
+        buffer_size = self.stream_info.get("frames_per_buffer", 1024)
         try:
             while True:
                 data = self.socket.recv(buffer_size)
                 current_time = time.time()
                 if last_time is not None:
-                    latency = current_time - last_time
-                    print(f"Packet latency: {latency:.10f} seconds")
+                    self._avg_latency = (
+                        self._avg_latency * 0.9 + (current_time - last_time) * 0.1
+                    )
                 last_time = current_time
+
                 if not data:
                     break
+
                 self.stream.write(data)
         except KeyboardInterrupt:
             pass
