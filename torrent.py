@@ -1,25 +1,47 @@
+from __future__ import annotations
+
 import re
+import mimetypes
+from os import PathLike
 from pathlib import Path
 from html.parser import HTMLParser
-import mimetypes
-from torf import Torrent
+from typing import TYPE_CHECKING
+
 import requests
+from torf import Torrent
 
 
-def get_type(path: Path | str) -> str:
-    if isinstance(path, str):
+if TYPE_CHECKING:
+    from typing import Literal
+
+
+def get_type(
+    path: Path | PathLike | str,
+) -> Literal["folder", "image", "video", "audio", "file", "unknown"]:
+    if isinstance(path, (PathLike, str)):
         path = Path(path)
 
     mime, _ = mimetypes.guess_type(path)
     if mime:
-        return mime.split("/")[0]
-    return "folder"
+        return mime.split("/")[0]  # type: ignore
+
+    if path.is_file():
+        if path.exists() and path.lstat().st_size == 0:
+            return "unknown"
+
+        if path.suffix in (".jpg", ".jpeg", ".png", ".gif"):
+            return "image"
+        if path.suffix in (".mp4", ".mkv", ".webm"):
+            return "video"
+        return "file"
+
+    return "unknown"
 
 
 def clean_string(
     string: str, remove: bool = False, replace: bool = False, str_replace: str = ""
 ) -> str:
-    pattern = r"2048\.cc@|SaveTwitter\.Net - |\(\d*p\)"
+    pattern = r"2048\.cc@|SaveTwitter\.Net - |\(\d*p\)|_save"
     if remove:
         return re.sub(pattern, "", string)
 
@@ -125,10 +147,10 @@ class TorrentParser:
 
     @property
     def name(self) -> str:
-        return self.torrent.name
+        return self.torrent.name or self.path.name
 
     def build(self):
-        file: Path
+        file: PathLike
         for file in self.torrent.files:
             name = clean_string(file.name, remove=True)
 
@@ -164,16 +186,17 @@ class LocalParser:
 
     def build_file(self, path: Path) -> None:
         name = clean_string(path.name, remove=True)
-        match get_type(path):
-            case "folder":
-                print(name)
-                print("huh?")
+        match _type := get_type(path):
             case "image":
                 self.images.append(name)
             case "video":
                 self.videos.append(name)
-            case _:  # default
+            case "file":
                 self.files.append(name)
+            case _:
+                print(_type, name, end=" ")
+                if path.is_file() and path.lstat().st_size == 0:
+                    return print("empty file")
 
     def build(self, path: Path | str | None = None) -> None:
         if not path:
@@ -261,9 +284,9 @@ def get_torrent(path: Path | str):
 
 if __name__ == "__main__":
     btdig = get_btdig(
-        r"https://btdig.com/b05fc8c4d7e545083f269e49360ba1cc5a5c5601/%E7%8C%AB%E3%81%A8%E7%88%AA%E5%91%B8%E7%BD%97%E5%91%B8%E7%BD%97"
+        r"https://btdig.com/834095a6dc2a4a649126f8f491b82e6de81f5092/%E7%8C%AB%E7%88%AA"
     )
     local = get_local("D:\\qBittorent\\download\\猫爪呸罗呸罗2024粉丝圈")
     # btdig_html = get_btdig_html("猫と爪呸罗呸罗 torrent.html")
     # torrent = get_torrent("D:\\qBittorent\\torrent\\猫と爪呸罗呸罗.torrent")
-    compare(btdig, local, calc_diff=True, calc_dup=False, two_way=True)
+    compare(btdig, local, calc_diff=True, calc_dup=False, two_way=False)
