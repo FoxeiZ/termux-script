@@ -12,6 +12,7 @@ ACK = b"\x11"
 NEED_ACK = b"\x12"
 PING = b"\x13"
 PONG = b"\x14"
+SHUTDOWN = b"\x1f"
 
 
 ####  String encoding  ####
