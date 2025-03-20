@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING, overload
 import constants
 
 if TYPE_CHECKING:
-    from typing import Literal
+    from typing import Literal, Self
 
 
-class TwoWaySocket:
+class CustomSocket:
     if TYPE_CHECKING:
         _socket: socket.socket | None
         _mode: constants.SocketMode
@@ -22,7 +22,7 @@ class TwoWaySocket:
     def __init__(
         self,
         socket: socket.socket | None = None,
-        mode=constants.SocketMode.UNSET,
+        mode: constants.SocketMode = constants.SocketMode.UNSET,
     ):
         self._socket = socket
         self._mode = mode
@@ -42,53 +42,14 @@ class TwoWaySocket:
             raise ValueError("Socket is not initialized")
         return self._socket
 
-    def connect(self, host: str, port: int, **kwargs):
-        if self._mode != constants.SocketMode.UNSET:
-            raise ValueError(f"Socket is already in use with mode {self._mode.name}")
-
-        self._socket = socket.socket(**kwargs)
-        self._socket.connect((host, port))
-        self._mode = constants.SocketMode.CLIENT
-
-    def bind(self, host: str, port: int, **kwargs):
-        if self._mode != constants.SocketMode.UNSET:
-            raise ValueError(f"Socket is already in use with mode {self._mode.name}")
-
-        self._socket = socket.socket(**kwargs)
-        self._socket.bind((host, port))
-        self._mode = constants.SocketMode.SERVER
-
-    def listen(self, backlog: int = 5):
-        if self._mode != constants.SocketMode.SERVER:
-            raise ValueError("Socket is not in server mode")
-        self.socket.listen(backlog)
-
-    def accept(self) -> tuple[socket.socket, tuple[str, int]]:
-        if self._mode != constants.SocketMode.SERVER:
-            raise ValueError("Socket is not in server mode")
-        return self.socket.accept()
-
-    # def __clear_recv_buffer(self):
-    #     if sys.platform == "win32":
-    #         self.socket.setblocking(False)
-    #         try:
-    #             while True:
-    #                 data = self.socket.recv(1024)
-    #                 if not data:
-    #                     break
-    #         except BlockingIOError:
-    #             pass
-    #         self.socket.setblocking(True)
-
-    #     if sys.platform == "linux":
-    #         try:
-    #             self.socket.settimeout(0)
-    #             while True:
-    #                 data = self.socket.recv(1024, socket.MSG_DONTWAIT)
-    #                 if not data:
-    #                     break
-    #         except BlockingIOError:
-    #             pass
+    @socket.setter
+    def socket(self, value: socket.socket | Self):
+        if isinstance(value, CustomSocket):
+            self._socket = value.socket
+        elif isinstance(value, socket.socket):
+            self._socket = value
+        else:
+            raise ValueError("Invalid value type")
 
     def _send(self, data: bytes, wait_ack: bool = True):
         # TODO: Implement timeout, retry
@@ -222,12 +183,6 @@ class TwoWaySocket:
     def send(self, data: bytes, wait_ack: bool = True):
         """Send data using the packet protocol."""
         self.send_packet(data, wait_ack=wait_ack)
-        # if len(data) > 1024:  # Use packet protocol for larger data
-        # else:
-        #     # Use the legacy method for small data
-        #     _len = len(data).to_bytes(4, "big")
-        #     self.send_packet(_len, wait_ack=wait_ack)
-        #     self.send_packet(data, wait_ack=wait_ack)
 
     def receive(self, size: int = -1) -> bytes:
         """
@@ -354,3 +309,40 @@ class TwoWaySocket:
         if self._socket:
             self._socket.close()
             self._socket = None
+
+
+class ClientSocket(CustomSocket):
+    def __init__(self, socket: socket.socket | None = None):
+        super().__init__(socket=socket, mode=constants.SocketMode.CLIENT)
+
+    def connect(
+        self,
+        host: str,
+        port: int,
+        family: int = socket.AF_INET,
+        type: int = socket.SOCK_STREAM,
+    ):
+        self.socket = socket.socket(family, type)
+        self.socket.connect((host, port))
+
+
+class ServerSocket(CustomSocket):
+    def __init__(self):
+        super().__init__(mode=constants.SocketMode.SERVER)
+
+    def accept(self) -> tuple[ClientSocket, tuple[str, int]]:
+        sock, addr = self.socket.accept()
+        return ClientSocket(sock), addr
+
+    def bind(
+        self,
+        host: str,
+        port: int,
+        family: int = socket.AF_INET,
+        type: int = socket.SOCK_STREAM,
+    ):
+        self.socket = socket.socket(family, type)
+        self.socket.bind((host, port))
+
+    def listen(self, backlog: int = 5):
+        self.socket.listen(backlog)
