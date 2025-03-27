@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-import os
+import sys
 from typing import TYPE_CHECKING
 
-# get current path of the file we in
-PWD = os.path.dirname(os.path.abspath(__file__))
-# add the path to the environment variable
-os.environ["PATH"] += os.pathsep + PWD
+if sys.platform == "win32":
+    import os
 
-import opuslib  # noqa
-from .base import BaseCodec  # noqa
+    # get current path of the file we in
+    PWD = os.path.dirname(os.path.abspath(__file__))
+    # add the path to the environment variable
+    os.environ["PATH"] += os.pathsep + PWD
 
+import opuslib
+
+from .base import BaseCodec
 
 if TYPE_CHECKING:
     from _types import CodecInfo
