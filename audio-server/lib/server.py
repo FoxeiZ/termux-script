@@ -1,28 +1,51 @@
 from __future__ import annotations
 
-import json
-import socket
 from threading import Event, Thread
 from time import sleep
 from typing import TYPE_CHECKING, cast
 
 import pyaudio
+from codec._types import CodecInfo, StreamInfo
+from codec.base import RawCodec
+from sockets import CustomSocket, ServerSocket
 
 if TYPE_CHECKING:
     from socket import _RetAddress
     from typing import Literal
 
-    from _types import StreamInfo
+    from codec.base import BaseCodec
+
+
+class ClientState:
+    if TYPE_CHECKING:
+        socket: CustomSocket
+        address: _RetAddress
+        codec: BaseCodec | None
+        outbound_buffer: bytearray
+        inbound_buffer: bytearray
+        handshake_complete: bool
+        codec_info_received: bool
+        error: bool
+
+    def __init__(self, socket: CustomSocket, address: _RetAddress):
+        self.socket = socket
+        self.address = address
+        self.codec = None
+        self.outbound_buffer = bytearray()
+        self.inbound_buffer = bytearray()
+        self.handshake_complete = False
+        self.codec_info_received = False
+        self.error = False
 
 
 class ClientThread(Thread):
     if TYPE_CHECKING:
-        client_socket: socket.socket
-        address: tuple
+        client_socket: CustomSocket
+        address: _RetAddress
         server: AudioServer
 
     def __init__(
-        self, client_socket: socket.socket, address: _RetAddress, server: "AudioServer"
+        self, client_socket: CustomSocket, address: _RetAddress, server: "AudioServer"
     ):
         Thread.__init__(self)
         self.client_socket = client_socket
@@ -30,22 +53,27 @@ class ClientThread(Thread):
         self.server = server
 
     def send_stream_info(self):
-        stream_info = json.dumps(self.server.stream_info).encode(
-            errors="xmlcharrefreplace"
-        )
-        self.client_socket.send(len(stream_info).to_bytes(4, "big"))
-        self.client_socket.send(stream_info)
+        stream_info = self.server.stream_info
+        self.client_socket.send_json(cast(dict, stream_info))
+
+    def send_codec_info(self, codec_info: CodecInfo):
+        codec_info = codec_info.copy()
+        self.client_socket.send_json(cast(dict, codec_info))
 
     def run(self):
         print(f"Connection from {self.address}")
+        codec = self.server.codec
+
         self.send_stream_info()
+        self.send_codec_info(codec.to_dict())
+
         while not self.server.is_shutdown:
             try:
                 data = self.server.get_next_frame()
                 if not data:
                     break
 
-                self.client_socket.send(data)
+                self.client_socket.send(codec.encode(data))
             except ConnectionResetError:
                 break
 
@@ -58,38 +86,53 @@ class AudioServer:
     if TYPE_CHECKING:
         host: str
         port: int
-        server_socket: socket.socket
+        server_socket: ServerSocket
         audio: pyaudio.PyAudio
         stream: pyaudio.Stream
+        codec: BaseCodec
         _stream_info: StreamInfo
-        _notifier: Event
+        _frame_notifier: Event
         _shutdown: bool
         _audio_frame: bytes | None
         # _audio_listener_thread: Thread
         _socket_listener_thread: Thread
         _client_threads: dict[_RetAddress, ClientThread]
 
-    def __init__(self, host="127.0.0.1", port=12345, buffer_size=1024):
+    def __init__(
+        self,
+        host="127.0.0.1",
+        port=12345,
+        buffer_size=1024,
+        codec_cls: type[BaseCodec] = RawCodec,
+    ):
         self.host = host
         self.port = port
         self.buffer_size = buffer_size
 
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.bind((self.host, self.port))
+        self.server_socket = ServerSocket.build_socket()
+        self.server_socket.bind(host, port)
 
         self.audio = pyaudio.PyAudio()
         self._stream_info = self.select_audio_device(index=38)
         # self._stream_info = self.select_audio_device(
-        #     "Input", filter_channels=2, filter_name="Virtual", filter_rate=48000
+        #     filter_type="Input",
+        #     filter_channels=2,
+        #     filter_name="Virtual",
+        #     filter_rate=48000,
         # )
         self.stream = self.audio.open(
             **self._stream_info,
             stream_callback=self._audio_callback,
         )
+        self.codec = codec_cls(
+            channels=2,
+            rate=48000,
+            frames_per_buffer=self._stream_info["frames_per_buffer"],
+        )
 
-        self._notifier = Event()
-        self._shutdown = False
+        self._frame_notifier = Event()
         self._audio_frame = None
+        self._shutdown = False
 
         self._client_threads = {}
         self._socket_listener_thread = Thread(target=self._socket_listener, daemon=True)
@@ -101,7 +144,7 @@ class AudioServer:
         return self._stream_info
 
     def wait_for_next_frame(self, timeout: float | None = None):
-        return self._notifier.wait(timeout)
+        return self._frame_notifier.wait(timeout)
 
     def get_next_frame(self):
         self.wait_for_next_frame()
@@ -169,8 +212,12 @@ class AudioServer:
         # print(
         #     f"audio received: {len(in_data)} bytes, frame_count: {frame_count}, time_info: {time_info}, status: {status}"
         # )
-        self._notifier.set()
-        self._notifier.clear()
+        self._frame_notifier.set()
+        self._frame_notifier.clear()
+
+        if self._shutdown:
+            return (None, pyaudio.paComplete)
+
         return (in_data, pyaudio.paContinue)
 
     def _socket_listener(self):
@@ -205,14 +252,14 @@ class AudioServer:
         self.audio.terminate()
         self.server_socket.close()
         self._shutdown = True
-        self._notifier.set()
+        self._frame_notifier.set()
         # self._audio_listener_thread.join()
         for client_thread in self._client_threads.values():
             client_thread.join()
 
 
 if __name__ == "__main__":
-    server = AudioServer(host="0.0.0.0", buffer_size=1024)
+    server = AudioServer(host="0.0.0.0", buffer_size=1920)
     try:
         server.start()
     except KeyboardInterrupt:

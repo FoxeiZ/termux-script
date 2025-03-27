@@ -8,7 +8,7 @@ import string
 import time
 from typing import TYPE_CHECKING, overload
 
-import constants
+from . import constants
 
 if TYPE_CHECKING:
     from typing import Literal, Self
@@ -27,6 +27,15 @@ class CustomSocket:
         self._socket = socket
         self._mode = mode
         self._closed = False
+
+    @classmethod
+    def build_socket(
+        cls,
+        family: int = socket.AF_INET,
+        type: int = socket.SOCK_STREAM,
+        proto: int = 0,
+    ):
+        return cls(socket=socket.socket(family, type, proto))
 
     @property
     def mode(self) -> constants.SocketMode:
@@ -309,40 +318,3 @@ class CustomSocket:
         if self._socket:
             self._socket.close()
             self._socket = None
-
-
-class ClientSocket(CustomSocket):
-    def __init__(self, socket: socket.socket | None = None):
-        super().__init__(socket=socket, mode=constants.SocketMode.CLIENT)
-
-    def connect(
-        self,
-        host: str,
-        port: int,
-        family: int = socket.AF_INET,
-        type: int = socket.SOCK_STREAM,
-    ):
-        self.socket = socket.socket(family, type)
-        self.socket.connect((host, port))
-
-
-class ServerSocket(CustomSocket):
-    def __init__(self):
-        super().__init__(mode=constants.SocketMode.SERVER)
-
-    def accept(self) -> tuple[ClientSocket, tuple[str, int]]:
-        sock, addr = self.socket.accept()
-        return ClientSocket(sock), addr
-
-    def bind(
-        self,
-        host: str,
-        port: int,
-        family: int = socket.AF_INET,
-        type: int = socket.SOCK_STREAM,
-    ):
-        self.socket = socket.socket(family, type)
-        self.socket.bind((host, port))
-
-    def listen(self, backlog: int = 5):
-        self.socket.listen(backlog)
