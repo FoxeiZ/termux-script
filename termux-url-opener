@@ -1,0 +1,137 @@
+#!/data/data/com.termux/files/usr/bin/sh
+
+
+stringContain() { [ -z "${2##*$1*}" ]; }
+
+URL=$1
+if stringContain '/c/' "$URL" || stringContain '/channel/' "$URL"; then URL="${URL}/videos"; fi
+if stringContain "music.youtube.com" "$URL"; then ytMusic="true"; fi
+noti() {
+    su -lp 2000 -c "cmd notification post -S bigtext --title '$1' lmao '$2'" > /dev/null 2>&1
+}
+
+tms() {
+    termux-media-scan -r /sdcard/Music/youtube-dl/
+}
+
+startmpv() {
+    mpv --force-seekable=yes --no-video --ytdl-format="93/bestaudio[ext=webm]/bestaudio/best" --idle "$@"
+}
+
+socket_handler() {
+    if [ -S "$PWD/bin/mpvsocket" ]  # check if we already have a socket
+    then
+        alive=`echo '{"command": []}' | jq -c --arg url "$URL" '.command = ["loadfile", $URL, "append-play"]' | socat - "$PWD/bin/mpvsocket"`
+
+        if [ -z "$alive" ]  # we do have a socket, but if nothing responds, we remove it and start a fresh session
+        then
+            rm -f "$PWD/bin/mpvsocket"
+            return
+        fi
+
+        echo '{"command": []}' | jq -c --arg msg "[ipc] Added $URL" '.command = ["print-text", $msg]' | socat - "$PWD/bin/mpvsocket"
+        exit 0
+    fi
+    return  # call when no socket avaliable
+}
+
+base_downloader() {
+    yt-dlp \
+    -v \
+    --yes-playlist \
+    --no-mtime \
+    --write-playlist-metafiles \
+    --embed-thumbnail \
+    --convert-thumbnails png \
+    --embed-metadata \
+    --add-metadata \
+    --embed-chapters \
+    --parse-metadata ":(?P<meta_synopsis>)" \
+    --parse-metadata ":(?P<meta_date>)" \
+    --exec "playlist:termux-media-scan -r {}" \
+    "$@"
+    exit 0
+}
+# --exec "playlist:termux-media-scan -r '/sdcard/Music/%(album)s'"
+
+# audio only
+audio_only_download() {
+    base_downloader -ciw --format "141/bestaudio/best" --extract-audio \
+                    --parse-metadata "%(album,playlist_title)s:%(album)s" --add-metadata \
+                    --parse-metadata "%(track_number,playlist_index|0)s:%(track_number)s" --add-metadata \
+                    --parse-metadata "%(artist,webpage_url_domain)s:%(artist)s" --add-metadata \
+                    --write-sub --sub-lang en,ja,vi --convert-subs lrc \
+                    --output "/sdcard/Music/%(artist)s/%(title)s.%(ext)s" \
+                    "$URL"
+}
+
+# video
+video_download() {
+    base_downloader --format 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best' \
+                    -ciw --merge-output-format mp4 \
+                    --parse-metadata "%(artist,webpage_url_domain)s:%(artist)s" --add-metadata \
+                    --write-sub --sub-lang en,ja,vi \
+                    --output "/sdcard/Movies/%(title)s.%(ext)s" \
+                    "$URL"
+}
+
+#    --parse-metadata "%(artist,album_artist|)s:%(artist)s" \
+#ytmusic_downloader() {
+#    base_downloader \
+#    --format "bestaudio[ext=webm]/bestaudio/b" --extract-audio \
+#    --exec-before-download "ffmpeg -i %(thumbnails.-1.filepath)q -vf crop=\"'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'\" %(thumbnails.-1.filepath)q.png > /dev/null 2>&1" \
+#    --exec-before-download "mv %(thumbnails.-1.filepath)q.png %(thumbnails.-1.filepath)q" \
+#    --parse-metadata "%(artist)s:%(meta_album_artist)s" \
+#    --replace-in-metadata "meta_album_artist" ",.+" "" \
+#    --parse-metadata "%(track_number,playlist_index|0)s:%(track_number)s" \
+#    --parse-metadata "%(album,playlist_title)s:%(album)s" \
+#    --parse-metadata "%(genre|)s:%(genre)s" \
+#    --parse-metadata "description:(?P<meta_date>(?<=Released on: )\d{4})" \
+#    --output "/sdcard/Music/%(album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s" \
+#    "$URL"
+#}
+
+ytmusic_downloader() {
+    base_downloader \
+    --format "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best/b" \
+    --extract-audio \
+    --exec-before-download "ffmpeg -i %(thumbnails.-1.filepath)q -vf crop=\"'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'\" %(thumbnails.-1.filepath)q.png > /dev/null 2>&1" \
+    --exec-before-download "mv %(thumbnails.-1.filepath)q.png %(thumbnails.-1.filepath)q" \
+    --parse-metadata "%(artist|Unknown Artist)s:%(artist)s" \
+    --replace-in-metadata "meta_album_artist" ",.+" "" \
+    --parse-metadata "%(track_number,playlist_index|01)s:%(track_number)s" \
+    --parse-metadata "%(album,playlist_title|Unknown Album)s:%(album)s" \
+    --parse-metadata "%(genre|Unknown Genre)s:%(genre)s" \
+    --parse-metadata "description:(?P<meta_date>(?<=Released on: )\d{4})" \
+    --output "/sdcard/Music/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s" \
+    "$URL"
+}
+
+not_music_url() {
+    echo "$URL"
+    echo 'a - Audio Only'
+    echo 'v - Video w/au'
+    echo 'p - Cache and open IPC server'
+    read n
+
+    clear
+    echo "$URL\n"
+
+    case $n in
+        a)audio_only_download;;
+        v)video_download;;
+        p)trap "rm $PWD/bin/mpvsocket; exit 0" 2 3 9 15;
+          startmpv "$URL" --input-ipc-server="$PWD/bin/mpvsocket";
+          rm "$PWD/bin/mpvsocket";;
+    esac
+    exit 0
+}
+
+# Youtube usually fuck up the encryption key so this here is to just make sure everything is up to date
+pip install -U yt-dlp
+
+if socket_handler  # check if socket is alive
+then
+    [ "$ytMusic" ] || not_music_url
+    ytmusic_downloader
+fi
