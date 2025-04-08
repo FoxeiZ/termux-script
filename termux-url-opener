@@ -98,8 +98,10 @@ ytmusic_downloader() {
     --exec-before-download "mv %(thumbnails.-1.filepath)q.png %(thumbnails.-1.filepath)q" \
     --parse-metadata "artist:(?P<meta_album_artist>.*)" \
     --replace-in-metadata "meta_album_artist" "[,/&].+" "" \
+    --replace-in-metadata "artist" " - Topic$" "" \
     --parse-metadata "%(track_number,playlist_index|01)s:%(track_number)s" \
     --parse-metadata "%(album,playlist_title|Unknown Album)s:%(album)s" \
+    --replace-in-metadata "album" "^Album - " "" \
     --parse-metadata "%(genre|Unknown Genre)s:%(genre)s" \
     --parse-metadata "description:(?P<meta_date>(?<=Released on: )\d{4})" \
     --output "/sdcard/Music/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s" \
