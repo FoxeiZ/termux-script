@@ -1,5 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/sh
 
+OUTDIR=${OUTDIR:-/sdcard}
 
 stringContain() { [ -z "${2##*"$1"*}" ]; }
 
@@ -57,7 +58,8 @@ base_downloader() {
 
 # audio only
 audio_only_download() {
-    base_downloader -ciw --format "141/bestaudio/best" --extract-audio \
+    base_downloader -ciw \
+    --format "141/bestaudio/best" --extract-audio \
     --parse-metadata "%(album,playlist_title)s:%(album)s" --add-metadata \
     --parse-metadata "%(track_number,playlist_index|0)s:%(track_number)s" --add-metadata \
     --parse-metadata "%(artist,webpage_url_domain)s:%(artist)s" --add-metadata \
@@ -108,6 +110,23 @@ ytmusic_downloader() {
     "$URL"
 }
 
+ytmusic_downloader_test() {
+    base_downloader \
+    --playlist-items 1:3 \
+    --format "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best/b" \
+    --extract-audio \
+    --exec-before-download "ffmpeg -i %(thumbnails.-1.filepath)q -vf crop=\"'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'\" %(thumbnails.-1.filepath)q.png > /dev/null 2>&1" \
+    --exec-before-download "mv %(thumbnails.-1.filepath)q.png %(thumbnails.-1.filepath)q" \
+    --parse-metadata "%(artist|Unknown Artist)s:%(artist)s" \
+    --replace-in-metadata "meta_album_artist" ",.+" "" \
+    --parse-metadata "%(track_number,playlist_index|01)s:%(track_number)s" \
+    --parse-metadata "%(album,playlist_title|Unknown Album)s:%(album)s" \
+    --parse-metadata "%(genre|Unknown Genre)s:%(genre)s" \
+    --parse-metadata "description:(?P<meta_date>(?<=Released on: )\d{4})" \
+    --output "/sdcard/Music/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s" \
+    "$URL"
+}
+
 not_music_url() {
     echo "$URL"
     echo 'a - Audio Only'
@@ -116,7 +135,8 @@ not_music_url() {
     read -r n
     
     clear
-    echo "$URL\n"
+    echo "$URL"
+    echo
     
     case $n in
         a)audio_only_download;;
@@ -134,5 +154,9 @@ pip install -U yt-dlp
 if socket_handler  # check if socket is alive
 then
     [ "$ytMusic" ] || not_music_url
-    ytmusic_downloader
+    if [ -n "$TEST" ]; then
+        ytmusic_downloader_test
+    else
+        ytmusic_downloader
+    fi
 fi
