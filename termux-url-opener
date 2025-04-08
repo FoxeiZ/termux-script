@@ -138,12 +138,20 @@ not_music_url() {
         
         # Handle the user's choice
         case $choice in
-            a) echo "Selected: Audio Only Download"; audio_only_download;;
-            v) echo "Selected: Video with Audio Download"; video_download;;
-            p) echo "Selected: Cache and Open MPV with IPC server";
-                trap 'rm -f $PWD/bin/mpvsocket; exit 0' 2 3 15;
-                startmpv "$URL" --input-ipc-server="$PWD/bin/mpvsocket";
-            rm -f "$PWD/bin/mpvsocket";;
+            a)
+                echo "Selected: Audio Only Download"
+                audio_only_download
+            ;;
+            v)
+                echo "Selected: Video with Audio Download"
+                video_download
+            ;;
+            p)
+                echo "Selected: Cache and Open MPV with IPC server"
+                trap 'rm -f $PWD/bin/mpvsocket; exit 0' 2 3 15
+                startmpv "$URL" --input-ipc-server="$PWD/bin/mpvsocket"
+                rm -f "$PWD/bin/mpvsocket"
+            ;;
         esac
     else
         rm -f "$tempfile"
@@ -173,7 +181,8 @@ use_simple_ui() {
         v)
             video_download
         ;;
-        p)trap 'rm -f $PWD/bin/mpvsocket; exit 0' 2 3 15
+        p)
+            trap 'rm -f $PWD/bin/mpvsocket; exit 0' 2 3 15
             startmpv "$URL" --input-ipc-server="$PWD/bin/mpvsocket"
             rm -f "$PWD/bin/mpvsocket"
         ;;
