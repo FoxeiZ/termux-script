@@ -96,7 +96,7 @@ ytmusic_downloader() {
     --extract-audio \
     --exec-before-download "ffmpeg -i %(thumbnails.-1.filepath)q -vf crop=\"'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'\" %(thumbnails.-1.filepath)q.png > /dev/null 2>&1" \
     --exec-before-download "mv %(thumbnails.-1.filepath)q.png %(thumbnails.-1.filepath)q" \
-    --replace-in-metadata "artist" " - Topic$" "" \
+    --replace-in-metadata "artist,meta_album_artist" " - Topic$" "" \
     --parse-metadata "artist:(?P<meta_album_artist>.*)" \
     --replace-in-metadata "meta_album_artist" "[,/&].+" "" \
     --parse-metadata "%(track_number,playlist_index|01)s:%(track_number)s" \
