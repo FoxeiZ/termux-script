@@ -155,6 +155,7 @@ if socket_handler  # check if socket is alive
 then
     [ "$ytMusic" ] || not_music_url
     if [ -n "$TEST" ]; then
+        echo "Running is test mode"
         ytmusic_downloader_test
     else
         ytmusic_downloader
