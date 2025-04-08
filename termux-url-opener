@@ -122,11 +122,16 @@ not_music_url() {
     echo
     
     case $n in
-        a)audio_only_download;;
-        v)video_download;;
-        p)trap 'rm $PWD/bin/mpvsocket; exit 0' 2 3 15;
-            startmpv "$URL" --input-ipc-server="$PWD/bin/mpvsocket";
-        rm "$PWD/bin/mpvsocket";;
+        a)
+            audio_only_download
+        ;;
+        v)
+            video_download
+        ;;
+        p)trap 'rm -f $PWD/bin/mpvsocket; exit 0' 2 3 15
+            startmpv "$URL" --input-ipc-server="$PWD/bin/mpvsocket"
+            rm -f "$PWD/bin/mpvsocket"
+        ;;
     esac
     exit 0
 }
