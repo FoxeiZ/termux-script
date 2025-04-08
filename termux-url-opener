@@ -1,19 +1,15 @@
 #!/data/data/com.termux/files/usr/bin/sh
 
-OUTDIR=${OUTDIR:-/sdcard}
-
 stringContain() { [ -z "${2##*"$1"*}" ]; }
 
 
 URL=$1
 if stringContain '/c/' "$URL" || stringContain '/channel/' "$URL"; then URL="${URL}/videos"; fi
 if stringContain "music.youtube.com" "$URL"; then ytMusic="true"; fi
+
+
 noti() {
     su -lp 2000 -c "cmd notification post -S bigtext --title '$1' lmao '$2'" > /dev/null 2>&1
-}
-
-tms() {
-    termux-media-scan -r /sdcard/Music/youtube-dl/
 }
 
 startmpv() {
@@ -111,6 +107,55 @@ ytmusic_downloader() {
 }
 
 not_music_url() {
+    # Check if dialog is installed, if not try to install it
+    if ! command -v dialog > /dev/null; then
+        echo "Installing dialog package..."
+        pkg install dialog -y || { echo "Failed to install dialog. Falling back to simple UI."; use_simple_ui; return; }
+    fi
+    
+    # Use temporary file for dialog output
+    tempfile=$(mktemp)
+    
+    # Use dialog to create a menu
+    dialog --clear --backtitle "Termux URL Handler" --title "URL Handler" \
+    --menu "Select how to handle this URL:\n$URL" 15 75 3 \
+    "a" "Audio Only Download" \
+    "v" "Video with Audio Download" \
+    "p" "Cache and Open MPV with IPC server" 2> "$tempfile"
+    
+    # Get dialog exit status
+    status=$?
+    
+    # Clear the screen
+    clear
+    echo "URL: $URL"
+    echo
+    
+    # Get the choice
+    if [ $status = 0 ]; then
+        choice=$(cat "$tempfile")
+        rm -f "$tempfile"
+        
+        # Handle the user's choice
+        case $choice in
+            a) echo "Selected: Audio Only Download"; audio_only_download;;
+            v) echo "Selected: Video with Audio Download"; video_download;;
+            p) echo "Selected: Cache and Open MPV with IPC server";
+                trap 'rm -f $PWD/bin/mpvsocket; exit 0' 2 3 15;
+                startmpv "$URL" --input-ipc-server="$PWD/bin/mpvsocket";
+            rm -f "$PWD/bin/mpvsocket";;
+        esac
+    else
+        rm -f "$tempfile"
+        echo "Operation cancelled."
+        exit 1
+    fi
+    
+    exit 0
+}
+
+# Fallback to simple UI if dialog fails
+use_simple_ui() {
     echo "$URL"
     echo 'a - Audio Only'
     echo 'v - Video w/au'
@@ -142,10 +187,5 @@ pip install -U yt-dlp
 if socket_handler  # check if socket is alive
 then
     [ "$ytMusic" ] || not_music_url
-    if [ -n "$TEST" ]; then
-        echo "Running is test mode"
-        ytmusic_downloader_test
-    else
-        ytmusic_downloader
-    fi
+    ytmusic_downloader
 fi
