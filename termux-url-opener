@@ -1,7 +1,8 @@
 #!/data/data/com.termux/files/usr/bin/sh
 
 
-stringContain() { [ -z "${2##*$1*}" ]; }
+stringContain() { [ -z "${2##*"$1"*}" ]; }
+
 
 URL=$1
 if stringContain '/c/' "$URL" || stringContain '/channel/' "$URL"; then URL="${URL}/videos"; fi
@@ -21,14 +22,14 @@ startmpv() {
 socket_handler() {
     if [ -S "$PWD/bin/mpvsocket" ]  # check if we already have a socket
     then
-        alive=`echo '{"command": []}' | jq -c --arg url "$URL" '.command = ["loadfile", $URL, "append-play"]' | socat - "$PWD/bin/mpvsocket"`
-
+        alive=$(echo '{"command": []}' | jq -c --arg url "$URL" '.command = ["loadfile", $URL, "append-play"]' | socat - "$PWD/bin/mpvsocket")
+        
         if [ -z "$alive" ]  # we do have a socket, but if nothing responds, we remove it and start a fresh session
         then
             rm -f "$PWD/bin/mpvsocket"
             return
         fi
-
+        
         echo '{"command": []}' | jq -c --arg msg "[ipc] Added $URL" '.command = ["print-text", $msg]' | socat - "$PWD/bin/mpvsocket"
         exit 0
     fi
@@ -57,22 +58,22 @@ base_downloader() {
 # audio only
 audio_only_download() {
     base_downloader -ciw --format "141/bestaudio/best" --extract-audio \
-                    --parse-metadata "%(album,playlist_title)s:%(album)s" --add-metadata \
-                    --parse-metadata "%(track_number,playlist_index|0)s:%(track_number)s" --add-metadata \
-                    --parse-metadata "%(artist,webpage_url_domain)s:%(artist)s" --add-metadata \
-                    --write-sub --sub-lang en,ja,vi --convert-subs lrc \
-                    --output "/sdcard/Music/%(artist)s/%(title)s.%(ext)s" \
-                    "$URL"
+    --parse-metadata "%(album,playlist_title)s:%(album)s" --add-metadata \
+    --parse-metadata "%(track_number,playlist_index|0)s:%(track_number)s" --add-metadata \
+    --parse-metadata "%(artist,webpage_url_domain)s:%(artist)s" --add-metadata \
+    --write-sub --sub-lang en,ja,vi --convert-subs lrc \
+    --output "/sdcard/Music/%(artist)s/%(title)s.%(ext)s" \
+    "$URL"
 }
 
 # video
 video_download() {
     base_downloader --format 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best' \
-                    -ciw --merge-output-format mp4 \
-                    --parse-metadata "%(artist,webpage_url_domain)s:%(artist)s" --add-metadata \
-                    --write-sub --sub-lang en,ja,vi \
-                    --output "/sdcard/Movies/%(title)s.%(ext)s" \
-                    "$URL"
+    -ciw --merge-output-format mp4 \
+    --parse-metadata "%(artist,webpage_url_domain)s:%(artist)s" --add-metadata \
+    --write-sub --sub-lang en,ja,vi \
+    --output "/sdcard/Movies/%(title)s.%(ext)s" \
+    "$URL"
 }
 
 #    --parse-metadata "%(artist,album_artist|)s:%(artist)s" \
@@ -112,17 +113,17 @@ not_music_url() {
     echo 'a - Audio Only'
     echo 'v - Video w/au'
     echo 'p - Cache and open IPC server'
-    read n
-
+    read -r n
+    
     clear
     echo "$URL\n"
-
+    
     case $n in
         a)audio_only_download;;
         v)video_download;;
-        p)trap "rm $PWD/bin/mpvsocket; exit 0" 2 3 9 15;
-          startmpv "$URL" --input-ipc-server="$PWD/bin/mpvsocket";
-          rm "$PWD/bin/mpvsocket";;
+        p)trap 'rm $PWD/bin/mpvsocket; exit 0' 2 3 15;
+            startmpv "$URL" --input-ipc-server="$PWD/bin/mpvsocket";
+        rm "$PWD/bin/mpvsocket";;
     esac
     exit 0
 }
