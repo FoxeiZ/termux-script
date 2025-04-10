@@ -3,6 +3,7 @@ import subprocess
 from typing import TYPE_CHECKING
 
 import psutil
+from lib.errors import PluginError
 from lib.manager import get_logger
 from lib.plugin import IntervalPlugin
 
@@ -22,8 +23,9 @@ class SystemServerPlugin(IntervalPlugin):
         try:
             os.lstat("/proc/stat")
         except PermissionError:
-            logger.error("Permission denied to access /proc/stat. Please run as root.")
-            return
+            raise PluginError(
+                "Permission denied to access /proc/stat. Please run as root."
+            )
 
         super().__init__(manager, interval, webhook_url)
         self.cpu_threshold = cpu_threshold

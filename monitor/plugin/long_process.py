@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from subprocess import PIPE, Popen
+from subprocess import PIPE, Popen, TimeoutExpired
 from typing import TYPE_CHECKING
 
 from lib.plugin import OneTimePlugin
@@ -58,6 +58,13 @@ class LongProcessPluginWithLongOutput(LongProcessPlugin):
             stdout=PIPE,
             stderr=PIPE,
         )
+        print("Process started")
+        print(self._process)
+        print(self._process.pid)
         stdout, _ = self._process.communicate()
-        self._process.wait(10)
+        try:
+            self._process.wait(timeout=5)
+        except TimeoutExpired:
+            self._process.terminate()
+
         self.send_success(stdout.read().decode())

@@ -72,6 +72,7 @@ class PluginManager:
                 f"Plugin {plugin.__name__} failed to load: {e.__class__.__name__}: {e}"
             )
             return
+
         except Exception as e:
             logger.error(
                 f"There was an error when trying to load the plugin, {e.__class__.__name__}: {e}"
