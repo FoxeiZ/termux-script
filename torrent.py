@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import re
 import mimetypes
+import re
+from html.parser import HTMLParser
 from os import PathLike
 from pathlib import Path
-from html.parser import HTMLParser
 from typing import TYPE_CHECKING
 
 import requests
 from torf import Torrent
-
 
 if TYPE_CHECKING:
     from typing import Literal

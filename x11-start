@@ -16,23 +16,23 @@ if [ "$1" = "--gpu" ]; then
     # env set for gpu accel
     OPTSENV="${OPTSENV} GALLIUM_DRIVER=virpipe MESA_GL_VERSION_OVERRIDE=4.5"
     shift
-
+    
     # use angle backend, default is android-gl (best?)
     if [ "$1" = "--vulkan" ]; then
         ARGS="--angle-vulkan"
-    elif [ "$1" = "--gl" ]; then
+        elif [ "$1" = "--gl" ]; then
         ARGS="--angle-gl"
-    elif [ "$1" = "--null" ]; then
+        elif [ "$1" = "--null" ]; then
         ARGS="--angle-vulkan-null"
     fi
-
+    
     # shift again if ARGS is set
     if [ -n "$ARGS" ]; then
         shift
     else
         ARGS="--angle-gl"
     fi
-
+    
     virgl_test_server_android "$ARGS" &
 fi
 

@@ -29,19 +29,19 @@ do
         --gpu)
             GPU=1
             OPTSENV="${OPTSENV} GALLIUM_DRIVER=virpipe MESA_GL_VERSION_OVERRIDE=4.5"
-#            if [ x"$_additional_ld_lib_path" == x"" ]; then
-#                _additional_ld_lib_path="/data/data/com.termux/files/usr/opt/angle-android/gl"
-#            fi
+            #            if [ x"$_additional_ld_lib_path" == x"" ]; then
+            #                _additional_ld_lib_path="/data/data/com.termux/files/usr/opt/angle-android/gl"
+            #            fi
         ;;
-#        --gl)
-#            _additional_ld_lib_path="/data/data/com.termux/files/usr/opt/angle-android/gl"
-#        ;;
-#        --vulkan)
-#            _additional_ld_lib_path="/data/data/com.termux/files/usr/opt/angle-android/vulkan"
-#        ;;
-#        --vulkan-null | --null)
-#            _additional_ld_lib_path="/data/data/com.termux/files/usr/opt/angle-android/vulkan-null"
-#        ;;
+        #        --gl)
+        #            _additional_ld_lib_path="/data/data/com.termux/files/usr/opt/angle-android/gl"
+        #        ;;
+        #        --vulkan)
+        #            _additional_ld_lib_path="/data/data/com.termux/files/usr/opt/angle-android/vulkan"
+        #        ;;
+        #        --vulkan-null | --null)
+        #            _additional_ld_lib_path="/data/data/com.termux/files/usr/opt/angle-android/vulkan-null"
+        #        ;;
         *)
             if [ "${_skip}" = 1 ];
             then
