@@ -227,5 +227,5 @@ if __name__ == "__main__":
     from lib.manager import PluginManager
 
     manager = PluginManager()
-    manager.register_plugin(InterfaceMonitorPlugin(manager))
+    manager.register_plugin(InterfaceMonitorPlugin)
     manager.run()

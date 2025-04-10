@@ -43,6 +43,7 @@ class SystemMonitorPlugin(IntervalPlugin):
                 logger.error(
                     "Permission denied to access /proc/stat. Please run as root."
                 )
+                return
 
         super().__init__(manager, interval, webhook_url)
 

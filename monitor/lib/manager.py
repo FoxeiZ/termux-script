@@ -5,13 +5,12 @@ import threading
 import time
 from typing import TYPE_CHECKING, Literal
 
-from .errors import DuplicatePluginError
-from .plugin import DaemonPlugin, IntervalPlugin, OneTimePlugin
+from .errors import DuplicatePluginError, PluginNotLoadedError
+from .plugin import DaemonPlugin, IntervalPlugin, OneTimePlugin, Plugin
 
 __all__ = ["PluginManager", "get_logger", "PluginTypeDict"]
 
 PluginTypeDict = Literal["once", "daemon", "interval"]
-PluginType = OneTimePlugin | DaemonPlugin | IntervalPlugin
 
 
 def get_logger(
@@ -34,30 +33,57 @@ logger = get_logger("PluginManager")
 
 class PluginManager:
     if TYPE_CHECKING:
-        plugins: list[PluginType]
+        plugins: list[Plugin]
         max_retries: int
         retry_delay: int
+        webhook_url: str | None
         _stopped: bool
 
-    def __init__(self, max_retries: int = 3, retry_delay: int = 5) -> None:
+    def __init__(
+        self, max_retries: int = 3, retry_delay: int = 5, webhook_url: str | None = None
+    ) -> None:
         self.plugins = []
 
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.webhook_url = webhook_url
 
         self._stopped = False
 
-    def register_plugin(self, plugin: PluginType) -> None:
+    def register_plugin(
+        self,
+        plugin: type[Plugin],
+        **kwargs,
+    ) -> None:
         """
         Add a plugin to the manager.
 
         Args:
             plugin: A class that inherits from BasePlugin.
         """
-        if plugin.name in self.plugins:
-            raise DuplicatePluginError(f"Plugin {plugin.name} already registered")
+        if not issubclass(plugin, Plugin):
+            raise TypeError("Plugin must be a subclass of Plugin")
 
-        self.plugins.append(plugin)
+        try:
+            kwargs.setdefault("webhook_url", self.webhook_url)
+            plugin_instance = plugin(manager=self, **kwargs)
+        except PluginNotLoadedError as e:
+            logger.error(
+                f"Plugin {plugin.__name__} failed to load: {e.__class__.__name__}: {e}"
+            )
+            return
+        except Exception as e:
+            logger.error(
+                f"There was an error when trying to load the plugin, {e.__class__.__name__}: {e}"
+            )
+            return
+
+        if plugin_instance.name in [p.name for p in self.plugins]:
+            raise DuplicatePluginError(
+                f"Plugin {plugin_instance.name} already registered"
+            )
+
+        self.plugins.append(plugin_instance)
 
     def start(self) -> None:
         """
