@@ -1,3 +1,4 @@
+import datetime
 import re
 import subprocess
 import time
@@ -95,6 +96,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
         self.avatar_url = "https://cdn.discordapp.com/app-assets/1049685078508314696/1249009769075703888.png"
 
         self._previous_state = {}
+        self._lost_network_since: datetime.datetime | None = None
 
     def compare_states(self, old_state: dict, new_state: dict) -> bool:
         if set(old_state.keys()) != set(new_state.keys()):
@@ -208,7 +210,39 @@ class InterfaceMonitorPlugin(IntervalPlugin):
     def run(self):
         current_state = self.parse_network_interfaces(self.get_ifconfig_output())
         changes = self.compare_states(self._previous_state, current_state)
-        if changes and "wlan0" in current_state:
+        if changes:
+            if "wlan0" not in current_state:
+                logger.warning("Network interface wlan0 not found, assuming no network")
+
+                self._lost_network_since = datetime.datetime.now(datetime.UTC)
+                self._previous_state = current_state
+                return
+
+            if self._lost_network_since:
+                self.send_webhook(
+                    {
+                        "username": self.name,
+                        "avatar_url": self.avatar_url,
+                        "embeds": [
+                            {
+                                "title": "Network connection restored",
+                                "color": 2302945,
+                                "fields": [
+                                    {
+                                        "name": "Network connection restored",
+                                        "value": f"Network connection restored after {datetime.datetime.now(datetime.UTC) - self._lost_network_since}",
+                                        "inline": False,
+                                    }
+                                ],
+                                "footer": {
+                                    "text": f"Lost network since {self._lost_network_since.strftime('%Y-%m-%d %H:%M:%S')}",
+                                },
+                            }
+                        ],
+                    }
+                )
+                self._lost_network_since = None
+
             embeds = self.build_embeds(current_state)
             self.send_webhook(
                 {
@@ -219,8 +253,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
                 }
             )
             logger.info("Network change detected, sent update to Discord")
-
-        self._previous_state = current_state
+            self._previous_state = current_state
 
 
 if __name__ == "__main__":
