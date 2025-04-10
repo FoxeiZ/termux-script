@@ -49,3 +49,15 @@ class LongProcessPluginWithError(LongProcessPlugin):
                 self.send_error(err.decode())
         except Exception as e:
             self.send_error(f"An error occurred: ```\n{e}\n```")
+
+
+class LongProcessPluginWithLongOutput(LongProcessPlugin):
+    def run(self):
+        self._process = Popen(
+            ["yes", "hello"],
+            stdout=PIPE,
+            stderr=PIPE,
+        )
+        self._process.communicate()
+        self._process.wait(10)
+        self.send_success(self._process.stdout.read().decode())  # type: ignore

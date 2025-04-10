@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import threading
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
@@ -40,8 +41,17 @@ class Plugin:
             self._http_session = requests.Session()
         return self._http_session
 
-    def send_webhook(self, payload: WebhookPayload, wait: bool = False) -> None:
-        """Send a message to the webhook."""
+    def send_webhook(
+        self, payload: WebhookPayload, wait: bool = False, *args, **kwargs
+    ) -> None:
+        """Send a message to the webhook.
+
+        Args:
+            payload (WebhookPayload): The payload to send.
+            wait (bool): Whether to wait for a response.
+            *args: Refer to requests.post() for more options.
+            **kwargs: Refer to requests.post() for more options.
+        """
         if not self.webhook_url:
             return
 
@@ -50,7 +60,11 @@ class Plugin:
         # payload = {k: v for k, v in payload.items() if v is not None}
 
         resp = self._http_session.post(
-            self.webhook_url, json=payload, params={"wait": wait}
+            self.webhook_url,
+            json=payload,
+            params={"wait": wait} if wait else None,
+            *args,
+            **kwargs,
         )
         resp.raise_for_status()
         if wait:
@@ -83,33 +97,26 @@ class OneTimePlugin(Plugin):
     def run(self) -> Any:
         raise NotImplementedError
 
-    def send_success(self, content: str | None = None) -> None:
-        """Send a success message to the webhook."""
-        payload: WebhookPayload = {
-            "embeds": [
-                {
-                    "title": f"{self.name} finished successfully",
-                    "description": f"Plugin {self.name} has finished successfully.",
-                    "fields": [
-                        {
-                            "name": "Output",
-                            "value": content if content else "No output",
-                            "inline": False,
-                        }
-                    ],
-                    "color": 2351395,
+    def _send(
+        self, title: str, description: str, color: int, content: str | None, wait: bool
+    ):
+        files = None
+        if content:
+            if len(content) > 2000:
+                files = {
+                    "filetag": (
+                        "filename",
+                        io.BytesIO(content.encode("utf-8")),
+                        "text/plain",
+                    )
                 }
-            ]
-        }
-        self.send_webhook(payload=payload)
+                content = "Content too large, see attachment."
 
-    def send_error(self, content: str | None = None) -> None:
-        """Send a error message to the webhook."""
         payload: WebhookPayload = {
             "embeds": [
                 {
-                    "title": f"{self.name} failed",
-                    "description": f"Plugin {self.name} has failed.",
+                    "title": title,
+                    "description": description,
                     "fields": [
                         {
                             "name": "Output",
@@ -117,11 +124,33 @@ class OneTimePlugin(Plugin):
                             "inline": False,
                         }
                     ],
-                    "color": 14754595,
+                    "color": color,
                 }
             ]
         }
-        self.send_webhook(payload=payload)
+
+        self.send_webhook(payload=payload, files=files, wait=wait)
+
+    def send_success(self, content: str | None = None, wait: bool = False) -> None:
+        """Send a success message to the webhook."""
+        self._send(
+            title=f"{self.name} finished successfully",
+            description=f"Plugin {self.name} has finished successfully.",
+            color=2351395,
+            content=content,
+            wait=wait,
+        )
+
+    def send_error(self, content: str | None = None, wait: bool = False) -> None:
+        """Send a error message to the webhook."""
+
+        self._send(
+            title=f"{self.name} failed",
+            description=f"Plugin {self.name} has failed.",
+            color=14754595,
+            content=content,
+            wait=wait,
+        )
 
 
 class DaemonPlugin(Plugin):
