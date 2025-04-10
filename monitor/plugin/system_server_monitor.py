@@ -1,3 +1,4 @@
+import os
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -18,6 +19,12 @@ class SystemServerPlugin(IntervalPlugin):
     def __init__(
         self, manager, interval=10, webhook_url="", cpu_threshold: int = 100, **kwargs
     ):
+        try:
+            os.lstat("/proc/stat")
+        except PermissionError:
+            logger.error("Permission denied to access /proc/stat. Please run as root.")
+            return
+
         super().__init__(manager, interval, webhook_url)
         self.cpu_threshold = cpu_threshold
         self.threshold_count_max = kwargs.get("threshold_count_max", 3)

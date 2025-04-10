@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime
-import errno
 import os
 from typing import TYPE_CHECKING
 
@@ -38,12 +37,9 @@ class SystemMonitorPlugin(IntervalPlugin):
     def __init__(self, manager, interval=10, webhook_url="", **kwargs):
         try:
             os.lstat("/proc/stat")
-        except IOError as e:
-            if e.errno == errno.EPERM:
-                logger.error(
-                    "Permission denied to access /proc/stat. Please run as root."
-                )
-                return
+        except PermissionError:
+            logger.error("Permission denied to access /proc/stat. Please run as root.")
+            return
 
         super().__init__(manager, interval, webhook_url)
 
