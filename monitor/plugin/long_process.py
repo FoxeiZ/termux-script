@@ -35,14 +35,17 @@ class LongProcessPlugin(OneTimePlugin):
 
 class LongProcessPluginWithError(LongProcessPlugin):
     def run(self):
-        self._process = Popen(
-            ["sleet", "10"],
-            stdout=PIPE,
-            stderr=PIPE,
-        )
-        self._process.communicate()
-        self._process.wait()
+        try:
+            self._process = Popen(
+                ["sleet", "10"],
+                stdout=PIPE,
+                stderr=PIPE,
+            )
+            self._process.communicate()
+            self._process.wait()
 
-        if self._process.returncode != 0:
-            err = self._process.stderr.read()  # type: ignore
-            self.send_error(err.decode())
+            if self._process.returncode != 0:
+                err = self._process.stderr.read()  # type: ignore
+                self.send_error(err.decode())
+        except Exception as e:
+            self.send_error(f"An error occurred: ```\n{e}\n```")
