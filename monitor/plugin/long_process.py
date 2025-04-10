@@ -23,6 +23,7 @@ class LongProcessPlugin(OneTimePlugin):
         )
         self._process.communicate()
         self._process.wait()
+        self.send_success()
 
     def kill(self):
         if not self._process:
@@ -30,3 +31,18 @@ class LongProcessPlugin(OneTimePlugin):
 
         self._process.kill()
         self._process.wait()
+
+
+class LongProcessPluginWithError(LongProcessPlugin):
+    def run(self):
+        self._process = Popen(
+            ["sleet", "10"],
+            stdout=PIPE,
+            stderr=PIPE,
+        )
+        self._process.communicate()
+        self._process.wait()
+
+        if self._process.returncode != 0:
+            err = self._process.stderr.read()  # type: ignore
+            self.send_error(err.decode())

@@ -83,6 +83,46 @@ class OneTimePlugin(Plugin):
     def run(self) -> Any:
         raise NotImplementedError
 
+    def send_success(self, content: str | None = None) -> None:
+        """Send a success message to the webhook."""
+        payload: WebhookPayload = {
+            "embeds": [
+                {
+                    "title": f"{self.name} finished successfully",
+                    "description": f"Plugin {self.name} has finished successfully.",
+                    "fields": [
+                        {
+                            "name": "Output",
+                            "value": content if content else "No output",
+                            "inline": False,
+                        }
+                    ],
+                    "color": 2351395,
+                }
+            ]
+        }
+        self.send_webhook(payload=payload)
+
+    def send_error(self, content: str | None = None) -> None:
+        """Send a error message to the webhook."""
+        payload: WebhookPayload = {
+            "embeds": [
+                {
+                    "title": f"{self.name} failed",
+                    "description": f"Plugin {self.name} has failed.",
+                    "fields": [
+                        {
+                            "name": "Output",
+                            "value": content if content else "No output",
+                            "inline": False,
+                        }
+                    ],
+                    "color": 14754595,
+                }
+            ]
+        }
+        self.send_webhook(payload=payload)
+
 
 class DaemonPlugin(Plugin):
     def __init__(self, manager: PluginManager, webhook_url: str = "") -> None:
