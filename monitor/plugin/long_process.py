@@ -58,6 +58,6 @@ class LongProcessPluginWithLongOutput(LongProcessPlugin):
             stdout=PIPE,
             stderr=PIPE,
         )
-        self._process.communicate()
+        stdout, _ = self._process.communicate()
         self._process.wait(10)
-        self.send_success(self._process.stdout.read().decode())  # type: ignore
+        self.send_success(stdout.read().decode())
