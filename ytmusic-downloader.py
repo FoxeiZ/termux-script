@@ -286,6 +286,17 @@ ytdl_opts = {
             "when": "before_dl",
         },
     ],
+    "extractor_args": {
+        "youtube": {
+            "getpot_bgutil_script": [
+                "$HOME/projects/bgutil-ytdlp-pot-provider/server/build/generate_once.js"
+            ],
+            "lang": ["en"],
+            "player_client": ["web"],
+        }
+    },
+    "cachedir": "$HOME/.config/yt-dlp/",
+    "cookiefile": "/storage/emulated/0/mpv/youtube.com_cookies.txt",
     "retries": 10,
     "updatetime": False,
     "verbose": True,
