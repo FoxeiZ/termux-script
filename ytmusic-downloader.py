@@ -327,10 +327,10 @@ def main():
     try:
         download(url)
 
-    except yt_dlp.utils.DownloadError as e:
+    except yt_dlp.utils.YoutubeDLError as e:
         print(f"Download error: {e}")
         notify(
-            title="Download Error",
+            title=e.__class__.__name__,
             content=str(e),
             id="download_error",
             # action="termux-open-url",
