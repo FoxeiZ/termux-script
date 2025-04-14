@@ -357,11 +357,7 @@ def main(url: str | None = None) -> int | None:
         if len(sys.argv) < 2:
             print("Usage: termux-url-opener.py <url>")
             return 1
-
         url = sys.argv[1]
-        if not url.startswith("https://music.youtube.com/watch?v="):
-            print(f"Invalid URL: {url}")
-            return 1
 
     try:
         download(url)
