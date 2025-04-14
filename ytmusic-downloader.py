@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+from collections import OrderedDict
 from typing import Literal
 
 import requests
@@ -71,15 +73,30 @@ class CustomMetadataPP(yt_dlp.postprocessor.PostProcessor):
         super().__init__(downloader)
 
     def run(self, information):
-        print("CustomMetadataPP: run")
+        self.to_screen("Checking metadata...")
 
-        is_album = False
-        pl_name = information.get("playlist_title") or information.get("playlist")
-        if pl_name:
-            if pl_name.startswith("Album - ") or pl_name.startswith("Single - "):
-                is_album = True
+        chnl = information.get("channel") or information.get("uploader") or ""
+        if chnl.endswith(" - Topic"):
+            # Remove duplicate artist names while preserving order
+            artists = list(
+                OrderedDict.fromkeys(
+                    information.get("artists")
+                    or information.get("artist", "").split(", ")
+                )
+            )
+            information.update(
+                {
+                    "artists": artists,
+                    "creators": artists,
+                    "artist": ", ".join(artists),
+                    "creator": ", ".join(artists),
+                }
+            )
 
-        if not is_album:
+        pl_name: str = (
+            information.get("playlist_title") or information.get("playlist") or ""
+        )
+        if not (pl_name.startswith("Album - ") or pl_name.startswith("Single - ")):
             self.to_screen("Not an album, getting metadata for album manually")
             try:
                 information["track_number"] = self.get_track_num_from_album(information)
@@ -102,31 +119,21 @@ class CustomMetadataPP(yt_dlp.postprocessor.PostProcessor):
     def find_album_info(self, information) -> dict:
         """Find album info from the music URL or video ID."""
 
-        url = information.get("webpage_url")
+        video_id = information.get("id")
         options = {
-            "extract_flat": True,
+            "extract_flat": "in_playlist",
             "format": "best",
             "quiet": True,
             "skip_download": True,
             "source_address": None,
         }
 
-        with yt_dlp.YoutubeDL(options) as ydl:
-            video_info = ydl.extract_info(url, download=False)
-            if not video_info:
-                raise ValueError("Failed to extract album info from music URL")
+        album_id = self.fetch_album_url(video_id)
+        if not album_id:
+            raise ValueError("Failed to fetch album URL")
 
-            video_id = video_info.get("id")
-            if not video_id:
-                raise ValueError("Failed to extract ID from music URL")
-
-        options["extract_flat"] = "discard"
-        with yt_dlp.YoutubeDL(options) as ydl:
-            album_id = self.fetch_album_url(video_id)
-            if not album_id:
-                raise ValueError("Failed to fetch album URL")
-
-            album_info = ydl.extract_info(
+        with yt_dlp.YoutubeDL(options) as _ydl:
+            album_info = _ydl.extract_info(
                 f"https://music.youtube.com/browse/{album_id}", download=False
             )
             if (
@@ -187,7 +194,7 @@ ytdl_opts = {
     "fragment_retries": 10,
     "ignoreerrors": "only_download",
     "outtmpl": {
-        "default": "/sdcard/Music/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s",
+        "default": "%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s",
         "pl_thumbnail": "",
     },
     "postprocessors": [
@@ -246,6 +253,11 @@ ytdl_opts = {
                     "description",
                     "(?P<meta_date>(?<=Released on: )\\d{4})",
                 ),
+                (
+                    yt_dlp.postprocessor.metadataparser.MetadataParserPP.interpretter,
+                    "",
+                    "(?P<description>)",
+                ),
             ],
             "key": "MetadataParser",
             "when": "pre_process",
@@ -269,6 +281,32 @@ ytdl_opts = {
         },
         {"already_have_thumbnail": False, "key": "EmbedThumbnail"},
         {"key": "FFmpegConcat", "only_multi_video": True, "when": "playlist"},
+    ],
+    "extractor_args": {
+        "youtube": {
+            "lang": ["en"],
+            "player_client": ["web"],
+        }
+    },
+    "retries": 10,
+    "updatetime": False,
+    "verbose": True,
+    "writethumbnail": True,
+}
+
+if (
+    "com.termux" in os.environ.get("SHELL", "")
+    or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr"
+):
+    ytdl_opts["cachedir"] = "$HOME/.config/yt-dlp/"
+    ytdl_opts["cookiefile"] = "/storage/emulated/0/mpv/youtube.com_cookies.txt"
+    ytdl_opts["outtmpl"]["default"] = (
+        "/sdcard/Music/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s"
+    )
+    ytdl_opts["extractor_args"]["youtube"]["getpot_bgutil_script"] = (
+        ["$HOME/projects/bgutil-ytdlp-pot-provider/server/build/generate_once.js"],
+    )
+    ytdl_opts["postprocessors"].append(
         {
             "exec_cmd": ["termux-media-scan -r {}"],
             "key": "Exec",
@@ -285,23 +323,7 @@ ytdl_opts = {
             "key": "Exec",
             "when": "before_dl",
         },
-    ],
-    "extractor_args": {
-        "youtube": {
-            "getpot_bgutil_script": [
-                "$HOME/projects/bgutil-ytdlp-pot-provider/server/build/generate_once.js"
-            ],
-            "lang": ["en"],
-            "player_client": ["web"],
-        }
-    },
-    "cachedir": "$HOME/.config/yt-dlp/",
-    "cookiefile": "/storage/emulated/0/mpv/youtube.com_cookies.txt",
-    "retries": 10,
-    "updatetime": False,
-    "verbose": True,
-    "writethumbnail": True,
-}
+    )
 
 
 def download(url: str, extra_options: dict | None = None):
@@ -314,15 +336,16 @@ def download(url: str, extra_options: dict | None = None):
         ydl.download([url])
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: termux-url-opener.py <url>")
-        return 1
+def main(url: str | None = None) -> int | None:
+    if not url:
+        if len(sys.argv) < 2:
+            print("Usage: termux-url-opener.py <url>")
+            return 1
 
-    url = sys.argv[1]
-    if not url.startswith("https://music.youtube.com/watch?v="):
-        print(f"Invalid URL: {url}")
-        return 1
+        url = sys.argv[1]
+        if not url.startswith("https://music.youtube.com/watch?v="):
+            print(f"Invalid URL: {url}")
+            return 1
 
     try:
         download(url)
@@ -340,4 +363,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main("https://music.youtube.com/watch?v=tXb394z4lY8&si=g8oQuDCgB7vKsTGI"))
