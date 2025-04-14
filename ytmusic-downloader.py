@@ -326,8 +326,7 @@ def main():
 
     try:
         download(url)
-
-    except yt_dlp.utils.YoutubeDLError as e:
+    except Exception as e:
         print(f"Download error: {e}")
         notify(
             title=e.__class__.__name__,
