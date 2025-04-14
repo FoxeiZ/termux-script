@@ -34,6 +34,15 @@ def notify(
     type: Literal["default", "media"] = "default",
 ):
     cmd = ["termux-notification", "--title", title, "--content", content]
+
+    for button, action in [
+        (button1, button1_action),
+        (button2, button2_action),
+        (button3, button3_action),
+    ]:
+        if action and not button:
+            raise ValueError(f"{action} requires the corresponding button to be set")
+
     options = {
         "--action": action,
         "--button1-text": button1,
