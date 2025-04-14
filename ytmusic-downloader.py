@@ -32,6 +32,7 @@ def notify(
     sound: bool = False,
     vibrate: bool = False,
     type: Literal["default", "media"] = "default",
+    subprocess_timeout: float | None = None,
 ):
     cmd = ["termux-notification", "--title", title, "--content", content]
 
@@ -68,7 +69,13 @@ def notify(
     cmd.extend([f"{key} {value}" for key, value in options.items() if value])
 
     try:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=subprocess_timeout,
+        )
+
     except Exception as e:
         print(f"Error sending notification: {e}")
         return
