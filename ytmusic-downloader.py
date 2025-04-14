@@ -232,7 +232,7 @@ ytdl_opts = {
                 ),
                 (
                     yt_dlp.postprocessor.metadataparser.MetadataParserPP.replacer,
-                    "meta_album",
+                    "album",
                     "^Album - ",
                     "",
                 ),
