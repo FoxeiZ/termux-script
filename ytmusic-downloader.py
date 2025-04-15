@@ -122,6 +122,68 @@ class InnerTubeBase:
         return self.fetch("browse", {"context": context, "browseId": browse_id})
 
 
+def extract_lyrics_text(data):
+    try:
+        lyrics_runs = data["contents"]["sectionListRenderer"]["contents"][0][
+            "musicDescriptionShelfRenderer"
+        ]["description"]["runs"]
+        return "".join([r["text"] for r in lyrics_runs])
+    except (KeyError, IndexError):
+        return None
+
+
+def extract_lyrics_browse_id(data):
+    tabs = (
+        data.get("contents", {})
+        .get("singleColumnMusicWatchNextResultsRenderer", {})
+        .get("tabbedRenderer", {})
+        .get("watchNextTabbedResultsRenderer", {})
+        .get("tabs", [])
+    )
+    for tab in tabs:
+        endpoint = (
+            tab.get("tabRenderer", {}).get("endpoint", {}).get("browseEndpoint", {})
+        )
+        browse_id = endpoint.get("browseId", "")
+        if browse_id.startswith("MPLY"):
+            return browse_id
+    return None
+
+
+### Ugly, but works ¯\_(ツ)_/¯ ###
+def Patched_get_metadata_opts(self: yt_dlp.postprocessor.FFmpegMetadataPP, info):
+    yield from self.Unpatched_get_metadata_opts(info)  # type: ignore[no-untyped-call]
+
+    video_id = info.get("id")
+    inner_tube = InnerTubeBase()
+    data = inner_tube.fetch_next(video_id)
+    browse_id = extract_lyrics_browse_id(data)
+
+    if not browse_id:
+        self.to_screen("No lyrics browse ID found")
+        return
+
+    lyrics_data = inner_tube.fetch_browse(browse_id)
+    lyrics_text = lyrics_data and extract_lyrics_text(lyrics_data)
+    if not lyrics_text:
+        self.to_screen("No lyrics text found")
+        return
+
+    yield "-metadata", f"lyrics={lyrics_text}"
+
+
+setattr(
+    yt_dlp.postprocessor.FFmpegMetadataPP,
+    "Unpatched_get_metadata_opts",
+    yt_dlp.postprocessor.FFmpegMetadataPP._get_metadata_opts,
+)
+setattr(
+    yt_dlp.postprocessor.FFmpegMetadataPP,
+    "_get_metadata_opts",
+    Patched_get_metadata_opts,
+)
+
+
 class LyricsMetadataPP(yt_dlp.postprocessor.FFmpegPostProcessor):
     SUPPORTED_EXTS = ("opus",)
 
@@ -163,7 +225,7 @@ class LyricsMetadataPP(yt_dlp.postprocessor.FFmpegPostProcessor):
             "-metadata",
             f"lyrics={lyrics_text}",
         ]
-        # opts[opts.index("-map") + 1] = "0:a"
+        opts[opts.index("-map") + 1] = "0:0"
 
         temp_file = yt_dlp.utils.prepend_extension(filename, "lyrics")
         self.run_ffmpeg_multiple_files((filename,), temp_file, opts)
@@ -443,7 +505,7 @@ def download(url: str, extra_options: dict | None = None):
 
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.add_post_processor(CustomMetadataPP(), when="pre_process")
-        ydl.add_post_processor(LyricsMetadataPP(), when="post_process")
+        # ydl.add_post_processor(LyricsMetadataPP(), when="post_process")
         ydl.download([url])
 
 
@@ -470,4 +532,4 @@ def main(url: str | None = None) -> int | None:
 
 
 if __name__ == "__main__":
-    sys.exit(main("https://music.youtube.com/watch?v=RVDCeVG90Rg&si=X12pdm4vSG9Pi9Rc"))
+    sys.exit(main("https://music.youtube.com/watch?v=pIIZPtgtfJI&si=q1jZt4N2VG-j4BbZ"))
