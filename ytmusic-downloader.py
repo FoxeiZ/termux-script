@@ -411,7 +411,7 @@ if (
     ytdl_opts["extractor_args"]["youtube"]["getpot_bgutil_script"] = (
         ["$HOME/projects/bgutil-ytdlp-pot-provider/server/build/generate_once.js"],
     )
-    ytdl_opts["postprocessors"].append(
+    ytdl_opts["postprocessors"].extend(
         [
             {
                 "exec_cmd": ["termux-media-scan -r {}"],
