@@ -412,22 +412,24 @@ if (
         ["$HOME/projects/bgutil-ytdlp-pot-provider/server/build/generate_once.js"],
     )
     ytdl_opts["postprocessors"].append(
-        {
-            "exec_cmd": ["termux-media-scan -r {}"],
-            "key": "Exec",
-            "when": "playlist",
-        },
-        {
-            "exec_cmd": [
-                "ffmpeg -i %(thumbnails.-1.filepath)q -vf "
-                "crop=\"'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'\" "
-                "%(thumbnails.-1.filepath)q.png > /dev/null "
-                "2>&1",
-                "mv %(thumbnails.-1.filepath)q.png %(thumbnails.-1.filepath)q",
-            ],
-            "key": "Exec",
-            "when": "before_dl",
-        },
+        [
+            {
+                "exec_cmd": ["termux-media-scan -r {}"],
+                "key": "Exec",
+                "when": "playlist",
+            },
+            {
+                "exec_cmd": [
+                    "ffmpeg -i %(thumbnails.-1.filepath)q -vf "
+                    "crop=\"'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'\" "
+                    "%(thumbnails.-1.filepath)q.png > /dev/null "
+                    "2>&1",
+                    "mv %(thumbnails.-1.filepath)q.png %(thumbnails.-1.filepath)q",
+                ],
+                "key": "Exec",
+                "when": "before_dl",
+            },
+        ]
     )
 
 
