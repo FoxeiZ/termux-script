@@ -81,6 +81,122 @@ def notify(
         return
 
 
+class InnerTubeBase:
+    _instance = None
+
+    API_KEY = "AIzaSyDkZV5Q2b1e0Qf4Zc0wRjM3vW3rmpZ_mD0"
+    INNER_TUBE_BASE = "https://music.youtube.com/youtubei/v1"
+    HEADERS = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0",
+        "Origin": "https://music.youtube.com",
+        "Referer": "https://music.youtube.com/",
+    }
+    CLIENT_CONTEXT = {
+        "client": {"clientName": "WEB_REMIX", "clientVersion": "1.20210912.07.00"}
+    }
+
+    def __new__(cls):
+        if not cls._instance:
+            cls._instance = super(InnerTubeBase, cls).__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if self._instance:
+            return
+
+        self.session = requests.Session()
+        self.session.headers.update(self.HEADERS)
+
+    def fetch(self, endpoint: Literal["next", "browse"], payload: dict) -> dict:
+        url = f"{self.INNER_TUBE_BASE}/{endpoint}?key={self.API_KEY}"
+        if payload.get("context") is None:
+            payload["context"] = self.CLIENT_CONTEXT
+
+        response = self.session.post(url, json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def fetch_next(self, video_id: str, *, context: dict | None = None) -> dict:
+        return self.fetch("next", {"context": context, "videoId": video_id})
+
+    def fetch_browse(self, browse_id: str, *, context: dict | None = None):
+        return self.fetch("browse", {"context": context, "browseId": browse_id})
+
+
+class LyricsMetadataPP(yt_dlp.postprocessor.FFmpegPostProcessor):
+    SUPPORTED_EXTS = ("opus",)
+
+    @yt_dlp.postprocessor.PostProcessor._restrict_to(images=False, video=False)
+    def run(self, information):
+        if information["ext"] not in self.SUPPORTED_EXTS:
+            self.to_screen("Skipping unsupported file extension")
+            return [], information
+
+        filename = information.get("filepath")
+        video_id = information.get("id")
+        if not filename or not video_id:
+            self.to_screen(f"{'No filepath' if not filename else 'No video ID'} found")
+            return [], information
+
+        self.to_screen("Fetching lyrics...")
+
+        inner_tube = InnerTubeBase()
+        data = inner_tube.fetch_next(video_id)
+        browse_id = self.extract_lyrics_browse_id(data)
+
+        if not browse_id:
+            self.to_screen("No lyrics browse ID found")
+            return [], information
+
+        lyrics_data = inner_tube.fetch_browse(browse_id)
+        lyrics_text = lyrics_data and self.extract_lyrics_text(lyrics_data)
+        if not lyrics_text:
+            self.to_screen("No lyrics text found")
+            return [], information
+
+        self.to_screen("Writing lyrics to file")
+        opts = [
+            *yt_dlp.postprocessor.FFmpegPostProcessor.stream_copy_opts(
+                ext=information["ext"]
+            ),
+            "-metadata",
+            f"lyrics={lyrics_text}",
+        ]
+
+        temp_file = yt_dlp.utils.prepend_extension(filename, "lyrics")
+        self.run_ffmpeg_multiple_files((filename,), temp_file, opts)
+        self._delete_downloaded_files(filename)
+        os.replace(temp_file, filename)
+        return [], information
+
+    def extract_lyrics_browse_id(self, data):
+        tabs = (
+            data.get("contents", {})
+            .get("singleColumnMusicWatchNextResultsRenderer", {})
+            .get("tabbedRenderer", {})
+            .get("watchNextTabbedResultsRenderer", {})
+            .get("tabs", [])
+        )
+        for tab in tabs:
+            endpoint = (
+                tab.get("tabRenderer", {}).get("endpoint", {}).get("browseEndpoint", {})
+            )
+            browse_id = endpoint.get("browseId", "")
+            if browse_id.startswith("MPLY"):
+                return browse_id
+        return None
+
+    def extract_lyrics_text(self, data):
+        try:
+            lyrics_runs = data["contents"]["sectionListRenderer"]["contents"][0][
+                "musicDescriptionShelfRenderer"
+            ]["description"]["runs"]
+            return "".join([r["text"] for r in lyrics_runs])
+        except (KeyError, IndexError):
+            return None
+
+
 class CustomMetadataPP(yt_dlp.postprocessor.PostProcessor):
     def __init__(
         self,
@@ -162,26 +278,7 @@ class CustomMetadataPP(yt_dlp.postprocessor.PostProcessor):
             return album_info
 
     def fetch_album_url(self, video_id: str):
-        endpoint = "https://music.youtube.com/youtubei/v1/next?key=AIzaSyDkZV5Q2b1e0Qf4Zc0wRjM3vW3rmpZ_mD0"
-        payload = {
-            "context": {
-                "client": {
-                    "clientName": "WEB_REMIX",
-                    "clientVersion": "1.20210912.07.00",
-                }
-            },
-            "videoId": video_id,
-        }
-
-        headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0",
-            "Origin": "https://music.youtube.com",
-            "Referer": "https://music.youtube.com/",
-        }
-
-        response = requests.post(endpoint, headers=headers, json=payload)
-        data = response.json()
+        data = InnerTubeBase().fetch_next(video_id)
 
         # Recursively find the first MPREb ID (albums/singles)
         def find_album_id(obj) -> str | None:
@@ -210,7 +307,7 @@ ytdl_opts = {
     "fragment_retries": 10,
     "ignoreerrors": "only_download",
     "outtmpl": {
-        "default": "%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s",
+        "default": "Album/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s",
         "pl_thumbnail": "",
     },
     "postprocessors": [
@@ -349,6 +446,7 @@ def download(url: str, extra_options: dict | None = None):
 
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.add_post_processor(CustomMetadataPP(), when="pre_process")
+        ydl.add_post_processor(LyricsMetadataPP(), when="pre_process")
         ydl.download([url])
 
 
@@ -375,4 +473,4 @@ def main(url: str | None = None) -> int | None:
 
 
 if __name__ == "__main__":
-    sys.exit(main("https://music.youtube.com/watch?v=tXb394z4lY8&si=g8oQuDCgB7vKsTGI"))
+    sys.exit(main("https://music.youtube.com/watch?v=F6U_xAEkU6g"))
