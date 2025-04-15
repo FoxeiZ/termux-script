@@ -6,7 +6,7 @@ import os
 import subprocess
 import sys
 from collections import OrderedDict
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import requests
 import yt_dlp
@@ -81,13 +81,110 @@ def notify(
         return
 
 
-class CustomMetadataPP(yt_dlp.postprocessor.PostProcessor):
-    def __init__(
-        self,
-        downloader=None,
-    ):
-        super().__init__(downloader)
+class InnerTubeBase:
+    if TYPE_CHECKING:
+        session: requests.Session
 
+    _instance = None
+
+    API_KEY = "AIzaSyDkZV5Q2b1e0Qf4Zc0wRjM3vW3rmpZ_mD0"
+    INNER_TUBE_BASE = "https://music.youtube.com/youtubei/v1"
+    HEADERS = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0",
+        "Origin": "https://music.youtube.com",
+        "Referer": "https://music.youtube.com/",
+    }
+    CLIENT_CONTEXT = {
+        "client": {"clientName": "WEB_REMIX", "clientVersion": "1.20210912.07.00"}
+    }
+
+    def __new__(cls):
+        if not cls._instance:
+            cls._instance = super().__new__(cls)
+            cls._instance.session = requests.Session()
+            cls._instance.session.headers.update(cls.HEADERS)
+        return cls._instance
+
+    def fetch(self, endpoint: Literal["next", "browse"], payload: dict) -> dict:
+        url = f"{self.INNER_TUBE_BASE}/{endpoint}?key={self.API_KEY}"
+        if payload.get("context") is None:
+            payload["context"] = self.CLIENT_CONTEXT
+
+        response = self.session.post(url, json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def fetch_next(self, video_id: str, *, context: dict | None = None) -> dict:
+        return self.fetch("next", {"context": context, "videoId": video_id})
+
+    def fetch_browse(self, browse_id: str, *, context: dict | None = None):
+        return self.fetch("browse", {"context": context, "browseId": browse_id})
+
+
+def extract_lyrics_text(data):
+    try:
+        lyrics_runs = data["contents"]["sectionListRenderer"]["contents"][0][
+            "musicDescriptionShelfRenderer"
+        ]["description"]["runs"]
+        return "".join([r["text"] for r in lyrics_runs])
+    except (KeyError, IndexError):
+        return None
+
+
+def extract_lyrics_browse_id(data):
+    tabs = (
+        data.get("contents", {})
+        .get("singleColumnMusicWatchNextResultsRenderer", {})
+        .get("tabbedRenderer", {})
+        .get("watchNextTabbedResultsRenderer", {})
+        .get("tabs", [])
+    )
+    for tab in tabs:
+        endpoint = (
+            tab.get("tabRenderer", {}).get("endpoint", {}).get("browseEndpoint", {})
+        )
+        browse_id = endpoint.get("browseId", "")
+        if browse_id.startswith("MPLY"):
+            return browse_id
+    return None
+
+
+### Ugly, but works ¯\_(ツ)_/¯ ###
+def Patched_get_metadata_opts(self: yt_dlp.postprocessor.FFmpegMetadataPP, info):
+    yield from self.Unpatched_get_metadata_opts(info)  # type: ignore[no-untyped-call]
+
+    video_id = info.get("id")
+    inner_tube = InnerTubeBase()
+    data = inner_tube.fetch_next(video_id)
+    browse_id = extract_lyrics_browse_id(data)
+
+    if not browse_id:
+        self.to_screen("No lyrics browse ID found")
+        return
+
+    lyrics_data = inner_tube.fetch_browse(browse_id)
+    lyrics_text = lyrics_data and extract_lyrics_text(lyrics_data)
+    if not lyrics_text:
+        self.to_screen("No lyrics text found")
+        return
+
+    yield "-metadata", f"lyrics={lyrics_text}"
+
+
+setattr(
+    yt_dlp.postprocessor.FFmpegMetadataPP,
+    "Unpatched_get_metadata_opts",
+    yt_dlp.postprocessor.FFmpegMetadataPP._get_metadata_opts,
+)
+setattr(
+    yt_dlp.postprocessor.FFmpegMetadataPP,
+    "_get_metadata_opts",
+    Patched_get_metadata_opts,
+)
+
+
+class CustomMetadataPP(yt_dlp.postprocessor.PostProcessor):
     def run(self, information):
         self.to_screen("Checking metadata...")
 
@@ -162,26 +259,7 @@ class CustomMetadataPP(yt_dlp.postprocessor.PostProcessor):
             return album_info
 
     def fetch_album_url(self, video_id: str):
-        endpoint = "https://music.youtube.com/youtubei/v1/next?key=AIzaSyDkZV5Q2b1e0Qf4Zc0wRjM3vW3rmpZ_mD0"
-        payload = {
-            "context": {
-                "client": {
-                    "clientName": "WEB_REMIX",
-                    "clientVersion": "1.20210912.07.00",
-                }
-            },
-            "videoId": video_id,
-        }
-
-        headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0",
-            "Origin": "https://music.youtube.com",
-            "Referer": "https://music.youtube.com/",
-        }
-
-        response = requests.post(endpoint, headers=headers, json=payload)
-        data = response.json()
+        data = InnerTubeBase().fetch_next(video_id)
 
         # Recursively find the first MPREb ID (albums/singles)
         def find_album_id(obj) -> str | None:
@@ -206,11 +284,11 @@ class CustomMetadataPP(yt_dlp.postprocessor.PostProcessor):
 
 ytdl_opts = {
     "extract_flat": False,
-    "format": "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best/b",
+    "format": "bestaudio[ext=webm]/251/bestaudio[ext=m4a]/bestaudio/best/b",
     "fragment_retries": 10,
     "ignoreerrors": "only_download",
     "outtmpl": {
-        "default": "%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s",
+        "default": "Album/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s",
         "pl_thumbnail": "",
     },
     "postprocessors": [
@@ -320,25 +398,27 @@ if (
         "/sdcard/Music/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s"
     )
     ytdl_opts["extractor_args"]["youtube"]["getpot_bgutil_script"] = (
-        ["$HOME/projects/bgutil-ytdlp-pot-provider/server/build/generate_once.js"],
+        "$HOME/projects/bgutil-ytdlp-pot-provider/server/build/generate_once.js",
     )
-    ytdl_opts["postprocessors"].append(
-        {
-            "exec_cmd": ["termux-media-scan -r {}"],
-            "key": "Exec",
-            "when": "playlist",
-        },
-        {
-            "exec_cmd": [
-                "ffmpeg -i %(thumbnails.-1.filepath)q -vf "
-                "crop=\"'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'\" "
-                "%(thumbnails.-1.filepath)q.png > /dev/null "
-                "2>&1",
-                "mv %(thumbnails.-1.filepath)q.png %(thumbnails.-1.filepath)q",
-            ],
-            "key": "Exec",
-            "when": "before_dl",
-        },
+    ytdl_opts["postprocessors"].extend(
+        [
+            {
+                "exec_cmd": ["termux-media-scan -r {}"],
+                "key": "Exec",
+                "when": "playlist",
+            },
+            {
+                "exec_cmd": [
+                    "ffmpeg -i %(thumbnails.-1.filepath)q -vf "
+                    "crop=\"'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'\" "
+                    "%(thumbnails.-1.filepath)q.png > /dev/null "
+                    "2>&1",
+                    "mv %(thumbnails.-1.filepath)q.png %(thumbnails.-1.filepath)q",
+                ],
+                "key": "Exec",
+                "when": "before_dl",
+            },
+        ]
     )
 
 
@@ -375,4 +455,4 @@ def main(url: str | None = None) -> int | None:
 
 
 if __name__ == "__main__":
-    sys.exit(main("https://music.youtube.com/watch?v=tXb394z4lY8&si=g8oQuDCgB7vKsTGI"))
+    sys.exit(main("https://music.youtube.com/watch?v=pIIZPtgtfJI&si=q1jZt4N2VG-j4BbZ"))
