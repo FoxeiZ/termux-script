@@ -284,7 +284,7 @@ class CustomMetadataPP(yt_dlp.postprocessor.PostProcessor):
 
 ytdl_opts = {
     "extract_flat": False,
-    "format": "bestaudio[ext=webm]/251/bestaudio[ext=m4a]/bestaudio/best/b",
+    "format": "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best/b",
     "fragment_retries": 10,
     "ignoreerrors": "only_download",
     "outtmpl": {
@@ -455,4 +455,4 @@ def main(url: str | None = None) -> int | None:
 
 
 if __name__ == "__main__":
-    sys.exit(main("https://music.youtube.com/watch?v=pIIZPtgtfJI&si=q1jZt4N2VG-j4BbZ"))
+    sys.exit(main(""))
