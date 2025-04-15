@@ -6,7 +6,7 @@ import os
 import subprocess
 import sys
 from collections import OrderedDict
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import requests
 import yt_dlp
@@ -82,6 +82,9 @@ def notify(
 
 
 class InnerTubeBase:
+    if TYPE_CHECKING:
+        session: requests.Session
+
     _instance = None
 
     API_KEY = "AIzaSyDkZV5Q2b1e0Qf4Zc0wRjM3vW3rmpZ_mD0"
@@ -98,15 +101,10 @@ class InnerTubeBase:
 
     def __new__(cls):
         if not cls._instance:
-            cls._instance = super(InnerTubeBase, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
+            cls._instance.session = requests.Session()
+            cls._instance.session.headers.update(cls.HEADERS)
         return cls._instance
-
-    def __init__(self):
-        if self._instance:
-            return
-
-        self.session = requests.Session()
-        self.session.headers.update(self.HEADERS)
 
     def fetch(self, endpoint: Literal["next", "browse"], payload: dict) -> dict:
         url = f"{self.INNER_TUBE_BASE}/{endpoint}?key={self.API_KEY}"
@@ -127,7 +125,7 @@ class InnerTubeBase:
 class LyricsMetadataPP(yt_dlp.postprocessor.FFmpegPostProcessor):
     SUPPORTED_EXTS = ("opus",)
 
-    @yt_dlp.postprocessor.PostProcessor._restrict_to(images=False, video=False)
+    @yt_dlp.postprocessor.PostProcessor._restrict_to(images=False)
     def run(self, information):
         if information["ext"] not in self.SUPPORTED_EXTS:
             self.to_screen("Skipping unsupported file extension")
@@ -198,12 +196,6 @@ class LyricsMetadataPP(yt_dlp.postprocessor.FFmpegPostProcessor):
 
 
 class CustomMetadataPP(yt_dlp.postprocessor.PostProcessor):
-    def __init__(
-        self,
-        downloader=None,
-    ):
-        super().__init__(downloader)
-
     def run(self, information):
         self.to_screen("Checking metadata...")
 
@@ -303,7 +295,7 @@ class CustomMetadataPP(yt_dlp.postprocessor.PostProcessor):
 
 ytdl_opts = {
     "extract_flat": False,
-    "format": "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best/b",
+    "format": "bestaudio[ext=webm]/251/bestaudio[ext=m4a]/bestaudio/best/b",
     "fragment_retries": 10,
     "ignoreerrors": "only_download",
     "outtmpl": {
@@ -446,7 +438,7 @@ def download(url: str, extra_options: dict | None = None):
 
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.add_post_processor(CustomMetadataPP(), when="pre_process")
-        ydl.add_post_processor(LyricsMetadataPP(), when="pre_process")
+        ydl.add_post_processor(LyricsMetadataPP(), when="post_process")
         ydl.download([url])
 
 
@@ -473,4 +465,4 @@ def main(url: str | None = None) -> int | None:
 
 
 if __name__ == "__main__":
-    sys.exit(main("https://music.youtube.com/watch?v=F6U_xAEkU6g"))
+    sys.exit(main("https://music.youtube.com/watch?v=RVDCeVG90Rg&si=X12pdm4vSG9Pi9Rc"))
