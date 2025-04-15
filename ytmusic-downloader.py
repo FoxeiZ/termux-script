@@ -161,6 +161,7 @@ class LyricsMetadataPP(yt_dlp.postprocessor.FFmpegPostProcessor):
             "-metadata",
             f"lyrics={lyrics_text}",
         ]
+        opts[opts.index("-map") + 1] = "0:a"
 
         temp_file = yt_dlp.utils.prepend_extension(filename, "lyrics")
         self.run_ffmpeg_multiple_files((filename,), temp_file, opts)
