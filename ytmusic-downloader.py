@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from collections import OrderedDict
+from functools import cache
 from typing import TYPE_CHECKING, Literal
 
 import requests
@@ -111,15 +112,19 @@ class InnerTubeBase:
         if payload.get("context") is None:
             payload["context"] = self.CLIENT_CONTEXT
 
-        response = self.session.post(url, json=payload)
+        response = self.session.post(
+            url, json={**payload, "context": self.CLIENT_CONTEXT}
+        )
         response.raise_for_status()
         return response.json()
 
-    def fetch_next(self, video_id: str, *, context: dict | None = None) -> dict:
-        return self.fetch("next", {"context": context, "videoId": video_id})
+    @cache
+    def fetch_next(self, video_id: str) -> dict:
+        return self.fetch("next", {"videoId": video_id})
 
-    def fetch_browse(self, browse_id: str, *, context: dict | None = None):
-        return self.fetch("browse", {"context": context, "browseId": browse_id})
+    @cache
+    def fetch_browse(self, browse_id: str):
+        return self.fetch("browse", {"browseId": browse_id})
 
 
 def extract_lyrics_text(data):
@@ -148,6 +153,14 @@ def extract_lyrics_browse_id(data):
         if browse_id.startswith("MPLY"):
             return browse_id
     return None
+
+
+def lyrics_ext_mapping(ext: str) -> str:
+    # TODO: fill in later
+    if ext == "opus":
+        return "lyrics"
+    else:
+        return "lyrics-eng"
 
 
 ### Ugly, but works ¯\_(ツ)_/¯ ###
@@ -184,6 +197,90 @@ setattr(
 )
 
 
+@cache
+def find_album_id(video_id: str) -> str | None:
+    data = InnerTubeBase().fetch_next(video_id)
+
+    # Recursively find the first MPREb ID (albums/singles)
+    def find(obj) -> str | None:
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if k == "browseEndpoint" and isinstance(v, dict):
+                    browse_id = v.get("browseId")
+                    if isinstance(browse_id, str) and browse_id.startswith("MPREb"):
+                        return browse_id
+                result = find(v)
+                if result:
+                    return result
+        elif isinstance(obj, list):
+            for item in obj:
+                result = find(item)
+                if result:
+                    return result
+        return None
+
+    return find(data)
+
+
+@cache
+def fetch_album_info(browse_id: str) -> dict:
+    options = {
+        "extract_flat": "in_playlist",
+        "format": "best",
+        "quiet": True,
+        "skip_download": True,
+        "source_address": None,
+    }
+
+    with yt_dlp.YoutubeDL(options) as _ydl:
+        album_info = _ydl.extract_info(
+            f"https://music.youtube.com/browse/{browse_id}", download=False
+        )
+        if (
+            not album_info
+            or not isinstance(album_info, dict)
+            or "entries" not in album_info
+        ):
+            raise ValueError("Failed to get data from album")
+
+        return album_info
+
+
+def find_album_info(video_id: str) -> dict:
+    """Find album info from the music URL or video ID."""
+
+    album_browse_id = find_album_id(video_id)
+    if not album_browse_id:
+        raise ValueError("Failed to fetch album URL")
+
+    return fetch_album_info(album_browse_id)
+
+
+@cache
+def get_track_num_from_album(video_id: str) -> str:
+    """Find track number from related album info."""
+    album_info = find_album_info(video_id)
+    for idx, entry in enumerate(album_info.get("entries", []), start=1):
+        if entry.get("id") == video_id:
+            return f"{idx:02d}"
+
+    raise ValueError("Video ID not found from the album.")
+
+
+@cache
+def is_various_artist(album_browse_id: str) -> bool:
+    album_info = fetch_album_info(album_browse_id)
+    if not album_info:
+        raise ValueError("Failed to get data from album")
+
+    entries = album_info["entries"]
+    first_channel = entries[0].get("channel_id")
+    for entry in entries[1:]:
+        if entry.get("channel_id") != first_channel:
+            return True
+    return False
+
+
 class CustomMetadataPP(yt_dlp.postprocessor.PostProcessor):
     def run(self, information):
         self.to_screen("Checking metadata...")
@@ -212,74 +309,20 @@ class CustomMetadataPP(yt_dlp.postprocessor.PostProcessor):
         if not (pl_name.startswith("Album - ") or pl_name.startswith("Single - ")):
             self.to_screen("Not an album, getting metadata for album manually")
             try:
-                information["track_number"] = self.get_track_num_from_album(information)
+                information["track_number"] = get_track_num_from_album(
+                    information["id"]
+                )
             except ValueError as e:
                 self.to_screen(f"Error getting track number: {e}")
 
+        if is_various_artist(find_album_id(information["id"])):  # type: ignore
+            # Check if the album is a Various Artists compilation
+            self.to_screen("Album is a Various Artists compilation")
+            information["meta_album_artist"] = "Various Artists"
+            # information.setdefault("album_artist", "Various Artists")
+
         # Custom logic to handle metadata
         return [], information
-
-    def get_track_num_from_album(self, information) -> str:
-        """Find track number from related album info."""
-        video_id = information.get("id")
-        album_info = self.find_album_info(information)
-        for idx, entry in enumerate(album_info.get("entries", []), start=1):
-            if entry.get("id") == video_id:
-                return f"{idx:02d}"
-
-        raise ValueError("Video ID not found from the album.")
-
-    def find_album_info(self, information) -> dict:
-        """Find album info from the music URL or video ID."""
-
-        video_id = information.get("id")
-        options = {
-            "extract_flat": "in_playlist",
-            "format": "best",
-            "quiet": True,
-            "skip_download": True,
-            "source_address": None,
-        }
-
-        album_id = self.fetch_album_url(video_id)
-        if not album_id:
-            raise ValueError("Failed to fetch album URL")
-
-        with yt_dlp.YoutubeDL(options) as _ydl:
-            album_info = _ydl.extract_info(
-                f"https://music.youtube.com/browse/{album_id}", download=False
-            )
-            if (
-                not album_info
-                or not isinstance(album_info, dict)
-                or "entries" not in album_info
-            ):
-                raise ValueError("Failed to get data from album")
-
-            return album_info
-
-    def fetch_album_url(self, video_id: str):
-        data = InnerTubeBase().fetch_next(video_id)
-
-        # Recursively find the first MPREb ID (albums/singles)
-        def find_album_id(obj) -> str | None:
-            if isinstance(obj, dict):
-                for k, v in obj.items():
-                    if k == "browseEndpoint" and isinstance(v, dict):
-                        browse_id = v.get("browseId")
-                        if isinstance(browse_id, str) and browse_id.startswith("MPREb"):
-                            return browse_id
-                    result = find_album_id(v)
-                    if result:
-                        return result
-            elif isinstance(obj, list):
-                for item in obj:
-                    result = find_album_id(item)
-                    if result:
-                        return result
-            return None
-
-        return find_album_id(data)
 
 
 ytdl_opts = {
@@ -455,4 +498,9 @@ def main(url: str | None = None) -> int | None:
 
 
 if __name__ == "__main__":
-    sys.exit(main(""))
+    sys.exit(
+        main(
+            "https://music.youtube.com/playlist?list=OLAK5uy_m4TsxT05t8zKD3cM7TbRcwuN1_HHhJsMg&si=7tGZGOmzyrN6x5db"
+        )
+    )
+    # sys.exit(main("https://music.youtube.com/watch?v=8UVNT4wvIGY&si=YD4i0G0IpW9-h0jH"))
