@@ -42,4 +42,4 @@ fi
 
 # env GALLIUM_DRIVER=virpipe DISPLAY=:1 xfce4-session
 # env GALLIUM_DRIVER=virpipe DISPLAY=:1 scrcpy --no-audio --display 5
-env $OPTSENV "$@"
+env "$OPTSENV" "$@"

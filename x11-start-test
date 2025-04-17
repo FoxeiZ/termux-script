@@ -60,7 +60,7 @@ done
 #fi
 
 if [ $GPU -eq 1 ]; then
-    /data/data/com.termux/files/usr/bin/virgl_test_server_android $VIRGL_ARGS &
+    /data/data/com.termux/files/usr/bin/virgl_test_server_android "$VIRGL_ARGS" &
 fi
 
 echo
@@ -80,8 +80,8 @@ echo
 if [ -z "$ARGS" ]; then
     set -- "xfce4-session"
 else
-    env $OPTSENV jwm &
-    env $OPTSENV $ARGS
+    env "$OPTSENV" jwm &
+    env "$OPTSENV" "$ARGS"
 fi
 
 # env GALLIUM_DRIVER=virpipe DISPLAY=:1 xfce4-session
