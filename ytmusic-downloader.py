@@ -168,6 +168,14 @@ def Patched_get_metadata_opts(self: yt_dlp.postprocessor.FFmpegMetadataPP, info)
     yield from self.Unpatched_get_metadata_opts(info)  # type: ignore[no-untyped-call]
 
     video_id = info.get("id")
+    if not video_id:
+        self.to_screen("No video ID found")
+        return
+
+    if not (info.get("channel") or info.get("uploader") or "").endswith(" - Topic"):
+        self.to_screen("Not a music-only ID, skipping lyrics metadata")
+        return
+
     inner_tube = InnerTubeBase()
     data = inner_tube.fetch_next(video_id)
     browse_id = extract_lyrics_browse_id(data)
