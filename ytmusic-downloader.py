@@ -491,17 +491,16 @@ def download(url: str, extra_options: dict | None = None):
         ydl.download([url])
 
 
-def main(url: str | None = None) -> int | None:
+def main(url: str | None = None):
     if not url:
         if len(sys.argv) < 2:
             print("Usage: termux-url-opener.py <url>")
-            return 1
+            return
         url = sys.argv[1]
 
     try:
         download(url)
     except Exception as e:
-        print(f"Download error: {e}")
         notify(
             title=e.__class__.__name__,
             content=str(e),
@@ -510,13 +509,9 @@ def main(url: str | None = None) -> int | None:
             button1="OK",
             button1_action="termux-notification-remove --id download_error",
         )
-        return 1
+        raise
 
 
 if __name__ == "__main__":
-    sys.exit(
-        main(
-            "https://music.youtube.com/playlist?list=OLAK5uy_m4TsxT05t8zKD3cM7TbRcwuN1_HHhJsMg&si=7tGZGOmzyrN6x5db"
-        )
-    )
+    main()
     # sys.exit(main("https://music.youtube.com/watch?v=8UVNT4wvIGY&si=YD4i0G0IpW9-h0jH"))
