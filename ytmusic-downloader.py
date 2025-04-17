@@ -223,7 +223,10 @@ def find_album_id(video_id: str) -> str | None:
 
 
 @cache
-def fetch_album_info(browse_id: str) -> dict:
+def fetch_album_info(browse_id: str | None) -> dict:
+    if not browse_id:
+        raise ValueError("Invalid browse ID")
+
     options = {
         "extract_flat": "in_playlist",
         "format": "best",
@@ -312,14 +315,19 @@ class CustomMetadataPP(yt_dlp.postprocessor.PostProcessor):
                 information["track_number"] = get_track_num_from_album(
                     information["id"]
                 )
-            except ValueError as e:
-                self.to_screen(f"Error getting track number: {e}")
+            except ValueError:
+                self.to_screen("Hmm, doesn't look like an album. Skipping...")
+                # information["track_number"] = None
+                return [], information
 
-        if is_various_artist(find_album_id(information["id"])):  # type: ignore
-            # Check if the album is a Various Artists compilation
-            self.to_screen("Album is a Various Artists compilation")
-            information["meta_album_artist"] = "Various Artists"
-            # information.setdefault("album_artist", "Various Artists")
+        try:
+            if is_various_artist(find_album_id(information["id"])):  # type: ignore
+                self.to_screen("Album is a Various Artists compilation")
+                information["meta_album_artist"] = "Various Artists"
+                # information.setdefault("album_artist", "Various Artists")
+        except ValueError:
+            self.to_screen("Hmm, doesn't look like an album. Skipping...")
+            # information["track_number"] = None
 
         # Custom logic to handle metadata
         return [], information
