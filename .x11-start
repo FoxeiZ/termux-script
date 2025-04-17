@@ -1,0 +1,45 @@
+#!/data/data/com.termux/files/usr/bin/bash
+
+
+# setup phase
+trap "exit" INT TERM
+trap "kill 0" EXIT
+
+termux-x11 -ac :1 &
+sleep 2  # make sure the service started
+
+am start com.termux.x11/com.termux.x11.MainActivity
+
+OPTSENV="DISPLAY=:1"
+ARGS=""
+if [ "$1" = "--gpu" ]; then
+    # env set for gpu accel
+    OPTSENV="${OPTSENV} GALLIUM_DRIVER=virpipe MESA_GL_VERSION_OVERRIDE=4.5"
+    shift
+    
+    # use angle backend, default is android-gl (best?)
+    if [ "$1" = "--vulkan" ]; then
+        ARGS="--angle-vulkan"
+        elif [ "$1" = "--gl" ]; then
+        ARGS="--angle-gl"
+        elif [ "$1" = "--null" ]; then
+        ARGS="--angle-vulkan-null"
+    fi
+    
+    # shift again if ARGS is set
+    if [ -n "$ARGS" ]; then
+        shift
+    else
+        ARGS="--angle-gl"
+    fi
+    
+    virgl_test_server_android "$ARGS" &
+fi
+
+if [ $# -lt 1 ]; then
+    set -- "xfce4-session"
+fi
+
+# env GALLIUM_DRIVER=virpipe DISPLAY=:1 xfce4-session
+# env GALLIUM_DRIVER=virpipe DISPLAY=:1 scrcpy --no-audio --display 5
+env "$OPTSENV" "$@"

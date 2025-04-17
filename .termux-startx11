@@ -4,7 +4,7 @@ DISPLAYNO=1
 socket_is_open() {
     local SOCKET=$PREFIX/tmp/.X11-unix/X$DISPLAYNO
     local NULL=/dev/null
-    socat -u OPEN:$NULL UNIX-CONNECT:$SOCKET > $NULL 2>&1
+    socat -u OPEN:$NULL UNIX-CONNECT:"$SOCKET" > $NULL 2>&1
     return $?
 }
 
