@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
 from collections import OrderedDict
-from functools import cache
-from typing import TYPE_CHECKING, Literal
+from functools import cache, lru_cache
+from typing import TYPE_CHECKING, Generator, Literal, TypedDict
 
 import requests
 import yt_dlp
@@ -127,70 +128,346 @@ class InnerTubeBase:
         return self.fetch("browse", {"browseId": browse_id})
 
 
-def extract_lyrics_text(data):
-    try:
-        lyrics_runs = data["contents"]["sectionListRenderer"]["contents"][0][
-            "musicDescriptionShelfRenderer"
-        ]["description"]["runs"]
-        return "".join([r["text"] for r in lyrics_runs])
-    except (KeyError, IndexError):
+class LyricsPluginBase:
+    def __init__(self, info: dict):
+        self.video_id = info.get("id")
+        self.inner_tube = InnerTubeBase()
+
+    def run(self) -> tuple[bool, str] | None:
+        raise NotImplementedError("Subclasses must implement this method")
+
+
+class YoutubeMusicLyricsPlugin(LyricsPluginBase):
+    def run(self):
+        if not self.video_id:
+            return
+
+        data = self.inner_tube.fetch_next(self.video_id)
+        browse_id = self.extract_lyrics_browse_id(data)
+
+        if not browse_id:
+            return
+
+        lyrics_data = self.inner_tube.fetch_browse(browse_id)
+        lyrics_text = self.extract_lyrics_text(lyrics_data)
+
+        if not lyrics_text:
+            return
+
+        return False, lyrics_text
+
+    def extract_lyrics_text(self, data):
+        try:
+            lyrics_runs = data["contents"]["sectionListRenderer"]["contents"][0][
+                "musicDescriptionShelfRenderer"
+            ]["description"]["runs"]
+            return "".join([r["text"] for r in lyrics_runs])
+        except (KeyError, IndexError):
+            return None
+
+    def extract_lyrics_browse_id(self, data):
+        tabs = (
+            data.get("contents", {})
+            .get("singleColumnMusicWatchNextResultsRenderer", {})
+            .get("tabbedRenderer", {})
+            .get("watchNextTabbedResultsRenderer", {})
+            .get("tabs", [])
+        )
+        for tab in tabs:
+            endpoint = (
+                tab.get("tabRenderer", {}).get("endpoint", {}).get("browseEndpoint", {})
+            )
+            browse_id = endpoint.get("browseId", "")
+            if browse_id.startswith("MPLY"):
+                return browse_id
         return None
 
 
-def extract_lyrics_browse_id(data):
-    tabs = (
-        data.get("contents", {})
-        .get("singleColumnMusicWatchNextResultsRenderer", {})
-        .get("tabbedRenderer", {})
-        .get("watchNextTabbedResultsRenderer", {})
-        .get("tabs", [])
-    )
-    for tab in tabs:
-        endpoint = (
-            tab.get("tabRenderer", {}).get("endpoint", {}).get("browseEndpoint", {})
-        )
-        browse_id = endpoint.get("browseId", "")
-        if browse_id.startswith("MPLY"):
-            return browse_id
-    return None
+class MusixMatchLyricsPlugin(LyricsPluginBase):
+    TOKEN = "2203269256ff7abcb649269df00e14c833dbf4ddfb5b36a1aae8b0"
+    BASE_URL = "https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get?format=json&namespace=lyrics_richsynched&subtitle_format=mxm&app_id=web-desktop-app-v1.0&"
+    HEADERS = {
+        "authority": "apic-desktop.musixmatch.com",
+        "cookie": "x-mxm-token-guid=",
+    }
+
+    def __init__(self, info: dict):
+        super().__init__(info)
+        self.title = info.get("title")
+        self.artist = info.get("artist") or info.get("uploader")
+
+    @lru_cache(maxsize=5)
+    def find_lyrics(
+        self,
+        *,
+        album: str = "",
+        artist: str = "",
+        title: str = "",
+        # duration: str = "",
+        # track_id: str = "",
+        # subtitle_length: str = "",
+    ):
+        params = {
+            "q_album": album,
+            "q_artist": artist,
+            "q_track": title,
+            # "track_spotify_id": track_id,
+            # "q_duration": duration,
+            # "f_subtitle_length": subtitle_length,
+            "usertoken": self.TOKEN,
+        }
+
+        try:
+            response = requests.get(self.BASE_URL, params=params, headers=self.HEADERS)
+            response.raise_for_status()
+        except (requests.RequestException, ConnectionError) as e:
+            print(repr(e))
+            return
+
+        r = response.json()
+        if (
+            r["message"]["header"]["status_code"] != 200
+            and r["message"]["header"].get("hint") == "renew"
+        ):
+            print("Invalid token")
+            return
+
+        body = r["message"]["body"]["macro_calls"]
+        status_code = body["matcher.track.get"]["message"]["header"].get("status_code")
+        if status_code != 200:
+            if status_code == 404:
+                print("No lyrics/songs found.")
+            elif status_code == 401:
+                print("Timed out.")
+            else:
+                print(
+                    f"Requested error: {body['matcher.track.get']['message']['header']}"
+                )
+            return
+        elif isinstance(body["track.lyrics.get"]["message"].get("body"), dict):
+            if body["track.lyrics.get"]["message"]["body"]["lyrics"]["restricted"]:
+                print("Restricted lyrics.")
+                return
+
+        return body
+
+    def get_unsynced(
+        self,
+        *,
+        album: str = "",
+        artist: str = "",
+        title: str = "",
+    ) -> list[str] | None:
+        body = self.find_lyrics(album=album, artist=artist, title=title)
+        if body is None:
+            raise ValueError("No body found")
+
+        lyrics_body = body["track.lyrics.get"]["message"].get("body")
+        if lyrics_body is None:
+            return None
+
+        lyrics = lyrics_body["lyrics"]["lyrics_body"]
+        if lyrics:
+            return [line for line in list(filter(None, lyrics.split("\n")))]
+
+        return None
+
+    def get_synced(
+        self,
+        *,
+        album: str = "",
+        artist: str = "",
+        title: str = "",
+    ):
+        body = self.find_lyrics(album=album, artist=artist, title=title)
+        if body is None:
+            raise ValueError("No body found")
+
+        subtitle_body = body["track.subtitles.get"]["message"].get("body")
+        if subtitle_body is None:
+            return None
+        subtitle = subtitle_body["subtitle_list"][0]["subtitle"]
+        if subtitle:
+            return [
+                f"[{line['time']['minutes']:02d}:{line['time']['seconds']:02d}.{line['time']['hundredths']:02d}]{line['text'] or '♪'}"
+                for line in json.loads(subtitle["subtitle_body"])
+            ]
+
+        return None
+
+    def run(
+        self,
+    ):
+        if not self.video_id or not self.title or not self.artist:
+            return
+
+        for synced, cb in (
+            (True, self.get_synced),
+            (False, self.get_unsynced),
+        ):
+            try:
+                lyrics = cb(title=self.title, artist=self.artist)
+                if lyrics:
+                    return synced, "\n".join(lyrics)
+            except ValueError:
+                print("No lyrics found")
+                continue
+
+        return None
 
 
-def lyrics_ext_mapping(ext: str) -> str:
-    # TODO: fill in later
-    if ext == "opus":
-        return "lyrics"
-    else:
-        return "lyrics-eng"
+LrcLibResponse = TypedDict(
+    "LrcLibResponse",
+    {
+        "id": str,
+        "name": str,
+        "trackName": str,
+        "artistName": str,
+        "albumName": str,
+        "duration": float,
+        "instrumental": bool,
+        "plainLyrics": str,
+        "syncedLyrics": str,
+    },
+    total=False,
+)
+
+
+class LrcLibLyricsPlugin(LyricsPluginBase):
+    BASE_URL = "https://lrclib.net/api"
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+    }
+
+    def __init__(self, info: dict):
+        super().__init__(info)
+        self.title = info.get("title")
+        self.artist = info.get("artist") or info.get("uploader")
+        self.album = info.get("album") or info.get("playlist_title") or ""
+
+    @lru_cache(maxsize=5)
+    def find_lyrics(
+        self,
+        *,
+        q: str = "",
+        track_name: str = "",
+        artist_name: str = "",
+        album_name: str = "",
+    ) -> LrcLibResponse | None:
+        params = {
+            "q": q,
+            "track_name": track_name,
+            "artist_name": artist_name,
+            "album_name": album_name,
+        }
+        try:
+            response = requests.get(self.BASE_URL + "/search", params=params)
+            response.raise_for_status()
+            for item in response.json():
+                if (
+                    item.get("track_name") == track_name
+                    and item.get("artist_name") == artist_name
+                ):
+                    return item
+            return None
+
+        except (requests.RequestException, ConnectionError) as e:
+            print(repr(e))
+            return
+
+    def get_unsynced(
+        self,
+        *,
+        album: str = "",
+        artist: str = "",
+        title: str = "",
+    ) -> str | None:
+        body = self.find_lyrics(track_name=title, artist_name=artist, album_name=album)
+        if body is None:
+            raise ValueError("No body found")
+
+        return body.get("plainLyrics", None)
+
+    def get_synced(
+        self,
+        *,
+        album: str = "",
+        artist: str = "",
+        title: str = "",
+    ) -> str | None:
+        body = self.find_lyrics(track_name=title, artist_name=artist, album_name=album)
+        if body is None:
+            raise ValueError("No body found")
+
+        return body.get("syncedLyrics", None)
+
+    def run(
+        self,
+    ):
+        if not self.video_id or not self.title or not self.artist:
+            return
+
+        for synced, cb in (
+            (True, self.get_synced),
+            (False, self.get_unsynced),
+        ):
+            try:
+                lyrics = cb(title=self.title, artist=self.artist, album=self.album)
+                if lyrics:
+                    return synced, lyrics
+            except ValueError:
+                print("No lyrics found")
+                continue
+
+        return None
+
+
+def get_lyrics(info) -> Generator[tuple[Literal["-metadata"], str]]:
+    def lyrics_ext_helper(is_synced: bool = False) -> str:
+        if is_synced:
+            return "lyrics"
+
+        # TODO: fill in later
+        if info["ext"] == "opus":
+            return "lyrics"
+        else:
+            return "lyrics-eng"
+
+    for plugin in [
+        LrcLibLyricsPlugin,
+        MusixMatchLyricsPlugin,
+        YoutubeMusicLyricsPlugin,
+    ]:
+        if not issubclass(plugin, LyricsPluginBase):
+            raise TypeError("Invalid plugin type")
+
+        lyrics_plugin = plugin(info)
+        result = lyrics_plugin.run()
+        if not result:
+            continue
+
+        if isinstance(result, tuple) and len(result) == 2:
+            is_synced, lyrics_text = result
+            yield ("-metadata", f"{lyrics_ext_helper(is_synced)}={lyrics_text}")
+            return
+    return
 
 
 ### Ugly, but works ¯\_(ツ)_/¯ ###
 def Patched_get_metadata_opts(self: yt_dlp.postprocessor.FFmpegMetadataPP, info):
     yield from self.Unpatched_get_metadata_opts(info)  # type: ignore[no-untyped-call]
 
-    video_id = info.get("id")
-    if not video_id:
-        self.to_screen("No video ID found")
+    # video_id = info.get("id")
+    # if not video_id:
+    #     self.to_screen("No video ID found")
+    #     return
+
+    try:
+        yield from get_lyrics(info)
+    except ValueError as e:
+        self.to_screen(f"Error getting lyrics: {e}")
         return
-
-    if not (info.get("channel") or info.get("uploader") or "").endswith(" - Topic"):
-        self.to_screen("Not a music-only ID, skipping lyrics metadata")
-        return
-
-    inner_tube = InnerTubeBase()
-    data = inner_tube.fetch_next(video_id)
-    browse_id = extract_lyrics_browse_id(data)
-
-    if not browse_id:
-        self.to_screen("No lyrics browse ID found")
-        return
-
-    lyrics_data = inner_tube.fetch_browse(browse_id)
-    lyrics_text = lyrics_data and extract_lyrics_text(lyrics_data)
-    if not lyrics_text:
-        self.to_screen("No lyrics text found")
-        return
-
-    yield "-metadata", f"lyrics={lyrics_text}"
 
 
 setattr(
@@ -203,31 +480,6 @@ setattr(
     "_get_metadata_opts",
     Patched_get_metadata_opts,
 )
-
-
-@cache
-def find_album_id(video_id: str) -> str | None:
-    data = InnerTubeBase().fetch_next(video_id)
-
-    # Recursively find the first MPREb ID (albums/singles)
-    def find(obj) -> str | None:
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                if k == "browseEndpoint" and isinstance(v, dict):
-                    browse_id = v.get("browseId")
-                    if isinstance(browse_id, str) and browse_id.startswith("MPREb"):
-                        return browse_id
-                result = find(v)
-                if result:
-                    return result
-        elif isinstance(obj, list):
-            for item in obj:
-                result = find(item)
-                if result:
-                    return result
-        return None
-
-    return find(data)
 
 
 @cache
@@ -255,6 +507,31 @@ def fetch_album_info(browse_id: str | None) -> dict:
             raise ValueError("Failed to get data from album")
 
         return album_info
+
+
+@cache
+def find_album_id(video_id: str) -> str | None:
+    data = InnerTubeBase().fetch_next(video_id)
+
+    # Recursively find the first MPREb ID (albums/singles)
+    def find(obj) -> str | None:
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if k == "browseEndpoint" and isinstance(v, dict):
+                    browse_id = v.get("browseId")
+                    if isinstance(browse_id, str) and browse_id.startswith("MPREb"):
+                        return browse_id
+                result = find(v)
+                if result:
+                    return result
+        elif isinstance(obj, list):
+            for item in obj:
+                result = find(item)
+                if result:
+                    return result
+        return None
+
+    return find(data)
 
 
 def find_album_info(video_id: str) -> dict:
@@ -513,5 +790,5 @@ def main(url: str | None = None):
 
 
 if __name__ == "__main__":
-    main()
+    main("https://music.youtube.com/watch?v=3UbBjzFDkd4&si=9_5GsKvy0WvTQV1j")
     # sys.exit(main("https://music.youtube.com/watch?v=8UVNT4wvIGY&si=YD4i0G0IpW9-h0jH"))
