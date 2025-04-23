@@ -90,7 +90,7 @@ video_download() {
 #    "$URL"
 #}
 
-ytmusic_downloader() {
+ytmusic_downloader_fallback() {
     base_downloader \
     --format "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best/b" \
     --extract-audio \
@@ -106,6 +106,13 @@ ytmusic_downloader() {
     --parse-metadata "description:(?P<meta_date>(?<=Released on: )\d{4})" \
     --output "/sdcard/Music/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s" \
     "$URL"
+}
+
+ytmusic_downloader() {
+    if ! python "$HOME/scripts/ytmusic-downloader.py" "$URL"; then
+        echo "ytmusic-downloader failed, falling back to yt-dlp."
+        ytmusic_downloader_fallback "$URL"
+    fi
 }
 
 not_music_url() {
