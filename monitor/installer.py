@@ -1,0 +1,101 @@
+import os
+import sys
+
+DIR = os.path.dirname(os.path.abspath(__file__))
+SVDIR = (
+    os.environ.get("SV_DIR", "/data/data/com.termux/files/usr/var/service")
+    if sys.platform == "linux"
+    else os.path.join(DIR, "sv")
+)
+
+if not os.path.exists(SVDIR):
+    # os.makedirs(SVDIR, exist_ok=True)
+    raise RuntimeError(
+        f"Service dir not exist, cannot continue. Make sure the path {SVDIR} exists."
+    )
+
+
+def init_supervisor_dir(service_path: str):
+    """
+    Initialize the supervisor directory for the service
+    """
+    supervisor_path = os.path.join(service_path, "supervise")
+    os.mkdir(supervisor_path)
+    open(os.path.join(supervisor_path, "pid"), "w").close()
+    open(os.path.join(supervisor_path, "status"), "w").close()
+    open(os.path.join(supervisor_path, "stat"), "w").close()
+    if sys.platform == "linux":
+        os.mkfifo(os.path.join(supervisor_path, "control"), 0o600)
+        os.mkfifo(os.path.join(supervisor_path, "ok"), 0o600)
+    else:
+        # simulate mkfifo for non-linux
+        open(os.path.join(supervisor_path, "control"), "w").close()
+        open(os.path.join(supervisor_path, "ok"), "w").close()
+
+
+def init_log_service_dir(service_path: str):
+    """
+    Initialize the log service directory
+    """
+    log_path = os.path.join(service_path, "log")
+    os.makedirs(log_path, exist_ok=True)
+    init_supervisor_dir(log_path)
+
+    with open(os.path.join(log_path, "run"), "w") as f:
+        f.write("#!/data/data/com.termux/files/usr/bin/sh\n")
+        f.write(
+            'svlogger="/data/data/com.termux/files/usr/share/termux-services/svlogger"\n'
+        )
+        f.write('exec "${svlogger}" "$@"\n')
+
+
+def init_service_dir(service_name: str, service_runtime_path: str | None = None):
+    """
+    Initialize the service directory
+    """
+    service_path = os.path.join(SVDIR, service_name)
+    os.mkdir(service_path)
+    if not service_runtime_path:
+        service_runtime_path = os.path.join(DIR, service_name)
+
+    init_log_service_dir(service_path)
+    init_supervisor_dir(service_path)
+    with open(os.path.join(service_path, "run"), "w") as f:
+        f.write("#!/data/data/com.termux/files/usr/bin/sh\n")
+        f.write(f"exec python {service_runtime_path}\n")
+
+
+def install_service(
+    service_name: str | None,
+    *,
+    service_runtime_path: str | None = None,
+    force: bool = False,
+):
+    """
+    Install the service by creating a symbolic link in the service directory.
+    """
+    if not isinstance(service_name, str):
+        raise ValueError(f"Service name must be a string, got {type(service_name)}")
+
+    service_path = os.path.join(SVDIR, service_name)
+    if not os.path.exists(service_path) or force:
+        init_service_dir(service_name, service_runtime_path)
+        print(f"Service {service_name} installed at {service_path}")
+    else:
+        print(f"Service {service_name} already installed at {service_path}")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python installer.py <service_name>")
+        sys.exit(1)
+
+    force = "--force" in sys.argv
+    if force:
+        del sys.argv[sys.argv.index("--force")]
+
+    service_name = sys.argv[1]
+    service_runtime_path = sys.argv[2] if len(sys.argv) > 2 else None
+    install_service(
+        service_name, service_runtime_path=service_runtime_path, force=force
+    )
