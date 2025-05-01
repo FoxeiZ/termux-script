@@ -80,8 +80,10 @@ echo
 if [ -z "$ARGS" ]; then
     set -- "xfce4-session"
 else
-    env "$OPTSENV" jwm &
-    env "$OPTSENV" "$ARGS"
+    # shellcheck disable=SC2086
+    env $OPTSENV jwm &
+    # shellcheck disable=SC2086
+    env $OPTSENV $ARGS
 fi
 
 # env GALLIUM_DRIVER=virpipe DISPLAY=:1 xfce4-session
