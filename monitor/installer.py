@@ -63,6 +63,8 @@ def init_service_dir(
     os.mkdir(service_path)
     if not service_runtime_path:
         service_runtime_path = os.path.join(DIR, service_name)
+    else:
+        service_runtime_path = os.path.abspath(service_runtime_path)
 
     if not runtime_script:
         runtime_script = f"exec python {service_runtime_path}"
