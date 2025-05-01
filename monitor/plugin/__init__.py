@@ -1,5 +1,5 @@
 from .interface_monitor import InterfaceMonitorPlugin
-from .long_process import (
+from .plugin_test.long_process import (
     LongProcessPlugin,
     LongProcessPluginWithError,
     LongProcessPluginWithLongOutput,
