@@ -36,7 +36,7 @@ class PluginManager:
         plugins: list[Plugin]
         max_retries: int
         retry_delay: int
-        webhook_url: str | None
+        _webhook_url: str | None
         _stopped: bool
 
     def __init__(
@@ -46,9 +46,13 @@ class PluginManager:
 
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self.webhook_url = webhook_url
+        self._webhook_url = webhook_url
 
         self._stopped = False
+
+    @property
+    def webhook_url(self) -> str | None:
+        return self._webhook_url
 
     def register_plugin(
         self,
@@ -65,7 +69,7 @@ class PluginManager:
             raise TypeError("Plugin must be a subclass of Plugin")
 
         try:
-            kwargs.setdefault("webhook_url", self.webhook_url)
+            kwargs.setdefault("webhook_url", self._webhook_url)
             plugin_instance = plugin(manager=self, **kwargs)
 
         except PluginNotLoadedError as e:
@@ -91,9 +95,9 @@ class PluginManager:
         """
         Start all registered plugins in separate threads.
 
-        - Runs 'every_' methods in continuous loops
-        - Runs 'once_' methods one time
-        - Runs 'daemon_' methods as daemon threads
+        - Runs 'IntervalPlugin' methods in continuous loops at specified intervals
+        - Runs 'OneTimePlugin' methods one time
+        - Runs 'DaemonPlugin' methods as daemon threads
         """
         logger.info("Starting plugin manager...")
 
