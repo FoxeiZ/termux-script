@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 
 DIR = os.path.dirname(os.path.abspath(__file__))
@@ -47,9 +48,14 @@ def init_log_service_dir(service_path: str):
             'svlogger="/data/data/com.termux/files/usr/share/termux-services/svlogger"\n'
         )
         f.write('exec "${svlogger}" "$@"\n')
+    os.chmod(os.path.join(log_path, "run"), 0o755)
 
 
-def init_service_dir(service_name: str, service_runtime_path: str | None = None):
+def init_service_dir(
+    service_name: str,
+    service_runtime_path: str | None = None,
+    runtime_script: str | None = None,
+):
     """
     Initialize the service directory
     """
@@ -58,17 +64,22 @@ def init_service_dir(service_name: str, service_runtime_path: str | None = None)
     if not service_runtime_path:
         service_runtime_path = os.path.join(DIR, service_name)
 
+    if not runtime_script:
+        runtime_script = f"exec python {service_runtime_path}"
+
     init_log_service_dir(service_path)
     init_supervisor_dir(service_path)
     with open(os.path.join(service_path, "run"), "w") as f:
         f.write("#!/data/data/com.termux/files/usr/bin/sh\n")
-        f.write(f"exec python {service_runtime_path}\n")
+        f.write(runtime_script + "\n")
+    os.chmod(os.path.join(service_path, "run"), 0o755)
 
 
 def install_service(
     service_name: str | None,
     *,
     service_runtime_path: str | None = None,
+    runtime_script: str | None = None,
     force: bool = False,
 ):
     """
@@ -78,24 +89,53 @@ def install_service(
         raise ValueError(f"Service name must be a string, got {type(service_name)}")
 
     service_path = os.path.join(SVDIR, service_name)
-    if not os.path.exists(service_path) or force:
-        init_service_dir(service_name, service_runtime_path)
-        print(f"Service {service_name} installed at {service_path}")
-    else:
-        print(f"Service {service_name} already installed at {service_path}")
+    if os.path.exists(service_path):
+        if force:
+            shutil.rmtree(service_path)
+            print(f"Removed existing service {service_name} due to force option")
+        else:
+            print(f"Service {service_name} already installed at {service_path}")
+            return
+
+    init_service_dir(
+        service_name,
+        service_runtime_path=service_runtime_path,
+        runtime_script=runtime_script,
+    )
+    print(f"Service {service_name} installed at {service_path}")
+
+
+def parse_args(args):
+    matched = None
+    pargs = {}
+    for arg in args:
+        if matched:
+            pargs[matched] = arg
+            matched = None
+            continue
+
+        match arg:
+            case "--force":
+                pargs["force"] = True
+            case "--name":
+                matched = "service_name"
+            case "--runtime-path":
+                matched = "service_runtime_path"
+            case "--script":
+                matched = "runtime_script"
+            case _:
+                if arg.startswith("--"):
+                    print(f"Unknown argument: {arg}")
+                    sys.exit(1)
+
+    return pargs
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python installer.py <service_name>")
+        print(
+            "Usage: python installer.py <service_name> [<service_runtime_path>] [<runtime_script>] [--force]"
+        )
         sys.exit(1)
 
-    force = "--force" in sys.argv
-    if force:
-        del sys.argv[sys.argv.index("--force")]
-
-    service_name = sys.argv[1]
-    service_runtime_path = sys.argv[2] if len(sys.argv) > 2 else None
-    install_service(
-        service_name, service_runtime_path=service_runtime_path, force=force
-    )
+    install_service(**parse_args(sys.argv[1:]))
