@@ -84,19 +84,6 @@ class Plugin:
         url = f"{self.webhook_url}/messages/{msg_id}"
         self._http_session.patch(url, json=payload)
 
-
-class OneTimePlugin(Plugin):
-    def __init__(self, manager: PluginManager, webhook_url: str = "") -> None:
-        super().__init__(manager, webhook_url)
-
-    @abstractmethod
-    def kill(self) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def run(self) -> Any:
-        raise NotImplementedError
-
     def _send(
         self, title: str, description: str, color: int, content: str | None, wait: bool
     ):
@@ -131,26 +118,55 @@ class OneTimePlugin(Plugin):
 
         self.send_webhook(payload=payload, files=files, wait=wait)
 
-    def send_success(self, content: str | None = None, wait: bool = False) -> None:
+    def send_success(
+        self,
+        content: str | None = None,
+        wait: bool = False,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        color: int | None = None,
+    ) -> None:
         """Send a success message to the webhook."""
         self._send(
-            title=f"{self.name} finished successfully",
-            description=f"Plugin {self.name} has finished successfully.",
-            color=2351395,
+            title=title or f"{self.name} finished successfully",
+            description=description or f"Plugin {self.name} has finished successfully.",
+            color=color or 2351395,
             content=content,
             wait=wait,
         )
 
-    def send_error(self, content: str | None = None, wait: bool = False) -> None:
+    def send_error(
+        self,
+        content: str | None = None,
+        wait: bool = False,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        color: int | None = None,
+    ) -> None:
         """Send a error message to the webhook."""
 
         self._send(
-            title=f"{self.name} failed",
-            description=f"Plugin {self.name} has failed.",
-            color=14754595,
+            title=title or f"{self.name} failed",
+            description=description or f"Plugin {self.name} has failed.",
+            color=color or 14754595,
             content=content,
             wait=wait,
         )
+
+
+class OneTimePlugin(Plugin):
+    def __init__(self, manager: PluginManager, webhook_url: str = "") -> None:
+        super().__init__(manager, webhook_url)
+
+    @abstractmethod
+    def kill(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def run(self) -> Any:
+        raise NotImplementedError
 
 
 class DaemonPlugin(Plugin):
