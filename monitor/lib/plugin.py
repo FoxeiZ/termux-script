@@ -84,7 +84,7 @@ class Plugin:
         url = f"{self.webhook_url}/messages/{msg_id}"
         self._http_session.patch(url, json=payload)
 
-    def _send(
+    def send_message(
         self, title: str, description: str, color: int, content: str | None, wait: bool
     ):
         files = None
@@ -128,7 +128,7 @@ class Plugin:
         color: int | None = None,
     ) -> None:
         """Send a success message to the webhook."""
-        self._send(
+        self.send_message(
             title=title or f"{self.name} finished successfully",
             description=description or f"Plugin {self.name} has finished successfully.",
             color=color or 2351395,
@@ -147,7 +147,7 @@ class Plugin:
     ) -> None:
         """Send a error message to the webhook."""
 
-        self._send(
+        self.send_message(
             title=title or f"{self.name} failed",
             description=description or f"Plugin {self.name} has failed.",
             color=color or 14754595,
