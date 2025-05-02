@@ -1,1 +1,1 @@
-from long_process import *
+from .long_process import *
