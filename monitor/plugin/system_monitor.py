@@ -10,7 +10,7 @@ from lib.manager import get_logger
 from lib.plugin import IntervalPlugin
 
 if TYPE_CHECKING:
-    from typing import TypedDict
+    from typing import TextIO, TypedDict
 
     from lib._types import WebhookPayload
 
@@ -34,6 +34,7 @@ def sizeof_fmt(num, suffix="B"):
 class SystemMonitorPlugin(IntervalPlugin):
     if TYPE_CHECKING:
         first_run: bool
+        _file_cache: dict[str, TextIO]
 
     def __init__(self, manager, interval=10, webhook_url="", **kwargs):
         try:
@@ -46,6 +47,7 @@ class SystemMonitorPlugin(IntervalPlugin):
         super().__init__(manager, interval, webhook_url)
 
         self.first_run = True
+        self._file_cache = {}
 
     def get_uptime(self) -> str:
         return str(
@@ -76,15 +78,25 @@ class SystemMonitorPlugin(IntervalPlugin):
 
         def read_file(file_name: str, _type: type[ReadT] = str) -> ReadT | None:
             try:
-                with open(os.path.join(battery_path, file_name), "r") as f:
-                    value = f.read().strip()
-                    return _type(value)
+                if file_name not in self._file_cache:
+                    self._file_cache[file_name] = open(
+                        os.path.join(battery_path, file_name), "r"
+                    )
+                file = self._file_cache[file_name]
+                file.seek(0)
+                value = file.read().strip()
+                if not value:
+                    return None
+                return _type(value)
+
             except FileNotFoundError:
                 pass
+
             except PermissionError:
                 logger.warning(
                     f"Permission denied to read {file_name} in {battery_path}"
                 )
+
             except Exception as e:
                 logger.error(f"Error reading {file_name} in {battery_path}: {e}")
 
