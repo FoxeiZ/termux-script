@@ -32,9 +32,12 @@ def sizeof_fmt(num, suffix="B"):
 
 
 class SystemMonitorPlugin(IntervalPlugin):
+    BATT_PATH = "/sys/class/power_supply/battery"
     if TYPE_CHECKING:
-        first_run: bool
+        _first_run: bool
         _file_cache: dict[str, TextIO]
+
+        ReadT = TypeVar("ReadT", bound=str | int | float)
 
     def __init__(self, manager, interval=10, webhook_url="", **kwargs):
         try:
@@ -46,7 +49,7 @@ class SystemMonitorPlugin(IntervalPlugin):
 
         super().__init__(manager, interval, webhook_url)
 
-        self.first_run = True
+        self._first_run = True
         self._file_cache = {}
 
     def get_uptime(self) -> str:
@@ -69,51 +72,48 @@ class SystemMonitorPlugin(IntervalPlugin):
         processes.sort(key=lambda x: x["cpu_percent"], reverse=True)
         return processes[:5]
 
+    def __read_file(self, file_name: str, _type: type["ReadT"] = str) -> "ReadT | None":
+        try:
+            if file_name not in self._file_cache:
+                self._file_cache[file_name] = open(
+                    os.path.join(self.BATT_PATH, file_name), "r"
+                )
+            file = self._file_cache[file_name]
+            file.seek(0)
+            value = file.read().strip()
+            if not value:
+                return None
+            return _type(value)
+
+        except FileNotFoundError:
+            pass
+
+        except PermissionError:
+            logger.warning(f"Permission denied to read {file_name} in {self.BATT_PATH}")
+
+        except Exception as e:
+            logger.error(f"Error reading {file_name} in {self.BATT_PATH}: {e}")
+
+        return None
+
+    def __to_unit(
+        self, c: int, file_name: str, _type: type["ReadT"] = str
+    ) -> float | str:
+        r = self.__read_file(file_name, _type)
+        if not r or isinstance(r, str):
+            return "Unknown"
+        return r / c
+
     def get_battery_info(self) -> dict:
-        battery_path = "/sys/class/power_supply/battery"
-        if not os.path.exists(battery_path):
+        if not os.path.exists(self.BATT_PATH):
             return {}
 
-        ReadT = TypeVar("ReadT", bound=str | int | float)
-
-        def read_file(file_name: str, _type: type[ReadT] = str) -> ReadT | None:
-            try:
-                if file_name not in self._file_cache:
-                    self._file_cache[file_name] = open(
-                        os.path.join(battery_path, file_name), "r"
-                    )
-                file = self._file_cache[file_name]
-                file.seek(0)
-                value = file.read().strip()
-                if not value:
-                    return None
-                return _type(value)
-
-            except FileNotFoundError:
-                pass
-
-            except PermissionError:
-                logger.warning(
-                    f"Permission denied to read {file_name} in {battery_path}"
-                )
-
-            except Exception as e:
-                logger.error(f"Error reading {file_name} in {battery_path}: {e}")
-
-            return None
-
-        def to_unit(c: int, file_name: str, _type: type[ReadT] = str) -> float | str:
-            r = read_file(file_name, _type)
-            if not r or isinstance(r, str):
-                return "Unknown"
-            return r / c
-
         return {
-            "Capacity": read_file("capacity", float),
-            "Health": read_file("health"),
-            "Current": to_unit(1000, "current_now", int),
-            "Status": read_file("status"),
-            "Temperature": to_unit(10, "temp", int),
+            "Capacity": self.__read_file("capacity", float),
+            "Health": self.__read_file("health"),
+            "Current": self.__to_unit(1000, "current_now", int),
+            "Status": self.__read_file("status"),
+            "Temperature": self.__to_unit(10, "temp", int),
         }
 
     def run(self):
@@ -178,9 +178,9 @@ class SystemMonitorPlugin(IntervalPlugin):
             ],
         }
 
-        if self.first_run:
+        if self._first_run:
             self.send_webhook(payload=payload, wait=True)
-            self.first_run = False
+            self._first_run = False
             return
 
         self.edit_webhook(payload=payload)
