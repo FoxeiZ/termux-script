@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 import psutil
 from lib.errors import PluginError
@@ -67,11 +67,48 @@ class SystemMonitorPlugin(IntervalPlugin):
         processes.sort(key=lambda x: x["cpu_percent"], reverse=True)
         return processes[:5]
 
+    def get_battery_info(self) -> dict:
+        battery_path = "/sys/class/power_supply/battery"
+        if not os.path.exists(battery_path):
+            return {}
+
+        ReadT = TypeVar("ReadT", bound=str | int | float)
+
+        def read_file(file_name: str, _type: type[ReadT] = str) -> ReadT | None:
+            try:
+                with open(os.path.join(battery_path, file_name), "r") as f:
+                    value = f.read().strip()
+                    return _type(value)
+            except FileNotFoundError:
+                pass
+            except PermissionError:
+                logger.warning(
+                    f"Permission denied to read {file_name} in {battery_path}"
+                )
+            except Exception as e:
+                logger.error(f"Error reading {file_name} in {battery_path}: {e}")
+
+            return None
+
+        def to_unit(c: int, file_name: str, _type: type[ReadT] = str) -> float | str:
+            r = read_file(file_name, _type)
+            if not r or isinstance(r, str):
+                return "Unknown"
+            return r / c
+
+        return {
+            "Capacity": read_file("capacity", float),
+            "Health": read_file("health"),
+            "Current": to_unit(1000, "current_now", int),
+            "Status": read_file("status"),
+            "Temperature": to_unit(10, "temp", int),
+        }
+
     def run(self):
         cpu_percent = psutil.cpu_percent()
         memory = psutil.virtual_memory()
         swap = psutil.swap_memory()
-        disk = psutil.disk_usage("/")
+        disk = psutil.disk_usage("/mnt/installer/0/emulated")
         top_processes = self.get_top_processes()
 
         payload: WebhookPayload = {
@@ -114,7 +151,18 @@ class SystemMonitorPlugin(IntervalPlugin):
                     # "timestamp": datetime.datetime.now(datetime.UTC).strftime(
                     #     r"%Y-%m-%dT%H:%M:%SZ"
                     # ),
-                }
+                },
+                {
+                    "title": "Battery Info",
+                    "fields": [
+                        {
+                            "name": k,
+                            "value": str(v),
+                            "inline": True,
+                        }
+                        for k, v in self.get_battery_info().items()
+                    ],
+                },
             ],
         }
 
