@@ -185,5 +185,11 @@ class SystemMonitorPlugin(IntervalPlugin):
 
         self.edit_webhook(payload=payload)
 
-    def kill(self):
-        pass
+    def on_stop(self) -> None:
+        for file in self._file_cache.values():
+            try:
+                file.close()
+            except Exception as e:
+                logger.error(f"Error closing file: {e}")
+        self._file_cache.clear()
+        return super().on_stop()

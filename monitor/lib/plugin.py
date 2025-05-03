@@ -203,8 +203,13 @@ class IntervalPlugin(Plugin):
     def is_stopped(self) -> bool:
         return self._stop_event.is_set()
 
+    def on_stop(self) -> None:
+        """Called when the plugin is stopped. Useful for cleanup."""
+        pass
+
     def stop(self) -> None:
         """Stop the plugin."""
+        self.on_stop()
         self._stop_event.set()
 
     @abstractmethod
