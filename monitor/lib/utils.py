@@ -21,7 +21,11 @@ def get_logger(
 
 def log_function_call(func: Callable) -> Callable:
     def wrapper(*args, **kwargs):
-        logger = get_logger(func.__name__)
+        try:
+            logger = args[0].logger
+        except AttributeError:
+            logger = get_logger(func.__name__)
+
         logger.info(f"Calling {func.__name__} with args: {args} and kwargs: {kwargs}")
         result = func(*args, **kwargs)
         logger.info(f"{func.__name__} returned: {result}")
