@@ -25,12 +25,33 @@ class ConfigSingleton:
 
     def _parse_args(self):
         """Parse command line arguments."""
-        parser = argparse.ArgumentParser(description="Monitor application")
+        parser = argparse.ArgumentParser()
         parser.add_argument(
             "--webhook-url", dest="WEBHOOK_URL", help="Webhook URL for notifications"
         )
         parser.add_argument(
-            "--debug", dest="DEBUG", action="store_true", help="Enable debug mode"
+            "--log-level",
+            dest="LOG_LEVEL",
+            choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+            help="Set the logging level",
+        )
+        parser.add_argument(
+            "--debug",
+            dest="DEBUG",
+            action="store_true",
+            help="Enable debug mode, short for --log-level=DEBUG",
+        )
+        parser.add_argument(
+            "--no-debug",
+            dest="DEBUG",
+            action="store_false",
+            help="Disable debug mode, short for --log-level=INFO",
+        )
+        parser.add_argument(
+            "--log-function-call",
+            dest="LOG_FUNCTION_CALL",
+            action="store_true",
+            help="Log function calls. Use with --debug or --log-level=DEBUG",
         )
 
         args, _ = parser.parse_known_args()
@@ -73,6 +94,16 @@ class ConfigSingleton:
     def debug(self) -> bool:
         """Get the debug mode."""
         return self._config.get("DEBUG", False)
+
+    @property
+    def log_level(self) -> str:
+        """Get the logging level."""
+        return self._config.get("LOG_LEVEL", "INFO")
+
+    @property
+    def log_function_call(self) -> bool:
+        """Get the log function call setting."""
+        return self._config.get("LOG_FUNCTION_CALL", False)
 
 
 Config = ConfigSingleton()

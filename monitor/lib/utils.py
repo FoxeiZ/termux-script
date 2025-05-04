@@ -8,7 +8,7 @@ from lib.config import Config
 
 def get_logger(
     name: str,
-    level: int = logging.INFO,
+    level: str | int = Config.log_level,
     handler: type[logging.Handler] = logging.StreamHandler,
     formatter: str = "%(asctime)s - %(levelname)s - %(name)s - %(message)s",
 ) -> logging.Logger:
@@ -16,13 +16,13 @@ def get_logger(
     init_handler.setFormatter(logging.Formatter(formatter))
 
     logger = logging.getLogger(name)
-    logger.setLevel(level)
+    logger.setLevel("DEBUG" if Config.debug else level or "INFO")
     logger.addHandler(init_handler)
     return logger
 
 
 def log_function_call(func: Callable) -> Callable:
-    if not Config.debug:
+    if not Config.debug and not Config.log_function_call:
         return func
 
     def wrapper(*args, **kwargs):
