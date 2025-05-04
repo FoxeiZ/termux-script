@@ -8,9 +8,6 @@ from plugin import (
     SystemServerPlugin,
 )
 
-# __all__ = ["PluginManager", "InterfaceMonitorPlugin", "TailscalePlugin"]
-
-
 if __name__ == "__main__":
     manager = PluginManager(
         webhook_url=Config.webhook_url,
