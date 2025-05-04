@@ -74,6 +74,7 @@ class Plugin:
             self.webhook_url,
             json=payload,
             params={"wait": wait} if wait else None,
+            timeout=self.manager.retry_delay,
             *args,
             **kwargs,
         )
@@ -93,7 +94,7 @@ class Plugin:
             msg_id = self._message_id
 
         url = f"{self.webhook_url}/messages/{msg_id}"
-        self._http_session.patch(url, json=payload)
+        self._http_session.patch(url, json=payload, timeout=self.manager.retry_delay)
 
     def send_message(
         self, title: str, description: str, color: int, content: str | None, wait: bool
