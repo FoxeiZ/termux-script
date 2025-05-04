@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, TypeVar
 import psutil
 from lib.errors import PluginError
 from lib.plugin import IntervalPlugin
+from lib.utils import log_function_call
 
 if TYPE_CHECKING:
     from typing import TextIO, TypedDict
@@ -48,6 +49,7 @@ class SystemMonitorPlugin(IntervalPlugin):
         self._first_run = True
         self._file_cache = {}
 
+    @log_function_call
     def get_uptime(self) -> str:
         return str(
             datetime.timedelta(
@@ -58,6 +60,7 @@ class SystemMonitorPlugin(IntervalPlugin):
             )
         )
 
+    @log_function_call
     def get_top_processes(self) -> list[_ProcessT]:
         processes = []
         for p in psutil.process_iter(["pid", "name", "cpu_percent"]):
@@ -68,6 +71,7 @@ class SystemMonitorPlugin(IntervalPlugin):
         processes.sort(key=lambda x: x["cpu_percent"], reverse=True)
         return processes[:5]
 
+    @log_function_call
     def __read_file(self, file_name: str, _type: type["ReadT"] = str) -> "ReadT | None":
         try:
             if file_name not in self._file_cache:
@@ -94,6 +98,7 @@ class SystemMonitorPlugin(IntervalPlugin):
 
         return None
 
+    @log_function_call
     def __to_unit(
         self, c: int, file_name: str, _type: type["ReadT"] = str
     ) -> float | str:
@@ -102,6 +107,7 @@ class SystemMonitorPlugin(IntervalPlugin):
             return "Unknown"
         return r / c
 
+    @log_function_call
     def get_battery_info(self) -> dict:
         if not os.path.exists(self.BATT_PATH):
             return {}
@@ -114,6 +120,7 @@ class SystemMonitorPlugin(IntervalPlugin):
             "Temperature": self.__to_unit(10, "temp", int),
         }
 
+    @log_function_call
     def run(self):
         cpu_percent = psutil.cpu_percent()
         memory = psutil.virtual_memory()
@@ -183,6 +190,7 @@ class SystemMonitorPlugin(IntervalPlugin):
 
         self.edit_webhook(payload=payload)
 
+    @log_function_call
     def on_stop(self) -> None:
         for file in self._file_cache.values():
             try:

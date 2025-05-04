@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Literal
 
 from .errors import DuplicatePluginError, PluginNotLoadedError
 from .plugin import DaemonPlugin, IntervalPlugin, OneTimePlugin, Plugin
-from .utils import get_logger
+from .utils import get_logger, log_function_call
 
 __all__ = ["PluginManager", "PluginTypeDict"]
 
@@ -39,6 +39,7 @@ class PluginManager:
     def webhook_url(self) -> str | None:
         return self._webhook_url
 
+    @log_function_call
     def register_plugin(
         self,
         plugin: type[Plugin],
@@ -76,6 +77,7 @@ class PluginManager:
 
         self.plugins.append(plugin_instance)
 
+    @log_function_call
     def start(self) -> None:
         """
         Start all registered plugins in separate threads.
@@ -102,6 +104,7 @@ class PluginManager:
             self.stop()
             raise
 
+    @log_function_call
     def stop(self) -> None:
         """Stop all plugin threads gracefully."""
         if self._stopped:
@@ -134,6 +137,7 @@ class PluginManager:
         self._stopped = True
         logger.info("Plugin manager stopped")
 
+    @log_function_call
     def run(self):
         self.start()
         try:
