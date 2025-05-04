@@ -22,7 +22,7 @@ def get_logger(
 
 
 def log_function_call(func: Callable) -> Callable:
-    if not Config.debug and not Config.log_function_call:
+    if not Config.debug or not Config.log_function_call:
         return func
 
     def wrapper(*args, **kwargs):
