@@ -4,10 +4,7 @@ from typing import TYPE_CHECKING
 
 import psutil
 from lib.errors import PluginError
-from lib.manager import get_logger
 from lib.plugin import IntervalPlugin
-
-logger = get_logger("SystemServerMonitor")
 
 
 class SystemServerPlugin(IntervalPlugin):
@@ -65,7 +62,7 @@ class SystemServerPlugin(IntervalPlugin):
     def run(self):
         process = self.find_process()
         if not process:
-            logger.warning("system_server-CpuTracker not found")
+            self.logger.warning("system_server-CpuTracker not found")
             return
 
         cpu_percent = process.cpu_percent(interval=1)
@@ -76,7 +73,7 @@ class SystemServerPlugin(IntervalPlugin):
 
         if self._threshold_count >= self.threshold_count_max:
             msg = f"system_server-CpuTracker is abnormally using {cpu_percent}% CPU. Rebooting."
-            logger.warning(msg)
+            self.logger.warning(msg)
             self.send_webhook(
                 {"embeds": [{"title": "System Server Monitor", "description": msg}]}
             )

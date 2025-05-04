@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, TypeVar
 
 import psutil
 from lib.errors import PluginError
-from lib.manager import get_logger
 from lib.plugin import IntervalPlugin
 
 if TYPE_CHECKING:
@@ -18,9 +17,6 @@ if TYPE_CHECKING:
         pid: int
         name: str
         cpu_percent: float
-
-
-logger = get_logger("SystemMonitor")
 
 
 def sizeof_fmt(num, suffix="B"):
@@ -89,10 +85,12 @@ class SystemMonitorPlugin(IntervalPlugin):
             pass
 
         except PermissionError:
-            logger.warning(f"Permission denied to read {file_name} in {self.BATT_PATH}")
+            self.logger.warning(
+                f"Permission denied to read {file_name} in {self.BATT_PATH}"
+            )
 
         except Exception as e:
-            logger.error(f"Error reading {file_name} in {self.BATT_PATH}: {e}")
+            self.logger.error(f"Error reading {file_name} in {self.BATT_PATH}: {e}")
 
         return None
 
@@ -190,6 +188,6 @@ class SystemMonitorPlugin(IntervalPlugin):
             try:
                 file.close()
             except Exception as e:
-                logger.error(f"Error closing file: {e}")
+                self.logger.error(f"Error closing file: {e}")
         self._file_cache.clear()
         return super().on_stop()

@@ -1,31 +1,16 @@
 from __future__ import annotations
 
-import logging
 import threading
 import time
 from typing import TYPE_CHECKING, Literal
 
 from .errors import DuplicatePluginError, PluginNotLoadedError
 from .plugin import DaemonPlugin, IntervalPlugin, OneTimePlugin, Plugin
+from .utils import get_logger
 
-__all__ = ["PluginManager", "get_logger", "PluginTypeDict"]
+__all__ = ["PluginManager", "PluginTypeDict"]
 
 PluginTypeDict = Literal["once", "daemon", "interval"]
-
-
-def get_logger(
-    name: str,
-    level: int = logging.INFO,
-    handler: type[logging.Handler] = logging.StreamHandler,
-    formatter: str = "%(asctime)s - %(levelname)s - %(message)s",
-) -> logging.Logger:
-    init_handler = handler()
-    init_handler.setFormatter(logging.Formatter(formatter))
-
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-    logger.addHandler(init_handler)
-    return logger
 
 
 logger = get_logger("PluginManager")

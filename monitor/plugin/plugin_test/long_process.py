@@ -58,9 +58,9 @@ class LongProcessPluginWithLongOutput(LongProcessPlugin):
             stdout=PIPE,
             stderr=PIPE,
         )
-        print("Process started")
-        print(self._process)
-        print(self._process.pid)
+        self.logger.warning("Process started")
+        self.logger.warning(self._process)
+        self.logger.warning(self._process.pid)
         stdout, _ = self._process.communicate()
         try:
             self._process.wait(timeout=5)

@@ -2,6 +2,8 @@ import os
 import shutil
 import sys
 
+from lib.utils import get_logger
+
 DIR = os.path.dirname(os.path.abspath(__file__))
 SVDIR = (
     os.environ.get("SV_DIR", "/data/data/com.termux/files/usr/var/service")
@@ -14,6 +16,9 @@ if not os.path.exists(SVDIR):
     raise RuntimeError(
         f"Service dir not exist, cannot continue. Make sure the path {SVDIR} exists."
     )
+
+
+logger = get_logger("installer")
 
 
 def init_supervisor_dir(service_path: str):
@@ -94,9 +99,13 @@ def install_service(
     if os.path.exists(service_path):
         if force:
             shutil.rmtree(service_path)
-            print(f"Removed existing service {service_name} due to force option")
+            logger.warning(
+                f"Removed existing service {service_name} due to force option"
+            )
         else:
-            print(f"Service {service_name} already installed at {service_path}")
+            logger.warning(
+                f"Service {service_name} already installed at {service_path}"
+            )
             return
 
     init_service_dir(
@@ -104,7 +113,7 @@ def install_service(
         service_runtime_path=service_runtime_path,
         runtime_script=runtime_script,
     )
-    print(f"Service {service_name} installed at {service_path}")
+    logger.info(f"Service {service_name} installed at {service_path}")
 
 
 def parse_args(args):
@@ -127,7 +136,7 @@ def parse_args(args):
                 matched = "runtime_script"
             case _:
                 if arg.startswith("--"):
-                    print(f"Unknown argument: {arg}")
+                    logger.warning(f"Unknown argument: {arg}")
                     sys.exit(1)
 
     return pargs

@@ -7,8 +7,11 @@ from typing import TYPE_CHECKING, Any
 
 import requests
 
+from .utils import get_logger
+
 if TYPE_CHECKING:
     import threading
+    from logging import Logger
 
     from ._types import WebhookPayload
     from .manager import PluginManager
@@ -20,15 +23,23 @@ class Plugin:
     if TYPE_CHECKING:
         name: str
         manager: PluginManager
+        logger: Logger
         webhook_url: str
         _message_id: str | None
         _thread: threading.Thread | None
         _http_session: requests.Session
 
-    def __init__(self, manager: PluginManager, webhook_url: str = "") -> None:
+    def __init__(
+        self,
+        manager: PluginManager,
+        webhook_url: str = "",
+        *,
+        name: str = "",
+    ) -> None:
         """Initialize plugin."""
-        self.name = self.__class__.__name__
+        self.name = name or self.__class__.__name__
         self.manager = manager
+        self.logger = get_logger(name=self.name)
         self.webhook_url = webhook_url
 
         self._thread = None

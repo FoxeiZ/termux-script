@@ -5,10 +5,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from lib._types import Embed, EmbedField
-from lib.manager import get_logger
 from lib.plugin import IntervalPlugin
-
-logger = get_logger("IfacePlugin")
 
 
 def default_ifconfig_output():
@@ -212,7 +209,9 @@ class InterfaceMonitorPlugin(IntervalPlugin):
         changes = self.compare_states(self._previous_state, current_state)
         if changes:
             if "wlan0" not in current_state:
-                logger.warning("Network interface wlan0 not found, assuming no network")
+                self.logger.warning(
+                    "Network interface wlan0 not found, assuming no network"
+                )
 
                 self._lost_network_since = datetime.datetime.now(datetime.UTC)
                 self._previous_state = current_state
@@ -252,7 +251,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
                     "embeds": embeds,
                 }
             )
-            logger.info("Network change detected, sent update to Discord")
+            self.logger.info("Network change detected, sent update to Discord")
             self._previous_state = current_state
 
 
