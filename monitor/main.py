@@ -1,6 +1,4 @@
-import os
-import sys
-
+from lib.config import Config
 from lib.manager import PluginManager
 from plugin import (
     InterfaceMonitorPlugin,
@@ -15,12 +13,9 @@ from plugin import (
 
 if __name__ == "__main__":
     manager = PluginManager(
-        webhook_url=os.environ.get(
-            "WEBHOOK_URL",
-            sys.argv[1] if len(sys.argv) > 1 else None,
-        ),
+        webhook_url=Config.webhook_url,
     )
-    if os.environ.get("DEBUG", "0") == "1":
+    if Config.debug:
         manager.register_plugin(LongProcessPlugin)
         manager.register_plugin(LongProcessPluginWithError)
         # manager.register_plugin(LongProcessPluginWithLongOutput)

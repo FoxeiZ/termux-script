@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
+from lib.config import Config
+
 
 def get_logger(
     name: str,
@@ -20,6 +22,9 @@ def get_logger(
 
 
 def log_function_call(func: Callable) -> Callable:
+    if not Config.debug:
+        return func
+
     def wrapper(*args, **kwargs):
         try:
             logger = args[0].logger
