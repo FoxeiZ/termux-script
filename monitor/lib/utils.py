@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
 
 def get_logger(
@@ -16,3 +17,14 @@ def get_logger(
     logger.setLevel(level)
     logger.addHandler(init_handler)
     return logger
+
+
+def log_function_call(func: Callable) -> Callable:
+    def wrapper(*args, **kwargs):
+        logger = get_logger(func.__name__)
+        logger.info(f"Calling {func.__name__} with args: {args} and kwargs: {kwargs}")
+        result = func(*args, **kwargs)
+        logger.info(f"{func.__name__} returned: {result}")
+        return result
+
+    return wrapper

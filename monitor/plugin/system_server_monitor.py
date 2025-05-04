@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import psutil
 from lib.errors import PluginError
 from lib.plugin import IntervalPlugin
+from lib.utils import log_function_call
 
 
 class SystemServerPlugin(IntervalPlugin):
@@ -31,6 +32,7 @@ class SystemServerPlugin(IntervalPlugin):
         self._threshold_count = 0
         self._cpu_tracker_proc = None
 
+    @log_function_call
     def _find_process(self, name="CpuTracker"):
         try:
             system_server_proc = next(
@@ -49,6 +51,7 @@ class SystemServerPlugin(IntervalPlugin):
         except StopIteration:
             return None
 
+    @log_function_call
     def find_process(self, force=False):
         if (
             force
@@ -59,6 +62,7 @@ class SystemServerPlugin(IntervalPlugin):
 
         return self._cpu_tracker_proc
 
+    @log_function_call
     def run(self):
         process = self.find_process()
         if not process:

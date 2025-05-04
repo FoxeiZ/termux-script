@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from lib._types import Embed, EmbedField
 from lib.plugin import IntervalPlugin
+from lib.utils import log_function_call
 
 
 def default_ifconfig_output():
@@ -95,6 +96,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
         self._previous_state = {}
         self._lost_network_since: datetime.datetime | None = None
 
+    @log_function_call
     def compare_states(self, old_state: dict, new_state: dict) -> bool:
         if set(old_state.keys()) != set(new_state.keys()):
             return True
@@ -110,6 +112,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
 
         return False
 
+    @log_function_call
     def get_ifconfig_output(self):
         try:
             result = subprocess.run(["ifconfig"], capture_output=True, text=True)
@@ -122,6 +125,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
         except FileNotFoundError:
             return default_ifconfig_output()
 
+    @log_function_call
     def parse_network_interfaces(self, ifconfig_output):
         interface_pattern = r"^(\w+[\w\d_]*): "
 
@@ -164,6 +168,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
 
         return interfaces
 
+    @log_function_call
     def format_interface_info(self, interface_name: str, data: dict) -> EmbedField:
         ipv4_info = []
         for ip in data["ipv4"]:
@@ -192,6 +197,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
             "inline": False,
         }
 
+    @log_function_call
     def build_embeds(self, interfaces: dict) -> list[Embed]:
         embeds_list = []
         for interface, data in interfaces.items():
@@ -204,6 +210,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
             embeds_list.append(embed)
         return embeds_list
 
+    @log_function_call
     def run(self):
         current_state = self.parse_network_interfaces(self.get_ifconfig_output())
         changes = self.compare_states(self._previous_state, current_state)
