@@ -166,6 +166,14 @@ class Plugin:
             wait=wait,
         )
 
+    @abstractmethod
+    def _start(self) -> None:
+        """Start the plugin. This method get called by the manager, don't call it directly.
+
+        This method should be overridden by the plugin implementation.
+        """
+        raise NotImplementedError
+
 
 class OneTimePlugin(Plugin):
     def __init__(self, manager: PluginManager, webhook_url: str = "") -> None:
@@ -179,6 +187,17 @@ class OneTimePlugin(Plugin):
     def run(self) -> Any:
         raise NotImplementedError
 
+    def _start(self) -> None:
+        """
+        Run the plugin once.
+        This method get called by the manager, don't call it directly.
+        """
+        try:
+            self.run()
+            # self.send_success()
+        except Exception as e:
+            self.logger.error(f"Plugin {self.name} failed: {e}")
+
 
 class DaemonPlugin(Plugin):
     def __init__(self, manager: PluginManager, webhook_url: str = "") -> None:
@@ -191,6 +210,15 @@ class DaemonPlugin(Plugin):
     @abstractmethod
     def stop(self) -> None:
         raise NotImplementedError
+
+    def _start(self) -> None:
+        """
+        Start the plugin. This method get called by the manager, don't call it directly.
+        """
+        try:
+            self.start()
+        except Exception as e:
+            self.logger.error(f"Plugin {self.name} failed: {e}")
 
 
 class IntervalPlugin(Plugin):
@@ -227,8 +255,11 @@ class IntervalPlugin(Plugin):
     def run(self) -> Any:
         raise NotImplementedError
 
-    def _interval_runner(self) -> None:
+    def _start(self) -> None:
         while not self._stop_event.is_set():
-            self.run()
+            try:
+                self.run()
+            except Exception as e:
+                self.logger.error(f"Plugin {self.name} failed: {e}")
             if self.wait(self.interval):
                 break

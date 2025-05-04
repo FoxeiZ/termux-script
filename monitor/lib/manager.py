@@ -88,29 +88,12 @@ class PluginManager:
 
         try:
             for plugin in self.plugins:
-                if isinstance(plugin, OneTimePlugin):
-                    thread = threading.Thread(
-                        target=plugin.run,
-                        daemon=False,
-                    )
-                    thread.start()
-                    plugin._thread = thread
-
-                elif isinstance(plugin, DaemonPlugin):
-                    thread = threading.Thread(
-                        target=plugin.start,
-                        daemon=True,
-                    )
-                    thread.start()
-                    plugin._thread = thread
-
-                elif isinstance(plugin, IntervalPlugin):
-                    thread = threading.Thread(
-                        target=plugin._interval_runner,
-                        daemon=True,
-                    )
-                    thread.start()
-                    plugin._thread = thread
+                thread = threading.Thread(
+                    target=plugin._start,
+                    daemon=False,
+                )
+                thread.start()
+                plugin._thread = thread
 
             logger.info(f"Plugin manager started with {len(self.plugins)} plugins")
 
