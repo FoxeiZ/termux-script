@@ -45,7 +45,7 @@ class ConfigSingleton:
             "--no-debug",
             dest="DEBUG",
             action="store_false",
-            help="Disable debug mode, short for --log-level=INFO",
+            help="Disable debug mode, short for --log-level=INFO. Takes precedence over --debug",
         )
         parser.add_argument(
             "--log-function-call",
