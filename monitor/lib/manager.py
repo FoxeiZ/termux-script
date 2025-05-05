@@ -2,23 +2,22 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from .errors import DuplicatePluginError, PluginNotLoadedError
 from .plugin import DaemonPlugin, IntervalPlugin, OneTimePlugin, Plugin
 from .utils import get_logger, log_function_call
 
-__all__ = ["PluginManager", "PluginTypeDict"]
+__all__ = ["PluginManager"]
 
-PluginTypeDict = Literal["once", "daemon", "interval"]
-
-
-logger = get_logger("PluginManager")
+if TYPE_CHECKING:
+    import logging
 
 
 class PluginManager:
     if TYPE_CHECKING:
         plugins: list[Plugin]
+        logger: logging.Logger
         max_retries: int
         retry_delay: int
         _webhook_url: str | None
@@ -28,11 +27,12 @@ class PluginManager:
         self, max_retries: int = 3, retry_delay: int = 5, webhook_url: str | None = None
     ) -> None:
         self.plugins = []
+        self.logger = get_logger("PluginManager")
 
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self._webhook_url = webhook_url
 
+        self._webhook_url = webhook_url
         self._stopped = False
 
     @property
@@ -59,13 +59,13 @@ class PluginManager:
             plugin_instance = plugin(manager=self, **kwargs)
 
         except PluginNotLoadedError as e:
-            logger.error(
+            self.logger.error(
                 f"Plugin {plugin.__name__} failed to load: {e.__class__.__name__}: {e}"
             )
             return
 
         except Exception as e:
-            logger.error(
+            self.logger.error(
                 f"There was an error when trying to load the {plugin.__name__} plugin, {e.__class__.__name__}: {e}"
             )
             return
@@ -86,7 +86,7 @@ class PluginManager:
         - Runs 'OneTimePlugin' methods one time
         - Runs 'DaemonPlugin' methods as daemon threads
         """
-        logger.info("Starting plugin manager...")
+        self.logger.info("Starting plugin manager...")
 
         try:
             for plugin in self.plugins:
@@ -97,10 +97,10 @@ class PluginManager:
                 thread.start()
                 plugin._thread = thread
 
-            logger.info(f"Plugin manager started with {len(self.plugins)} plugins")
+            self.logger.info(f"Plugin manager started with {len(self.plugins)} plugins")
 
         except Exception as e:
-            logger.error(f"Failed to start plugin manager: {e}")
+            self.logger.error(f"Failed to start plugin manager: {e}")
             self.stop()
             raise
 
@@ -110,7 +110,7 @@ class PluginManager:
         if self._stopped:
             return
 
-        logger.info("Stopping plugin manager...")
+        self.logger.info("Stopping plugin manager...")
 
         for plugin in self.plugins:
             if not plugin._thread or not plugin._thread.is_alive():
@@ -121,21 +121,21 @@ class PluginManager:
                     try:
                         plugin.stop()
                     except Exception as e:
-                        logger.error(f"Failed to stop plugin {plugin.name}: {e}")
+                        self.logger.error(f"Failed to stop plugin {plugin.name}: {e}")
                     plugin._thread.join(timeout=5.0)
 
             elif isinstance(plugin, OneTimePlugin):
                 plugin._thread.join(timeout=5.0)
 
                 if plugin._thread.is_alive():
-                    logger.error(f"Plugin {plugin.name} failed to stop")
+                    self.logger.error(f"Plugin {plugin.name} failed to stop")
                     try:
                         plugin.kill()
                     except Exception as e:
-                        logger.error(f"Failed to kill plugin {plugin.name}: {e}")
+                        self.logger.error(f"Failed to kill plugin {plugin.name}: {e}")
 
         self._stopped = True
-        logger.info("Plugin manager stopped")
+        self.logger.info("Plugin manager stopped")
 
     @log_function_call
     def run(self):
@@ -144,8 +144,8 @@ class PluginManager:
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
-            logger.info("Ctrl+C detected. Exiting...")
+            self.logger.info("Ctrl+C detected. Exiting...")
         except Exception as e:
-            logger.error(f"Plugin manager error: {e}")
+            self.logger.error(f"Plugin manager error: {e}")
         finally:
             self.stop()
