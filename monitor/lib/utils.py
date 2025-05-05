@@ -1,9 +1,22 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable
+import subprocess
+from functools import wraps
+from typing import TYPE_CHECKING, Protocol, cast
 
 from lib.config import Config
+
+if TYPE_CHECKING:
+    from typing import Callable, ParamSpec, TypeVar
+
+    P = ParamSpec("P")
+    R = TypeVar("R")
+    T = TypeVar("T")
+
+
+class HasLogger(Protocol):
+    logger: logging.Logger
 
 
 def get_logger(
@@ -21,13 +34,14 @@ def get_logger(
     return logger
 
 
-def log_function_call(func: Callable) -> Callable:
+def log_function_call(func: Callable[P, R]) -> Callable[P, R]:
     if not Config.debug or not Config.log_function_call:
         return func
 
-    def wrapper(*args, **kwargs):
+    @wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         try:
-            logger = args[0].logger
+            logger = cast(HasLogger, args[0]).logger
         except AttributeError:
             logger = get_logger(func.__name__)
 
