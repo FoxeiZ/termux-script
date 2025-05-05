@@ -16,7 +16,13 @@ class SystemServerPlugin(IntervalPlugin):
         _cpu_tracker_proc: psutil.Process | None
 
     def __init__(
-        self, manager, interval=10, webhook_url="", cpu_threshold: int = 100, **kwargs
+        self,
+        manager,
+        interval=10,
+        webhook_url="",
+        *,
+        cpu_threshold: int = 100,
+        threshold_count_max: int = 3,
     ):
         try:
             os.lstat("/proc/stat")
@@ -27,7 +33,7 @@ class SystemServerPlugin(IntervalPlugin):
 
         super().__init__(manager, interval, webhook_url)
         self.cpu_threshold = cpu_threshold
-        self.threshold_count_max = kwargs.get("threshold_count_max", 3)
+        self.threshold_count_max = threshold_count_max
 
         self._threshold_count = 0
         self._cpu_tracker_proc = None
