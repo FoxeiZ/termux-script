@@ -33,19 +33,15 @@ class ConfigSingleton:
             "--log-level",
             dest="LOG_LEVEL",
             choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+            default="INFO",
             help="Set the logging level",
         )
         parser.add_argument(
             "--debug",
-            dest="DEBUG",
-            action="store_true",
+            dest="LOG_LEVEL",
+            action="store_const",
+            const="DEBUG",
             help="Enable debug mode, short for --log-level=DEBUG",
-        )
-        parser.add_argument(
-            "--no-debug",
-            dest="DEBUG",
-            action="store_false",
-            help="Disable debug mode, short for --log-level=INFO. Takes precedence over --debug",
         )
         parser.add_argument(
             "--log-function-call",
@@ -63,7 +59,8 @@ class ConfigSingleton:
         """Load configuration from environment variables (if not already set by args)."""
         env_vars = {
             "WEBHOOK_URL": None,
-            "DEBUG": False,
+            "LOG_LEVEL": "INFO",
+            "LOG_FUNCTION_CALL": False,
         }
 
         for key, default in env_vars.items():
@@ -93,7 +90,7 @@ class ConfigSingleton:
     @property
     def debug(self) -> bool:
         """Get the debug mode."""
-        return self._config.get("DEBUG", False)
+        return self.log_level == "DEBUG"
 
     @property
     def log_level(self) -> str:
