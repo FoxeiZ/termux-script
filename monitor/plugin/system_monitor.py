@@ -100,12 +100,17 @@ class SystemMonitorPlugin(IntervalPlugin):
 
     @log_function_call
     def __to_unit(
-        self, c: int, file_name: str, _type: type["ReadT"] = str
+        self,
+        c: int,
+        file_name: str,
+        _type: type["ReadT"] = str,
+        *,
+        decimal: int = 1,
     ) -> float | str:
         r = self.__read_file(file_name, _type)
         if not r or isinstance(r, str):
             return "Unknown"
-        return r / c
+        return f"{r / c:.{decimal}f}"
 
     @log_function_call
     def get_battery_info(self) -> dict:
@@ -118,6 +123,7 @@ class SystemMonitorPlugin(IntervalPlugin):
             "Current": self.__to_unit(1000, "current_now", int),
             "Status": self.__read_file("status"),
             "Temperature": self.__to_unit(10, "temp", int),
+            "Voltage": self.__to_unit(1000000, "voltage_now", int, decimal=2),
         }
 
     @log_function_call
