@@ -790,5 +790,5 @@ def main(url: str | None = None):
 
 
 if __name__ == "__main__":
-    main("https://music.youtube.com/watch?v=3UbBjzFDkd4&si=9_5GsKvy0WvTQV1j")
+    main()
     # sys.exit(main("https://music.youtube.com/watch?v=8UVNT4wvIGY&si=YD4i0G0IpW9-h0jH"))

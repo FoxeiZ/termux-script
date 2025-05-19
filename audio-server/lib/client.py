@@ -104,6 +104,6 @@ class AudioClient:
 
 
 if __name__ == "__main__":
-    client = AudioClient()
+    client = AudioClient(host="192.168.200.226")
     client.connect()
     client.start()

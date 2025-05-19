@@ -60,7 +60,7 @@ done
 #fi
 
 if [ $GPU -eq 1 ]; then
-    /data/data/com.termux/files/usr/bin/virgl_test_server_android "$VIRGL_ARGS" &
+    /data/data/com.termux/files/usr/bin/virgl_test_server_android $VIRGL_ARGS &
 fi
 
 echo
