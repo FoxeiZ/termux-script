@@ -5,7 +5,7 @@ import time
 from typing import TYPE_CHECKING
 
 from .errors import DuplicatePluginError, PluginNotLoadedError
-from .plugin import DaemonPlugin, IntervalPlugin, OneTimePlugin, Plugin
+from .plugins import Plugin
 from .utils import get_logger, log_function_call
 
 __all__ = ["PluginManager"]
@@ -93,6 +93,7 @@ class PluginManager:
                 thread = threading.Thread(
                     target=plugin._start,
                     daemon=False,
+                    name=f"Plugin-{plugin.name}",
                 )
                 thread.start()
                 plugin._thread = thread
@@ -116,23 +117,28 @@ class PluginManager:
             if not plugin._thread or not plugin._thread.is_alive():
                 continue
 
-            if isinstance(plugin, (DaemonPlugin, IntervalPlugin)):
-                if hasattr(plugin, "stop"):
-                    try:
-                        plugin.stop()
-                    except Exception as e:
-                        self.logger.error(f"Failed to stop plugin {plugin.name}: {e}")
-                    plugin._thread.join(timeout=5.0)
+            # Try graceful stop first
+            try:
+                plugin.stop()
+            except Exception as e:
+                self.logger.error(f"Failed to stop plugin {plugin.name}: {e}")
 
-            elif isinstance(plugin, OneTimePlugin):
-                plugin._thread.join(timeout=5.0)
+            # Wait for thread to finish
+            plugin._thread.join(timeout=5.0)
+
+            # If thread is still alive, try force stop
+            if plugin._thread.is_alive():
+                self.logger.warning(
+                    f"Plugin {plugin.name} didn't stop gracefully, trying force stop..."
+                )
+                try:
+                    plugin.force_stop()
+                    plugin._thread.join(timeout=2.0)
+                except Exception as e:
+                    self.logger.error(f"Failed to force stop plugin {plugin.name}: {e}")
 
                 if plugin._thread.is_alive():
-                    self.logger.error(f"Plugin {plugin.name} failed to stop")
-                    try:
-                        plugin.kill()
-                    except Exception as e:
-                        self.logger.error(f"Failed to kill plugin {plugin.name}: {e}")
+                    self.logger.error(f"Plugin {plugin.name} failed to stop completely")
 
         self._stopped = True
         self.logger.info("Plugin manager stopped")

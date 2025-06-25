@@ -3,10 +3,10 @@ from __future__ import annotations
 from subprocess import PIPE, Popen, TimeoutExpired
 from typing import TYPE_CHECKING
 
-from lib.plugin import OneTimePlugin
+from lib.plugins import Plugin
 
 
-class LongProcessPlugin(OneTimePlugin):
+class LongProcessPlugin(Plugin):
     if TYPE_CHECKING:
         _process: Popen | None
 
@@ -15,7 +15,7 @@ class LongProcessPlugin(OneTimePlugin):
 
         self._process = None
 
-    def run(self):
+    def start(self):
         self._process = Popen(
             ["sleep", "10"],
             stdout=PIPE,
@@ -25,7 +25,7 @@ class LongProcessPlugin(OneTimePlugin):
         self._process.wait()
         self.send_success()
 
-    def kill(self):
+    def force_stop(self):
         if not self._process:
             return
 
@@ -52,7 +52,7 @@ class LongProcessPluginWithError(LongProcessPlugin):
 
 
 class LongProcessPluginWithLongOutput(LongProcessPlugin):
-    def run(self):
+    def start(self):
         self._process = Popen(
             ["yes", "hello"],
             stdout=PIPE,

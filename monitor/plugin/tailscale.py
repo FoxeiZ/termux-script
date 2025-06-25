@@ -7,7 +7,7 @@ from pathlib import Path
 from queue import Empty
 
 from lib.manager import PluginManager
-from lib.plugin import DaemonPlugin
+from lib.plugins import Plugin
 from lib.utils import get_logger
 
 
@@ -176,7 +176,7 @@ class Socatd(subprocess.Popen):
         self.logger.debug("Socatd process stopped")
 
 
-class TailscalePlugin(DaemonPlugin):
+class TailscalePlugin(Plugin):
     def __init__(
         self,
         manager: PluginManager,

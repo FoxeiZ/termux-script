@@ -5,7 +5,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from lib._types import Embed, EmbedField
-from lib.plugin import IntervalPlugin
+from lib.plugins import IntervalPlugin
 from lib.utils import log_function_call
 
 
@@ -211,7 +211,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
         return embeds_list
 
     @log_function_call
-    def run(self):
+    def start(self):
         current_state = self.parse_network_interfaces(self.get_ifconfig_output())
         changes = self.compare_states(self._previous_state, current_state)
         if changes:

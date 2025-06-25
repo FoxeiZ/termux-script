@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 import psutil
 from lib.errors import PluginError
-from lib.plugin import IntervalPlugin
+from lib.plugins import IntervalPlugin
 from lib.utils import log_function_call
 
 if TYPE_CHECKING:
@@ -127,7 +127,7 @@ class SystemMonitorPlugin(IntervalPlugin):
         }
 
     @log_function_call
-    def run(self):
+    def start(self):
         cpu_percent = psutil.cpu_percent()
         memory = psutil.virtual_memory()
         swap = psutil.swap_memory()

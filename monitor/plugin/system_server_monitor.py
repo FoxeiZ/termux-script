@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import psutil
 from lib.errors import PluginError
-from lib.plugin import IntervalPlugin
+from lib.plugins import IntervalPlugin
 from lib.utils import log_function_call
 
 
@@ -69,7 +69,7 @@ class SystemServerPlugin(IntervalPlugin):
         return self._cpu_tracker_proc
 
     @log_function_call
-    def run(self):
+    def start(self):
         process = self.find_process()
         if not process:
             self.logger.warning("system_server-CpuTracker not found")
