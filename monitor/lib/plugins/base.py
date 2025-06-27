@@ -39,12 +39,18 @@ class Plugin:
         """Initialize plugin."""
         self.manager = manager
         self.webhook_url = webhook_url
-        self.name = name or self.__class__.__name__
+        self.name = name or getattr(self.__class__, "name", self.__class__.__name__)
         self.logger = get_logger(name=self.name)
 
         self.__http_session = (
             http_session or requests.Session() if self.webhook_url else None
         )
+
+    def __init_subclass__(cls, name: str = "") -> None:
+        """Support class-level parameters like Plugin(name="...")"""
+        super().__init_subclass__()
+        if name:
+            cls.name = name
 
     @property
     def thread(self) -> threading.Thread | None:
@@ -189,8 +195,8 @@ class Plugin:
             self.start()
         except Exception as e:
             self.logger.error(f"Plugin {self.name} failed: {e}")
-            self.send_error(content=str(e), wait=True)
-            raise
+            self.logger.exception(e)
+            # self.send_error(content=str(e), wait=True)
 
     @abstractmethod
     def start(self) -> None:

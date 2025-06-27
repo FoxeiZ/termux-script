@@ -34,7 +34,7 @@ class LongProcessPlugin(Plugin):
 
 
 class LongProcessPluginWithError(LongProcessPlugin):
-    def run(self):
+    def start(self):
         try:
             self._process = Popen(
                 ["sleet", "10"],
