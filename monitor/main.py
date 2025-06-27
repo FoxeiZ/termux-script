@@ -6,6 +6,7 @@ from plugin import (
     InterfaceMonitorPlugin,
     LongProcessPlugin,
     LongProcessPluginWithError,
+    LongProcessPluginWithLongOutput,
     SystemMonitorPlugin,
     SystemServerPlugin,
     TestCron2Min,
@@ -16,14 +17,14 @@ if __name__ == "__main__":
     manager = PluginManager(
         webhook_url=Config.webhook_url,
     )
-    # if Config.debug:
-    # manager.register_plugin(LongProcessPlugin)
-    # manager.register_plugin(LongProcessPluginWithError)
-    # manager.register_plugin(LongProcessPluginWithLongOutput)
+    if Config.debug:
+        manager.register_plugin(LongProcessPlugin)
+        manager.register_plugin(LongProcessPluginWithError)
+        manager.register_plugin(LongProcessPluginWithLongOutput)
+        manager.register_plugin(TestCronPerMin)
+        manager.register_plugin(TestCron2Min)
 
     manager.register_plugin(InterfaceMonitorPlugin)
-    manager.register_plugin(TestCronPerMin)
-    manager.register_plugin(TestCron2Min)
-    # manager.register_plugin(SystemServerPlugin)
-    # manager.register_plugin(SystemMonitorPlugin)
+    manager.register_plugin(SystemServerPlugin)
+    manager.register_plugin(SystemMonitorPlugin)
     manager.run()
