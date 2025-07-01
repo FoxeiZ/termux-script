@@ -1,5 +1,7 @@
 # ruff: noqa: F401
 
+import os
+
 from lib.config import Config
 from lib.manager import PluginManager
 from plugin import (
@@ -7,6 +9,7 @@ from plugin import (
     LongProcessPlugin,
     LongProcessPluginWithError,
     LongProcessPluginWithLongOutput,
+    ServerProxyPlugin,
     SystemMonitorPlugin,
     SystemServerPlugin,
     TestCron2Min,
@@ -24,7 +27,15 @@ if __name__ == "__main__":
         manager.register_plugin(TestCronPerMin)
         manager.register_plugin(TestCron2Min)
 
-    manager.register_plugin(InterfaceMonitorPlugin)
-    manager.register_plugin(SystemServerPlugin)
-    manager.register_plugin(SystemMonitorPlugin)
+    if (
+        "com.termux" in os.environ.get("SHELL", "")
+        or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr"
+    ):
+        manager.register_plugin(InterfaceMonitorPlugin)
+        manager.register_plugin(SystemServerPlugin)
+        manager.register_plugin(SystemMonitorPlugin)
+
+    manager.register_plugin(
+        ServerProxyPlugin, port=5000, host="0.0.0.0", debug=Config.debug
+    )
     manager.run()
