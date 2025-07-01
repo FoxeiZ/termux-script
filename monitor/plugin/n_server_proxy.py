@@ -36,13 +36,6 @@ if TYPE_CHECKING:
 
     from requests import Response as RequestResponse
 
-    class GalleryTitle(TypedDict, total=False):
-        """Type definition for gallery title information."""
-
-        english: Optional[str]
-        japanese: Optional[str]
-        pretty: str
-
     class _GalleryImageInfo(TypedDict):
         """Type definition for gallery image data."""
 
@@ -64,7 +57,7 @@ if TYPE_CHECKING:
 
         id: int
         media_id: str
-        title: GalleryTitle
+        title: str
         scanlator: str
         artists: List[str]
         writers: List[str]
@@ -149,6 +142,20 @@ class ResourceCache(LRUCache[str, tuple[dict, bytes]], Singleton):
         super().__init__(max_size=max_size)
 
 
+def clean_manga_title(manga_title):
+    edited_title = re.sub(r"\[.*?]", "", manga_title).strip()
+    edited_title = re.sub(r"\(.*?\)", "", edited_title).strip()
+    edited_title = re.sub(r"\{.*?\}", "", edited_title).strip()
+
+    while True:
+        if "|" in edited_title:
+            edited_title = re.sub(r".*\|", "", edited_title).strip()
+        else:
+            break
+
+    return edited_title
+
+
 class FileStatus(Enum):
     CONVERTED = "converted"
     COMPLETED = "completed"
@@ -157,15 +164,19 @@ class FileStatus(Enum):
 
 
 def check_file_status(
-    gallery_id: int | str | None = None, gallery_info: NhentaiGallery | None = None
+    gallery_id: int | None = None,
+    gallery_title: str | None = None,
+    gallery_info: NhentaiGallery | None = None,
 ) -> FileStatus:
     """Check if a gallery is already downloaded based on its ID or information."""
-    if not gallery_id:
-        if gallery_info is None:
-            raise ValueError("gallery_info must be provided if gallery_id is not.")
-        gallery_id = gallery_info["id"]
+    if gallery_id is None and gallery_title is None:
+        if gallery_info:
+            gallery_id = gallery_info["id"]
+            gallery_title = gallery_info["title"]
+    if gallery_id is None or gallery_title is None:
+        raise ValueError("gallery_id and gallery_title must be provided.")
 
-    gallery_path = Path(f"{app.config['GALLERY_PATH']}/{gallery_id}")
+    gallery_path = Path(f"{app.config['GALLERY_PATH']}/{gallery_title}")
     if not gallery_path.exists():
         return FileStatus.NOT_FOUND
 
@@ -223,15 +234,18 @@ class DownloadPool(Singleton):
         self._progress_lock = Lock()
 
     def _download(self, info: "NhentaiGallery"):
+        gallery_title = info["title"]
         gallery_id = info["id"]
-        logger.info("Downloading images for gallery ID: %d", gallery_id)
+        logger.info(
+            "Downloading images for gallery '%s' ID: %d", gallery_title, gallery_id
+        )
 
         # Update status to downloading
         with self._progress_lock:
             if gallery_id in self._progress:
                 self._progress[gallery_id].status = DownloadStatus.DOWNLOADING
 
-        gallery_path = Path(f"{app.config['GALLERY_PATH']}/{gallery_id}")
+        gallery_path = Path(f"{app.config['GALLERY_PATH']}/{gallery_title}")
         if not gallery_path.exists():
             gallery_path.mkdir(parents=True, exist_ok=True)
 
@@ -318,21 +332,8 @@ class DownloadPool(Singleton):
         self._pool.shutdown(wait=True)
         logger.info("Download pool shutdown complete.")
 
-    def clean_manga_title(self, manga_title):
-        edited_title = re.sub(r"\[.*?]", "", manga_title).strip()
-        edited_title = re.sub(r"\(.*?\)", "", edited_title).strip()
-        edited_title = re.sub(r"\{.*?\}", "", edited_title).strip()
-
-        while True:
-            if "|" in edited_title:
-                edited_title = re.sub(r".*\|", "", edited_title).strip()
-            else:
-                break
-
-        return edited_title
-
     def save_cbz(self, info: "NhentaiGallery", remove_images: bool = True):
-        gallery_path = Path(f"{app.config['GALLERY_PATH']}/{info['id']}")
+        gallery_path = Path(f"{app.config['GALLERY_PATH']}/{info['title']}")
         if not gallery_path.exists():
             logger.error("Gallery path does not exist: %s", gallery_path)
             return
@@ -355,11 +356,6 @@ class DownloadPool(Singleton):
                         img_file.unlink()
 
             with cbz_zip.open("ComicInfo.xml", "w") as f:
-                title = self.clean_manga_title(
-                    info["title"].get("english", "")
-                    or info["title"].get("japanese", "")
-                    or info["title"].get("pretty", "Unknown Title")
-                )
                 if info["characters"]:
                     info["characters"].insert(0, "#field-characters")
                     info["characters"].append("#end-field-characters")
@@ -370,15 +366,17 @@ class DownloadPool(Singleton):
                             "ComicInfo": {
                                 "@xmlns:xsd": "http://www.w3.org/2001/XMLSchema",
                                 "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
-                                "Title": title,
-                                "Series": title,
+                                "Title": info["title"],
+                                "Series": info["title"],
                                 "Number": 1,  # Assuming single volume # TODO: Handle multi-volume
                                 "LanguageISO": (
                                     "en"
                                     if info["language"] == "english"
                                     else "ja"
                                     if info["language"] == "japanese"
-                                    else "Unknown"
+                                    else "zh"
+                                    if info["language"] == "chinese"
+                                    else "unknown"
                                 ),
                                 "PageCount": total_images,
                                 "Penciller": ", ".join(info["artists"]),
@@ -389,6 +387,7 @@ class DownloadPool(Singleton):
                                     info["characters"]
                                 ),  # since characters are not available in ComicInfo.xml, use them as genre
                                 "SeriesGroup": ", ".join(info["parodies"]),
+                                "Web": f"https://nhentai.net/g/{info['id']}",
                             }
                         },
                         pretty=True,
@@ -561,7 +560,13 @@ def parse_chapter(html: str) -> Optional[NhentaiGallery]:
 
     json_string = match.group(1)
     json_string = json_string.encode().decode("unicode_escape")
-    gallery_data: NhentaiGallery = json.loads(json_string)
+    gallery_data: dict = json.loads(json_string)
+
+    gallery_data["title"] = clean_manga_title(
+        gallery_data["title"].get("english", "")
+        or gallery_data["title"].get("japanese", "")
+        or gallery_data["title"].get("pretty", "Unknown Title")
+    )
 
     original_tags = cast(list, gallery_data.get("tags", [])).copy()
     tags = gallery_data["tags"] = []
@@ -587,7 +592,7 @@ def parse_chapter(html: str) -> Optional[NhentaiGallery]:
         else:
             logger.warning(f"Unknown tag type: {tag['type']} with name: {tag['name']}")
 
-    return gallery_data
+    return cast("NhentaiGallery", gallery_data)
 
 
 @ModifyRule.add_rule(r"/g/\d+")
@@ -830,7 +835,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 
 @ModifyRule.add_rule(r"nhentai\.net")
-def modify_gallery(soup: BeautifulSoup, html_content: str) -> None:
+def modify_gallery(soup: BeautifulSoup, _: str) -> None:
     logger.info("Modifying gallery page content")
 
     for gallery_div in soup.find_all("div", class_="gallery"):
@@ -838,17 +843,31 @@ def modify_gallery(soup: BeautifulSoup, html_content: str) -> None:
             continue
 
         a = gallery_div.find("a", class_="cover")
-        if not a or not isinstance(a, Tag):
+        caption = gallery_div.find("div", class_="caption")
+        if (
+            not a
+            or not isinstance(a, Tag)
+            or not caption
+            or not isinstance(caption, Tag)
+        ):
             continue
 
         gallery_id = cast(str, a.get("href") or "").rstrip("/").split("/")[-1]
+        gallery_title = clean_manga_title(caption.get_text(strip=True))
         if not gallery_id.isdigit():
             logger.warning("Invalid gallery ID found in the HTML content.")
             continue
 
-        file_status = check_file_status(gallery_id=int(gallery_id))
+        file_status = check_file_status(
+            gallery_title=gallery_title,
+            gallery_id=int(gallery_id),
+        )
         if file_status == FileStatus.NOT_FOUND:
-            logger.warning("Gallery ID %s not found in the filesystem.", gallery_id)
+            logger.warning(
+                "Gallery %s ID %s not found in the filesystem.",
+                gallery_title,
+                gallery_id,
+            )
             continue
 
         a.img["style"] = "opacity: 0.7;"  # type: ignore
