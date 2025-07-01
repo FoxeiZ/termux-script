@@ -165,7 +165,7 @@ def check_file_status(
             raise ValueError("gallery_info must be provided if gallery_id is not.")
         gallery_id = gallery_info["id"]
 
-    gallery_path = Path(f"galleries/{gallery_id}")
+    gallery_path = Path(f"{app.config['GALLERY_PATH']}/{gallery_id}")
     if not gallery_path.exists():
         return FileStatus.NOT_FOUND
 
@@ -231,7 +231,7 @@ class DownloadPool(Singleton):
             if gallery_id in self._progress:
                 self._progress[gallery_id].status = DownloadStatus.DOWNLOADING
 
-        gallery_path = Path(f"galleries/{gallery_id}")
+        gallery_path = Path(f"{app.config['GALLERY_PATH']}/{gallery_id}")
         if not gallery_path.exists():
             gallery_path.mkdir(parents=True, exist_ok=True)
 
@@ -332,7 +332,7 @@ class DownloadPool(Singleton):
         return edited_title
 
     def save_cbz(self, info: "NhentaiGallery", remove_images: bool = True):
-        gallery_path = Path(f"galleries/{info['id']}")
+        gallery_path = Path(f"{app.config['GALLERY_PATH']}/{info['id']}")
         if not gallery_path.exists():
             logger.error("Gallery path does not exist: %s", gallery_path)
             return
@@ -1086,12 +1086,18 @@ class ServerProxyPlugin(Plugin):
         port: int = 5000,
         host: str = "0.0.0.0",
         debug: bool = False,
+        gallery_path: str | Path = "galleries",
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.host = host
         self.port = port
         self.debug = debug
+        gallery_path = Path(gallery_path)
+        if not gallery_path.exists():
+            gallery_path.mkdir(parents=True, exist_ok=True)
+        self.gallery_path = gallery_path.resolve()
+        app.config["GALLERY_PATH"] = str(gallery_path)
 
         self._wait_for_shutdown = Event()
         self._internal_shutdown_event = asyncio.Event()
