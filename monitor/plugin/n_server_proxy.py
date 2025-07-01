@@ -1127,6 +1127,10 @@ class ServerProxyPlugin(Plugin):
             self.logger.info(
                 "ServerProxyPlugin started on http://%s:%d", self.host, self.port
             )
+            self.send_success(
+                content=f"Server is running on http://{self.host}:{self.port}",
+                title="ServerProxyPlugin started",
+            )
             self._loop.run_until_complete(
                 asyncio.gather(
                     server_task,
