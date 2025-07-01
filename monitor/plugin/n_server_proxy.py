@@ -883,7 +883,7 @@ def modify_gallery(soup: BeautifulSoup, _: str) -> None:
         elif file_status == FileStatus.COMPLETED:
             _div.string = "Downloaded"
         elif file_status == FileStatus.MISSING:
-            _div.string = "Partial"
+            _div.string = "Partial | In library"
         a.append(_div)
 
 
