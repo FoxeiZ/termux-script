@@ -5,3 +5,5 @@ test*
 tasks/
 __pycache__/
 venv/
+!logger.py
+galleries/
