@@ -1,5 +1,4 @@
 from .interface_monitor import InterfaceMonitorPlugin
-from .n_server_proxy import ServerProxyPlugin
 from .plugin_test.cron_test import TestCron2Min, TestCronPerMin
 from .plugin_test.long_process import (
     LongProcessPlugin,
@@ -18,7 +17,6 @@ __all__ = [
     "LongProcessPluginWithLongOutput",
     "SystemServerPlugin",
     "SystemMonitorPlugin",
-    "ServerProxyPlugin",
     "TestCronPerMin",
     "TestCron2Min",
 ]

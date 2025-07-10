@@ -9,7 +9,6 @@ from plugin import (
     LongProcessPlugin,
     LongProcessPluginWithError,
     LongProcessPluginWithLongOutput,
-    ServerProxyPlugin,
     SystemMonitorPlugin,
     SystemServerPlugin,
     TestCron2Min,
