@@ -35,13 +35,4 @@ if __name__ == "__main__":
         manager.register_plugin(SystemServerPlugin)
         manager.register_plugin(SystemMonitorPlugin)
 
-    manager.register_plugin(
-        ServerProxyPlugin,
-        port=5000,
-        host="0.0.0.0",
-        debug=Config.debug,
-        gallery_path="/data/data/com.termux/files/home/galleries"
-        if is_termux
-        else "galleries",
-    )
     manager.run()
