@@ -14,7 +14,8 @@
     },
     "djlint.formatJs": true,
     "djlint.ignore": [
-        "J018",
-        "H031"
+        "J018", // Internal links should use the {{ url_for() ... }} pattern. 
+        "H031", // Consider adding meta keywords
+        "H006", // Img tag should have height and width attributes
     ]
 }
