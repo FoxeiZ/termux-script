@@ -6,4 +6,15 @@
         "source.organizeImports.ruff": "always"
     },
     "files.eol": "\n",
+    "[html][django-html][handlebars][hbs][mustache][jinja][jinja-html][nj][njk][nunjucks][twig]": {
+        "editor.defaultFormatter": "monosans.djlint"
+    },
+    "files.associations": {
+        "*.html": "jinja-html"
+    },
+    "djlint.formatJs": true,
+    "djlint.ignore": [
+        "J018",
+        "H031"
+    ]
 }
