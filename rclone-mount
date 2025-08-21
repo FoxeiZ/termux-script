@@ -1,53 +1,53 @@
 #!/data/data/com.termux/files/usr/bin/bash -e
 
-
-MOUNT_FOLDER=""
+SOURCE="GDCrypt-remiliascarlet:"
+TARGET=""
 CONFIG_FILE="/data/data/com.termux/files/home/.config/rclone/rclone.conf"
 REAL_USER="u0_a325"
 
-while getopts ":m:c:u:" opt; do
+usage() {
+    echo "Error: $1" >&2
+    echo "Usage: $0 -t <mount_folder> [-s <source>] [-c <config_file>] [-u <real_user>] [-- <rclone mount options>]"
+    echo "  -t <mount_folder>    (Required) The destination folder to mount."
+    echo "  -s <source>          (Optional) The rclone remote source. Default: \"$SOURCE\""
+    echo "  -c <config_file>     (Optional) Path to rclone config file."
+    echo "  -u <real_user>       (Optional) The user to own the config file."
+    exit 1
+}
+
+while getopts ":t:s:c:u:" opt; do
     case $opt in
-        m) MOUNT_FOLDER="$OPTARG" ;;
+        s) SOURCE="$OPTARG" ;;
+        t) TARGET="$OPTARG" ;;
         c) CONFIG_FILE="$OPTARG" ;;
         u) REAL_USER="$OPTARG" ;;
-        \?) echo "Usage: $0 -m <mount_folder> [-c <config>] [-u <real_user>]" >&2; exit 1 ;;
+        \?) usage "Invalid option: -$OPTARG" ;;
+        :) usage "Option -$OPTARG requires an argument." ;;
     esac
-
 done
 
-RCLONE_OPTS=()
-while [[ $# -gt 0 ]]; do
-    if [[ "$1" == "--" ]]; then
-        shift
-        while [[ $# -gt 0 ]]; do
-            RCLONE_OPTS+=("$1")
-            shift
-        done
-        break
-    fi
-    shift
-done
-if [ -z "$MOUNT_FOLDER" ]; then
-    echo "Error: mount folder (-m) is required."
-    echo "Usage: $0 -m <mount_folder> [-c <config>] [-u <real_user>] [-- <rclone mount options>]"
-    exit 1
+if [ -z "$TARGET" ]; then
+    usage "The mount folder (-t) option is required."
 fi
 
+shift $((OPTIND-1))
+RCLONE_OPTS=("$@")
+
 Unmount() {
-    fusermount -u "$MOUNT_FOLDER"
+    fusermount -u "$TARGET" || true
 }
 
 ResetPermConfig() {
     chown "$REAL_USER":"$REAL_USER" "$CONFIG_FILE"
 }
 
-# make sure it's not already mounted
+echo "Attempting to unmount any existing mount at $TARGET..."
 Unmount
 
-# make sure it's unmounted after rclone is killed
-trap 'sleep 1; ResetPermConfig; Unmount' EXIT
+trap 'echo "Cleaning up..."; sleep 1; ResetPermConfig; Unmount; echo "Cleanup complete."' EXIT
 
-rclone --config "$CONFIG_FILE" mount GDCrypt-remiliascarlet: "$MOUNT_FOLDER" \
+echo "Mounting \"$SOURCE\" to \"$TARGET\"..."
+rclone --config "$CONFIG_FILE" mount "$SOURCE" "$TARGET" \
 --allow-other \
 --gid 9997 \
 --dir-perms 0771 \
