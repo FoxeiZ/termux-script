@@ -1,5 +1,0 @@
-Flask
-quart
-beautifulsoup4
-cloudscraper
-requests
