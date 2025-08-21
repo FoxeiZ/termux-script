@@ -1,6 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
-# Check if file argument is provided
 if [ $# -eq 0 ]; then
     dialog --msgbox "Usage: termux-file-editor <file>" 8 40
     exit 1
@@ -11,6 +10,13 @@ BASENAME=$(basename "$INPUT_FILE")
 NAME="${BASENAME%.*}"
 EXT="${BASENAME##*.}"
 CURRENT_DIR=$(pwd)
+SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+CONFIG_FILE="$SCRIPT_DIR/termux-file-editor.conf"
+SAVE_CONFIG="1"
+
+if [ "$(uname -o)" = "Cygwin" ]; then
+    termux-share() { cygstart "${@: -1}"; }
+fi
 
 # Check if file exists
 if [ ! -f "$INPUT_FILE" ]; then
@@ -18,27 +24,59 @@ if [ ! -f "$INPUT_FILE" ]; then
     exit 1
 fi
 
+load_config() {
+    if [ -f "$CONFIG_FILE" ]; then
+        # shellcheck source=/dev/null
+        source "$CONFIG_FILE" 2>/dev/null || true
+    fi
+}
+
+save_config() {
+    local prefix="$1"
+    shift
+    local config_data="$*"
+    
+    if [ -f "$CONFIG_FILE" ]; then
+        # Remove existing entries with the same prefix
+        grep -v "^${prefix}_" "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" 2>/dev/null || true
+        mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE" 2>/dev/null || true
+    fi
+    
+    echo "$config_data" >> "$CONFIG_FILE"
+}
+
 # Function to compress file and share
 compress_and_share() {
-    # Get compression options
+    
+    # Set defaults from config or fallback values
+    DEFAULT_FILENAME_TEMPLATE="${COMPRESS_FILENAME_TEMPLATE:-%name_%date.%ext}"
+    DEFAULT_COMPRESSION_METHOD="${COMPRESS_COMPRESSION_METHOD:-7z}"
+    DEFAULT_COMPRESSION_LEVEL="${COMPRESS_COMPRESSION_LEVEL:-5}"
+    DEFAULT_PASSWORD="${COMPRESS_PASSWORD:-}"
+
     if ! FORM_DATA=$(dialog --clear --backtitle "Compress and Share" \
         --title "Compression Options" \
-        --form "Configure compression settings:" 15 70 4 \
-        "Filename template:" 1 1 "%name_%date.%ext" 1 20 40 0 \
-        "Compression method:" 2 1 "7z" 2 20 10 0 \
-        "Compression level (0-9):" 3 1 "5" 3 25 5 0 \
-        "Password (optional):" 4 1 "" 4 20 30 0 \
+        --mixedform "Configure compression settings:" 17 70 5 \
+        "Filename template:" 1 1 "$DEFAULT_FILENAME_TEMPLATE" 1 20 40 0 0 \
+        "Compression method:" 2 1 "$DEFAULT_COMPRESSION_METHOD" 2 20 10 0 0 \
+        "Compression level (0-9):" 3 1 "$DEFAULT_COMPRESSION_LEVEL" 3 25 5 0 0 \
+        "Password (optional):" 4 1 "$DEFAULT_PASSWORD" 4 20 30 0 0 \
         2>&1 >/dev/tty); then
         return
     fi
 
-    # Parse form data
     FILENAME_TEMPLATE=$(echo "$FORM_DATA" | sed -n '1p')
     COMPRESSION_METHOD=$(echo "$FORM_DATA" | sed -n '2p')
     COMPRESSION_LEVEL=$(echo "$FORM_DATA" | sed -n '3p')
     PASSWORD=$(echo "$FORM_DATA" | sed -n '4p')
 
-    # Process filename template
+    if [ "$SAVE_CONFIG" = "1" ]; then
+        save_config "COMPRESS" "COMPRESS_FILENAME_TEMPLATE=\"$FILENAME_TEMPLATE\"
+COMPRESS_COMPRESSION_METHOD=\"$COMPRESSION_METHOD\"
+COMPRESS_COMPRESSION_LEVEL=\"$COMPRESSION_LEVEL\"
+COMPRESS_PASSWORD=\"$PASSWORD\""
+    fi
+
     CURRENT_DATE=$(date +"%Y%m%d_%H%M%S")
     OUTPUT_NAME="$FILENAME_TEMPLATE"
     OUTPUT_NAME="${OUTPUT_NAME//%name/$NAME}"
@@ -53,7 +91,6 @@ compress_and_share() {
         OUTPUT_FILE="$CURRENT_DIR/$OUTPUT_NAME"
     fi
 
-    # Show progress dialog
     {
         echo "XXX"
         echo "0"
@@ -87,9 +124,7 @@ compress_and_share() {
         echo "XXX"
     } | dialog --backtitle "Compress and Share" --title "Progress" --gauge "Please wait..." 10 70 0
 
-    # Check if compression was successful
     if [ -f "$OUTPUT_FILE" ]; then
-        # Share the file
         termux-share -a send "$OUTPUT_FILE"
         dialog --msgbox "File compressed and shared successfully!\nOutput: $OUTPUT_NAME" 8 60
     else
@@ -97,17 +132,14 @@ compress_and_share() {
     fi
 }
 
-# Function to reduce file size/resolution and share
 reduce_and_share() {
     FILE_TYPE=$(file -b --mime-type "$INPUT_FILE" 2>/dev/null)
     
     case $FILE_TYPE in
         image/*)
-            # It's an image file
             reduce_image_and_share
             ;;
         video/*)
-            # It's a video file
             reduce_video_and_share
             ;;
         *)
@@ -117,29 +149,37 @@ reduce_and_share() {
     esac
 }
 
-# Function to reduce video size/resolution and share
 reduce_video_and_share() {
-    # Get video information
+
     DURATION=$(ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$INPUT_FILE" 2>/dev/null)
     ORIGINAL_SIZE=$(du -h "$INPUT_FILE" | cut -f1)
 
-    # Get reduction options
+    DEFAULT_MAX_RESOLUTION="${VIDEO_MAX_RESOLUTION:-1280x720}"
+    DEFAULT_TARGET_SIZE="${VIDEO_TARGET_SIZE:-0}"
+    DEFAULT_MAX_FPS="${VIDEO_MAX_FPS:-0}"
+    DEFAULT_AUDIO_QUALITY="${VIDEO_AUDIO_QUALITY:-3}"
+    DEFAULT_VIDEO_CODEC="${VIDEO_VIDEO_CODEC:-h264}"
+    DEFAULT_CRF_QUALITY="${VIDEO_CRF_QUALITY:-23}"
+    DEFAULT_OUTPUT_TEMPLATE="${VIDEO_OUTPUT_TEMPLATE:-%name_reduced.%ext}"
+    DEFAULT_START_TIME="${VIDEO_START_TIME:-}"
+    DEFAULT_CUSTOM_FFMPEG_ARGS="${VIDEO_CUSTOM_FFMPEG_ARGS:-}"
+
     if ! FORM_DATA=$(dialog --clear --backtitle "Reduce Video and Share" \
         --title "FFmpeg Video Reduction Options" \
-        --form "Configure video reduction settings:\nOriginal size: $ORIGINAL_SIZE" 20 80 8 \
-        "Max resolution (e.g., 1280x720):" 1 1 "1280x720" 1 35 20 0 \
-        "Target file size (MB, 0=auto):" 2 1 "50" 2 35 10 0 \
-        "Max FPS (0=keep original):" 3 1 "30" 3 35 10 0 \
-        "Audio quality (0=no audio, 1-5):" 4 1 "3" 4 35 10 0 \
-        "Video codec (h264/h265/vp9):" 5 1 "h264" 5 35 15 0 \
-        "CRF quality (18-28, lower=better):" 6 1 "23" 6 35 10 0 \
-        "Output filename:" 7 1 "%name_reduced.%ext" 7 35 30 0 \
-        "Start time (HH:MM:SS, optional):" 8 1 "" 8 35 15 0 \
+        --mixedform "Configure video reduction settings:\nOriginal size: $ORIGINAL_SIZE" 22 80 10 \
+        "Max resolution (e.g., 1280x720):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 0 \
+        "Target file size (MB, 0=auto):" 2 1 "$DEFAULT_TARGET_SIZE" 2 35 10 0 0 \
+        "Max FPS (0=keep original):" 3 1 "$DEFAULT_MAX_FPS" 3 35 10 0 0 \
+        "Audio quality (0=no audio, 1-5):" 4 1 "$DEFAULT_AUDIO_QUALITY" 4 35 10 0 0 \
+        "Video codec:" 5 1 "$DEFAULT_VIDEO_CODEC" 5 35 15 0 0 \
+        "CRF quality (18-32, lower=better):" 6 1 "$DEFAULT_CRF_QUALITY" 6 35 10 0 0 \
+        "Output filename:" 7 1 "$DEFAULT_OUTPUT_TEMPLATE" 7 35 30 0 0 \
+        "Start time (HH:MM:SS, optional):" 8 1 "$DEFAULT_START_TIME" 8 35 15 0 0 \
+        "Custom FFmpeg args:" 9 1 "$DEFAULT_CUSTOM_FFMPEG_ARGS" 9 20 40 0 0 \
         2>&1 >/dev/tty); then
         return
     fi
 
-    # Parse form data
     MAX_RESOLUTION=$(echo "$FORM_DATA" | sed -n '1p')
     TARGET_SIZE=$(echo "$FORM_DATA" | sed -n '2p')
     MAX_FPS=$(echo "$FORM_DATA" | sed -n '3p')
@@ -148,60 +188,47 @@ reduce_video_and_share() {
     CRF_QUALITY=$(echo "$FORM_DATA" | sed -n '6p')
     OUTPUT_TEMPLATE=$(echo "$FORM_DATA" | sed -n '7p')
     START_TIME=$(echo "$FORM_DATA" | sed -n '8p')
+    CUSTOM_FFMPEG_ARGS=$(echo "$FORM_DATA" | sed -n '9p')
 
-    # Process output filename
+    if [ "$SAVE_CONFIG" = "1" ]; then
+        save_config "VIDEO" "VIDEO_MAX_RESOLUTION=\"$MAX_RESOLUTION\"
+VIDEO_TARGET_SIZE=\"$TARGET_SIZE\"
+VIDEO_MAX_FPS=\"$MAX_FPS\"
+VIDEO_AUDIO_QUALITY=\"$AUDIO_QUALITY\"
+VIDEO_VIDEO_CODEC=\"$VIDEO_CODEC\"
+VIDEO_CRF_QUALITY=\"$CRF_QUALITY\"
+VIDEO_OUTPUT_TEMPLATE=\"$OUTPUT_TEMPLATE\"
+VIDEO_START_TIME=\"$START_TIME\"
+VIDEO_CUSTOM_FFMPEG_ARGS=\"$CUSTOM_FFMPEG_ARGS\""
+    fi
+
     OUTPUT_NAME="$OUTPUT_TEMPLATE"
     OUTPUT_NAME="${OUTPUT_NAME//%name/$NAME}"
     OUTPUT_NAME="${OUTPUT_NAME//%ext/$EXT}"
     OUTPUT_FILE="$CURRENT_DIR/$OUTPUT_NAME"
 
-    # Build FFmpeg command
     FFMPEG_CMD="ffmpeg -y"
     
-    # Add start time if specified
     if [ -n "$START_TIME" ]; then
         FFMPEG_CMD="$FFMPEG_CMD -ss $START_TIME"
     fi
     
-    FFMPEG_CMD="$FFMPEG_CMD -i \"$INPUT_FILE\""
+    FFMPEG_CMD="$FFMPEG_CMD -i \"$INPUT_FILE\" -c:v $VIDEO_CODEC"
 
-    # Video codec
-    case $VIDEO_CODEC in
-        "h264")
-            FFMPEG_CMD="$FFMPEG_CMD -c:v libx264"
-            ;;
-        "h265")
-            FFMPEG_CMD="$FFMPEG_CMD -c:v libx265"
-            ;;
-        "vp9")
-            FFMPEG_CMD="$FFMPEG_CMD -c:v libvpx-vp9"
-            ;;
-    esac
-
-    # Resolution scaling
     if [ "$MAX_RESOLUTION" != "0" ] && [ -n "$MAX_RESOLUTION" ]; then
         FFMPEG_CMD="$FFMPEG_CMD -vf scale=$MAX_RESOLUTION:force_original_aspect_ratio=decrease"
     fi
 
-    # Frame rate
     if [ "$MAX_FPS" != "0" ] && [ -n "$MAX_FPS" ]; then
         FFMPEG_CMD="$FFMPEG_CMD -r $MAX_FPS"
     fi
 
-    # Audio handling
     if [ "$AUDIO_QUALITY" = "0" ]; then
         FFMPEG_CMD="$FFMPEG_CMD -an"
     else
-        case $AUDIO_QUALITY in
-            "1") FFMPEG_CMD="$FFMPEG_CMD -c:a aac -b:a 64k" ;;
-            "2") FFMPEG_CMD="$FFMPEG_CMD -c:a aac -b:a 96k" ;;
-            "3") FFMPEG_CMD="$FFMPEG_CMD -c:a aac -b:a 128k" ;;
-            "4") FFMPEG_CMD="$FFMPEG_CMD -c:a aac -b:a 192k" ;;
-            "5") FFMPEG_CMD="$FFMPEG_CMD -c:a aac -b:a 256k" ;;
-        esac
+        FFMPEG_CMD="$FFMPEG_CMD -c:a aac -b:a $((AUDIO_QUALITY * 64))k"
     fi
 
-    # Quality/Bitrate control
     if [ "$TARGET_SIZE" != "0" ] && [ -n "$TARGET_SIZE" ] && [ -n "$DURATION" ]; then
         # Calculate target bitrate based on file size
         TARGET_BITRATE=$(echo "scale=0; ($TARGET_SIZE * 8192) / $DURATION" | bc 2>/dev/null)
@@ -214,69 +241,61 @@ reduce_video_and_share() {
         FFMPEG_CMD="$FFMPEG_CMD -crf $CRF_QUALITY"
     fi
 
+    if [ -n "$CUSTOM_FFMPEG_ARGS" ]; then
+        FFMPEG_CMD="$FFMPEG_CMD $CUSTOM_FFMPEG_ARGS"
+    fi
+
     FFMPEG_CMD="$FFMPEG_CMD \"$OUTPUT_FILE\""
 
-    # Show conversion progress
-    {
-        echo "XXX"
-        echo "0"
-        echo "Starting video conversion..."
-        echo "XXX"
-        
-        # Run FFmpeg in background and monitor progress
-        eval "$FFMPEG_CMD" 2>&1 | while read -r line; do
-            if echo "$line" | grep -q "time="; then
-                # Extract time progress (this is a simplified progress indicator)
-                echo "XXX"
-                echo "50"
-                echo "Converting... $line"
-                echo "XXX"
-            fi
-        done
-        
-        echo "XXX"
-        echo "100"
-        echo "Conversion completed!"
-        echo "XXX"
-    } | dialog --backtitle "Reduce Video and Share" --title "Progress" --gauge "Please wait..." 10 80 0
+    { eval "$FFMPEG_CMD" 2>&1 ; } | dialog --progressbox 30 100
 
-    # Check if conversion was successful
     if [ -f "$OUTPUT_FILE" ]; then
         NEW_SIZE=$(du -h "$OUTPUT_FILE" | cut -f1)
-        # Share the file
         termux-share -a send "$OUTPUT_FILE"
         dialog --msgbox "Video reduced and shared successfully!\nOriginal: $ORIGINAL_SIZE -> New: $NEW_SIZE\nOutput: $OUTPUT_NAME" 10 60
     else
-        dialog --msgbox "Error: Video conversion failed!\nCommand: $FFMPEG_CMD" 12 80
+        dialog --msgbox "Error: Video conversion failed!\nCommand: $FFMPEG_CMD\nLog: $FFMPEG_LOG" 80 80
     fi
 }
 
-# Function to reduce image size/resolution and share
 reduce_image_and_share() {
-    # Get image information
+    
     ORIGINAL_SIZE=$(du -h "$INPUT_FILE" | cut -f1)
     IMAGE_INFO=$(ffprobe -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$INPUT_FILE" 2>/dev/null)
 
-    # Get reduction options
-    # First, get output format using a radio list
+    DEFAULT_OUTPUT_FORMAT="${IMAGE_OUTPUT_FORMAT:-jpeg}"
+    DEFAULT_MAX_RESOLUTION="${IMAGE_MAX_RESOLUTION:-1280x720}"
+    DEFAULT_GENERAL_QUALITY="${IMAGE_GENERAL_QUALITY:-5}"
+    DEFAULT_OUTPUT_TEMPLATE="${IMAGE_OUTPUT_TEMPLATE:-%name_reduced.%ext}"
+
+    JPEG_STATE="off"
+    PNG_STATE="off"
+    WEBP_STATE="off"
+    
+    case "$DEFAULT_OUTPUT_FORMAT" in
+        "jpeg") JPEG_STATE="on" ;;
+        "png") PNG_STATE="on" ;;
+        "webp") WEBP_STATE="on" ;;
+        *) JPEG_STATE="on" ;;  # default fallback
+    esac
+    
     if ! OUTPUT_FORMAT=$(dialog --clear --backtitle "Reduce Image and Share" \
         --title "Select Output Format" \
         --radiolist "Choose output format:" 12 50 3 \
-        "jpeg" "JPEG (.jpg)" on \
-        "png" "PNG (.png)" off \
-        "webp" "WebP (.webp)" off \
+        "jpeg" "JPEG (.jpg)" "$JPEG_STATE" \
+        "png" "PNG (.png)" "$PNG_STATE" \
+        "webp" "WebP (.webp)" "$WEBP_STATE" \
         2>&1 >/dev/tty); then
         return
     fi
 
-    # Now get the rest of the options, showing only relevant quality field
     if [ "$OUTPUT_FORMAT" = "jpeg" ] || [ "$OUTPUT_FORMAT" = "jpg" ]; then
         if ! FORM_DATA=$(dialog --clear --backtitle "Reduce Image and Share" \
             --title "FFmpeg Image Reduction Options" \
-            --form "Configure image reduction settings:\nOriginal size: $ORIGINAL_SIZE\nResolution: $IMAGE_INFO" 14 80 3 \
-            "Max resolution (e.g., 1920x1080):" 1 1 "1280x720" 1 35 20 0 \
-            "JPEG quality (2-31, lower=better):" 2 1 "5" 2 35 10 0 \
-            "Output filename:" 3 1 "%name_reduced.%ext" 3 35 30 0 \
+            --mixedform "Configure image reduction settings:\nOriginal size: $ORIGINAL_SIZE\nResolution: $IMAGE_INFO" 16 80 4 \
+            "Max resolution (e.g., 1920x1080):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 0 \
+            "JPEG quality (2-31, lower=better):" 2 1 "$DEFAULT_GENERAL_QUALITY" 2 35 10 0 0 \
+            "Output filename:" 3 1 "$DEFAULT_OUTPUT_TEMPLATE" 3 35 30 0 0 \
             2>&1 >/dev/tty); then
             return
         fi
@@ -286,10 +305,10 @@ reduce_image_and_share() {
     elif [ "$OUTPUT_FORMAT" = "png" ]; then
         if ! FORM_DATA=$(dialog --clear --backtitle "Reduce Image and Share" \
             --title "FFmpeg Image Reduction Options" \
-            --form "Configure image reduction settings:\nOriginal size: $ORIGINAL_SIZE\nResolution: $IMAGE_INFO" 14 80 3 \
-            "Max resolution (e.g., 1920x1080):" 1 1 "1280x720" 1 35 20 0 \
-            "PNG compression (0-9, higher=smaller):" 2 1 "6" 2 35 10 0 \
-            "Output filename:" 3 1 "%name_reduced.%ext" 3 35 30 0 \
+            --mixedform "Configure image reduction settings:\nOriginal size: $ORIGINAL_SIZE\nResolution: $IMAGE_INFO" 16 80 4 \
+            "Max resolution (e.g., 1920x1080):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 0 \
+            "PNG compression (0-9, higher=smaller):" 2 1 "$DEFAULT_GENERAL_QUALITY" 2 35 10 0 0 \
+            "Output filename:" 3 1 "$DEFAULT_OUTPUT_TEMPLATE" 3 35 30 0 0 \
             2>&1 >/dev/tty); then
             return
         fi
@@ -299,10 +318,10 @@ reduce_image_and_share() {
     elif [ "$OUTPUT_FORMAT" = "webp" ]; then
         if ! FORM_DATA=$(dialog --clear --backtitle "Reduce Image and Share" \
             --title "FFmpeg Image Reduction Options" \
-            --form "Configure image reduction settings:\nOriginal size: $ORIGINAL_SIZE\nResolution: $IMAGE_INFO" 14 80 3 \
-            "Max resolution (e.g., 1920x1080):" 1 1 "1280x720" 1 35 20 0 \
-            "WebP quality (1-100, higher=better):" 2 1 "85" 2 35 10 0 \
-            "Output filename:" 3 1 "%name_reduced.%ext" 3 35 30 0 \
+            --mixedform "Configure image reduction settings:\nOriginal size: $ORIGINAL_SIZE\nResolution: $IMAGE_INFO" 16 80 4 \
+            "Max resolution (e.g., 1920x1080):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 0 \
+            "WebP quality (1-100, higher=better):" 2 1 "$DEFAULT_GENERAL_QUALITY" 2 35 10 0 0 \
+            "Output filename:" 3 1 "$DEFAULT_OUTPUT_TEMPLATE" 3 35 30 0 0 \
             2>&1 >/dev/tty); then
             return
         fi
@@ -311,7 +330,13 @@ reduce_image_and_share() {
         OUTPUT_TEMPLATE=$(echo "$FORM_DATA" | sed -n '3p')
     fi
 
-    # Process output filename and format
+    if [ "$SAVE_CONFIG" = "1" ]; then
+        save_config "IMAGE" "IMAGE_OUTPUT_FORMAT=\"$OUTPUT_FORMAT\"
+IMAGE_MAX_RESOLUTION=\"$MAX_RESOLUTION\"
+IMAGE_GENERAL_QUALITY=\"$GENERAL_QUALITY\"
+IMAGE_OUTPUT_TEMPLATE=\"$OUTPUT_TEMPLATE\""
+    fi
+
     OUTPUT_NAME="$OUTPUT_TEMPLATE"
     OUTPUT_NAME="${OUTPUT_NAME//%name/$NAME}"
     
@@ -365,14 +390,12 @@ reduce_image_and_share() {
     fi
 }
 
-# Function to copy file to current folder
 copy_to_current() {
     if [ "$(dirname "$INPUT_FILE")" = "$CURRENT_DIR" ]; then
         dialog --msgbox "File is already in the current directory!" 8 50
         return
     fi
 
-    # Get copy options
     if ! FORM_DATA=$(dialog --clear --backtitle "Copy to Current Folder" \
         --title "Copy Options" \
         --form "Configure copy settings:" 12 60 2 \
@@ -387,14 +410,12 @@ copy_to_current() {
     
     TARGET_FILE="$CURRENT_DIR/$NEW_FILENAME"
 
-    # Check if target file already exists
     if [ -f "$TARGET_FILE" ]; then
         if ! dialog --yesno "File '$NEW_FILENAME' already exists in current directory.\nOverwrite?" 8 60; then
             return
         fi
     fi
 
-    # Perform the action
     {
         echo "XXX"
         echo "50"
@@ -428,29 +449,27 @@ copy_to_current() {
     fi
 }
 
-while true; do
-    CHOICE=$(dialog --clear --backtitle "Termux File Editor" \
-        --title "Main Menu" \
-        --menu "What would you like to do with '$BASENAME'?" 15 60 3 \
-        1 "Compress to archive and share" \
-        2 "Reduce size/resolution (FFmpeg) and share" \
-        3 "Copy to current folder" \
-        2>&1 >/dev/tty)
+load_config
+CHOICE=$(dialog --clear --backtitle "uwu" \
+    --title "Main Menu" \
+    --menu "What would you like to do with '$BASENAME'?" 15 60 3 \
+    1 "Compress to archive and share" \
+    2 "Reduce size/resolution (FFmpeg) and share" \
+    3 "Copy to current folder" \
+    2>&1 >/dev/tty)
 
-    # Handle user choice
-    case $CHOICE in
-        1)
-            compress_and_share
-            ;;
-        2)
-            reduce_and_share
-            ;;
-        3)
-            copy_to_current
-            ;;
-        *)
-            clear
-            exit 0
-            ;;
-    esac
-done
+case $CHOICE in
+    1)
+        compress_and_share
+        ;;
+    2)
+        reduce_and_share
+        ;;
+    3)
+        copy_to_current
+        ;;
+    *)
+        clear
+        exit 0
+        ;;
+esac
