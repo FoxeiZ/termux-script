@@ -157,7 +157,7 @@ reduce_video_and_share() {
     DEFAULT_MAX_RESOLUTION="${VIDEO_MAX_RESOLUTION:-1280x720}"
     DEFAULT_TARGET_SIZE="${VIDEO_TARGET_SIZE:-0}"
     DEFAULT_MAX_FPS="${VIDEO_MAX_FPS:-0}"
-    DEFAULT_AUDIO_QUALITY="${VIDEO_AUDIO_QUALITY:-3}"
+    DEFAULT_AUDIO_BITRATE="${VIDEO_AUDIO_BITRATE:-128}"
     DEFAULT_VIDEO_CODEC="${VIDEO_VIDEO_CODEC:-h264}"
     DEFAULT_CRF_QUALITY="${VIDEO_CRF_QUALITY:-23}"
     DEFAULT_OUTPUT_TEMPLATE="${VIDEO_OUTPUT_TEMPLATE:-%name_reduced.%ext}"
@@ -170,7 +170,7 @@ reduce_video_and_share() {
     "Max resolution (e.g., 1280x720):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 \
     "Target file size (MB, 0=auto):" 2 1 "$DEFAULT_TARGET_SIZE" 2 35 10 0 \
     "Max FPS (0=keep original):" 3 1 "$DEFAULT_MAX_FPS" 3 35 10 0 \
-    "Audio quality (0=no audio, 1-5):" 4 1 "$DEFAULT_AUDIO_QUALITY" 4 35 10 0 \
+    "Audio bitrate (0=no audio):" 4 1 "$DEFAULT_AUDIO_BITRATE" 4 35 10 0 \
     "Video codec:" 5 1 "$DEFAULT_VIDEO_CODEC" 5 35 15 0 \
     "CRF quality (18-32, lower=better):" 6 1 "$DEFAULT_CRF_QUALITY" 6 35 10 0 \
     "Output filename:" 7 1 "$DEFAULT_OUTPUT_TEMPLATE" 7 35 30 0 \
