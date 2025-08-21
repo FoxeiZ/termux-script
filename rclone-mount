@@ -57,14 +57,17 @@ rclone --config "$CONFIG_FILE" mount "$SOURCE" "$TARGET" \
 --vfs-cache-mode full \
 --vfs-cache-max-size 2G \
 --vfs-cache-max-age 30m \
+--vfs-read-chunk-size 128M \
+--vfs-read-chunk-size-limit 1G \
 --vfs-fast-fingerprint \
 --vfs-links \
 --vfs-write-wait 3s \
 --vfs-refresh \
---dir-cache-time 10h \
+--dir-cache-time 96h \
+--buffer-size 0 \
 --tpslimit 10 \
 --drive-pacer-min-sleep 10ms \
---drive-pacer-burst 20 \
+--drive-pacer-burst 200 \
 --poll-interval 5m \
 --checkers 4 \
 --async-read \
