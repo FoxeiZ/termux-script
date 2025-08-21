@@ -183,7 +183,7 @@ reduce_video_and_share() {
     MAX_RESOLUTION=$(echo "$FORM_DATA" | sed -n '1p')
     TARGET_SIZE=$(echo "$FORM_DATA" | sed -n '2p')
     MAX_FPS=$(echo "$FORM_DATA" | sed -n '3p')
-    AUDIO_QUALITY=$(echo "$FORM_DATA" | sed -n '4p')
+    AUDIO_BITRATE=$(echo "$FORM_DATA" | sed -n '4p')
     VIDEO_CODEC=$(echo "$FORM_DATA" | sed -n '5p')
     CRF_QUALITY=$(echo "$FORM_DATA" | sed -n '6p')
     OUTPUT_TEMPLATE=$(echo "$FORM_DATA" | sed -n '7p')
@@ -194,7 +194,7 @@ reduce_video_and_share() {
         save_config "VIDEO" "VIDEO_MAX_RESOLUTION=\"$MAX_RESOLUTION\"
 VIDEO_TARGET_SIZE=\"$TARGET_SIZE\"
 VIDEO_MAX_FPS=\"$MAX_FPS\"
-VIDEO_AUDIO_QUALITY=\"$AUDIO_QUALITY\"
+VIDEO_AUDIO_BITRATE=\"$AUDIO_BITRATE\"
 VIDEO_VIDEO_CODEC=\"$VIDEO_CODEC\"
 VIDEO_CRF_QUALITY=\"$CRF_QUALITY\"
 VIDEO_OUTPUT_TEMPLATE=\"$OUTPUT_TEMPLATE\"
@@ -223,10 +223,10 @@ VIDEO_CUSTOM_FFMPEG_ARGS=\"$CUSTOM_FFMPEG_ARGS\""
         FFMPEG_CMD="$FFMPEG_CMD -r $MAX_FPS"
     fi
 
-    if [ "$AUDIO_QUALITY" = "0" ]; then
+    if [ "$AUDIO_BITRATE" = "0" ]; then
         FFMPEG_CMD="$FFMPEG_CMD -an"
     else
-        FFMPEG_CMD="$FFMPEG_CMD -c:a aac -b:a $((AUDIO_QUALITY * 64))k"
+        FFMPEG_CMD="$FFMPEG_CMD -c:a aac -b:a ${AUDIO_BITRATE}k"
     fi
 
     if [ "$TARGET_SIZE" != "0" ] && [ -n "$TARGET_SIZE" ] && [ -n "$DURATION" ]; then
