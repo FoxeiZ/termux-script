@@ -56,11 +56,11 @@ compress_and_share() {
 
     if ! FORM_DATA=$(dialog --clear --backtitle "Compress and Share" \
         --title "Compression Options" \
-        --form "Configure compression settings:" 17 70 4 \
-        "Filename template:" 1 1 "$DEFAULT_FILENAME_TEMPLATE" 1 20 40 0 0 \
-        "Compression method:" 2 1 "$DEFAULT_COMPRESSION_METHOD" 2 20 10 0 0 \
-        "Compression level (0-9):" 3 1 "$DEFAULT_COMPRESSION_LEVEL" 3 25 5 0 0 \
-        "Password (optional):" 4 1 "$DEFAULT_PASSWORD" 4 20 30 0 0 \
+    --form "Configure compression settings:" 17 70 4 \
+    "Filename template:" 1 1 "$DEFAULT_FILENAME_TEMPLATE" 1 20 40 0 \
+    "Compression method:" 2 1 "$DEFAULT_COMPRESSION_METHOD" 2 20 10 0 \
+    "Compression level (0-9):" 3 1 "$DEFAULT_COMPRESSION_LEVEL" 3 25 5 0 \
+    "Password (optional):" 4 1 "$DEFAULT_PASSWORD" 4 20 30 0 \
         2>&1 >/dev/tty); then
         return
     fi
@@ -166,16 +166,16 @@ reduce_video_and_share() {
 
     if ! FORM_DATA=$(dialog --clear --backtitle "Reduce Video and Share" \
         --title "FFmpeg Video Reduction Options" \
-        --form "Configure video reduction settings:\nOriginal size: $ORIGINAL_SIZE\nOriginal resolution: $ORIGINAL_RESOLUTION" 22 80 9 \
-        "Max resolution (e.g., 1280x720):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 0 \
-        "Target file size (MB, 0=auto):" 2 1 "$DEFAULT_TARGET_SIZE" 2 35 10 0 0 \
-        "Max FPS (0=keep original):" 3 1 "$DEFAULT_MAX_FPS" 3 35 10 0 0 \
-        "Audio quality (0=no audio, 1-5):" 4 1 "$DEFAULT_AUDIO_QUALITY" 4 35 10 0 0 \
-        "Video codec:" 5 1 "$DEFAULT_VIDEO_CODEC" 5 35 15 0 0 \
-        "CRF quality (18-32, lower=better):" 6 1 "$DEFAULT_CRF_QUALITY" 6 35 10 0 0 \
-        "Output filename:" 7 1 "$DEFAULT_OUTPUT_TEMPLATE" 7 35 30 0 0 \
-        "Start time (HH:MM:SS, optional):" 8 1 "$DEFAULT_START_TIME" 8 35 15 0 0 \
-        "Custom FFmpeg args:" 9 1 "$DEFAULT_CUSTOM_FFMPEG_ARGS" 9 20 40 0 0 \
+    --form "Configure video reduction settings:\nOriginal size: $ORIGINAL_SIZE\nOriginal resolution: $ORIGINAL_RESOLUTION" 22 80 9 \
+    "Max resolution (e.g., 1280x720):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 \
+    "Target file size (MB, 0=auto):" 2 1 "$DEFAULT_TARGET_SIZE" 2 35 10 0 \
+    "Max FPS (0=keep original):" 3 1 "$DEFAULT_MAX_FPS" 3 35 10 0 \
+    "Audio quality (0=no audio, 1-5):" 4 1 "$DEFAULT_AUDIO_QUALITY" 4 35 10 0 \
+    "Video codec:" 5 1 "$DEFAULT_VIDEO_CODEC" 5 35 15 0 \
+    "CRF quality (18-32, lower=better):" 6 1 "$DEFAULT_CRF_QUALITY" 6 35 10 0 \
+    "Output filename:" 7 1 "$DEFAULT_OUTPUT_TEMPLATE" 7 35 30 0 \
+    "Start time (HH:MM:SS, optional):" 8 1 "$DEFAULT_START_TIME" 8 35 15 0 \
+    "Custom FFmpeg args:" 9 1 "$DEFAULT_CUSTOM_FFMPEG_ARGS" 9 20 40 0 \
         2>&1 >/dev/tty); then
         return
     fi
@@ -293,9 +293,9 @@ reduce_image_and_share() {
         if ! FORM_DATA=$(dialog --clear --backtitle "Reduce Image and Share" \
             --title "FFmpeg Image Reduction Options" \
             --form "Configure image reduction settings:\nOriginal size: $ORIGINAL_SIZE\nResolution: $IMAGE_INFO" 16 80 3 \
-            "Max resolution (e.g., 1920x1080):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 0 \
-            "JPEG quality (2-31, lower=better):" 2 1 "$DEFAULT_GENERAL_QUALITY" 2 35 10 0 0 \
-            "Output filename:" 3 1 "$DEFAULT_OUTPUT_TEMPLATE" 3 35 30 0 0 \
+            "Max resolution (e.g., 1920x1080):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 \
+            "JPEG quality (2-31, lower=better):" 2 1 "$DEFAULT_GENERAL_QUALITY" 2 35 10 0 \
+            "Output filename:" 3 1 "$DEFAULT_OUTPUT_TEMPLATE" 3 35 30 0 \
             2>&1 >/dev/tty); then
             return
         fi
@@ -306,9 +306,9 @@ reduce_image_and_share() {
         if ! FORM_DATA=$(dialog --clear --backtitle "Reduce Image and Share" \
             --title "FFmpeg Image Reduction Options" \
             --form "Configure image reduction settings:\nOriginal size: $ORIGINAL_SIZE\nResolution: $IMAGE_INFO" 16 80 3 \
-            "Max resolution (e.g., 1920x1080):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 0 \
-            "PNG compression (0-9, higher=smaller):" 2 1 "$DEFAULT_GENERAL_QUALITY" 2 35 10 0 0 \
-            "Output filename:" 3 1 "$DEFAULT_OUTPUT_TEMPLATE" 3 35 30 0 0 \
+            "Max resolution (e.g., 1920x1080):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 \
+            "PNG compression (0-9, higher=smaller):" 2 1 "$DEFAULT_GENERAL_QUALITY" 2 35 10 0 \
+            "Output filename:" 3 1 "$DEFAULT_OUTPUT_TEMPLATE" 3 35 30 0 \
             2>&1 >/dev/tty); then
             return
         fi
@@ -319,9 +319,9 @@ reduce_image_and_share() {
         if ! FORM_DATA=$(dialog --clear --backtitle "Reduce Image and Share" \
             --title "FFmpeg Image Reduction Options" \
             --form "Configure image reduction settings:\nOriginal size: $ORIGINAL_SIZE\nResolution: $IMAGE_INFO" 16 80 3 \
-            "Max resolution (e.g., 1920x1080):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 0 \
-            "WebP quality (1-100, higher=better):" 2 1 "$DEFAULT_GENERAL_QUALITY" 2 35 10 0 0 \
-            "Output filename:" 3 1 "$DEFAULT_OUTPUT_TEMPLATE" 3 35 30 0 0 \
+            "Max resolution (e.g., 1920x1080):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 \
+            "WebP quality (1-100, higher=better):" 2 1 "$DEFAULT_GENERAL_QUALITY" 2 35 10 0 \
+            "Output filename:" 3 1 "$DEFAULT_OUTPUT_TEMPLATE" 3 35 30 0 \
             2>&1 >/dev/tty); then
             return
         fi
