@@ -1,4 +1,329 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
-echo "$@"
-read
+# Check if file argument is provided
+if [ $# -eq 0 ]; then
+    dialog --msgbox "Usage: termux-file-editor <file>" 8 40
+    exit 1
+fi
+
+INPUT_FILE="$1"
+BASENAME=$(basename "$INPUT_FILE")
+NAME="${BASENAME%.*}"
+EXT="${BASENAME##*.}"
+CURRENT_DIR=$(pwd)
+
+# Check if file exists
+if [ ! -f "$INPUT_FILE" ]; then
+    dialog --msgbox "Error: File '$INPUT_FILE' not found!" 8 50
+    exit 1
+fi
+
+# Function to compress file and share
+compress_and_share() {
+    # Get compression options
+    if ! FORM_DATA=$(dialog --clear --backtitle "Compress and Share" \
+        --title "Compression Options" \
+        --form "Configure compression settings:" 15 70 4 \
+        "Filename template:" 1 1 "%name_%date.%ext" 1 20 40 0 \
+        "Compression method:" 2 1 "7z" 2 20 10 0 \
+        "Compression level (0-9):" 3 1 "5" 3 25 5 0 \
+        "Password (optional):" 4 1 "" 4 20 30 0 \
+        2>&1 >/dev/tty); then
+        return
+    fi
+
+    # Parse form data
+    FILENAME_TEMPLATE=$(echo "$FORM_DATA" | sed -n '1p')
+    COMPRESSION_METHOD=$(echo "$FORM_DATA" | sed -n '2p')
+    COMPRESSION_LEVEL=$(echo "$FORM_DATA" | sed -n '3p')
+    PASSWORD=$(echo "$FORM_DATA" | sed -n '4p')
+
+    # Process filename template
+    CURRENT_DATE=$(date +"%Y%m%d_%H%M%S")
+    OUTPUT_NAME="$FILENAME_TEMPLATE"
+    OUTPUT_NAME="${OUTPUT_NAME//%name/$NAME}"
+    OUTPUT_NAME="${OUTPUT_NAME//%date/$CURRENT_DATE}"
+    OUTPUT_NAME="${OUTPUT_NAME//%original_ext/$EXT}"
+    
+    if [ "$COMPRESSION_METHOD" = "7z" ]; then
+        OUTPUT_NAME="${OUTPUT_NAME//%ext/7z}"
+        OUTPUT_FILE="$CURRENT_DIR/$OUTPUT_NAME"
+    else
+        OUTPUT_NAME="${OUTPUT_NAME//%ext/zip}"
+        OUTPUT_FILE="$CURRENT_DIR/$OUTPUT_NAME"
+    fi
+
+    # Show progress dialog
+    {
+        echo "XXX"
+        echo "0"
+        echo "Starting compression..."
+        echo "XXX"
+        
+        if [ -n "$PASSWORD" ]; then
+            if [ "$COMPRESSION_METHOD" = "7z" ]; then
+                7z a -mx="$COMPRESSION_LEVEL" -p"$PASSWORD" "$OUTPUT_FILE" "$INPUT_FILE" >/dev/null 2>&1
+            else
+                7z a -tzip -mx="$COMPRESSION_LEVEL" -p"$PASSWORD" "$OUTPUT_FILE" "$INPUT_FILE" >/dev/null 2>&1
+            fi
+        else
+            if [ "$COMPRESSION_METHOD" = "7z" ]; then
+                7z a -mx="$COMPRESSION_LEVEL" "$OUTPUT_FILE" "$INPUT_FILE" >/dev/null 2>&1
+            else
+                7z a -tzip -mx="$COMPRESSION_LEVEL" "$OUTPUT_FILE" "$INPUT_FILE" >/dev/null 2>&1
+            fi
+        fi
+        
+        echo "XXX"
+        echo "50"
+        echo "Compression completed. Preparing to share..."
+        echo "XXX"
+        
+        sleep 1
+        
+        echo "XXX"
+        echo "100"
+        echo "Done!"
+        echo "XXX"
+    } | dialog --backtitle "Compress and Share" --title "Progress" --gauge "Please wait..." 10 70 0
+
+    # Check if compression was successful
+    if [ -f "$OUTPUT_FILE" ]; then
+        # Share the file
+        termux-share -a send "$OUTPUT_FILE"
+        dialog --msgbox "File compressed and shared successfully!\nOutput: $OUTPUT_NAME" 8 60
+    else
+        dialog --msgbox "Error: Compression failed!" 8 40
+    fi
+}
+
+# Function to reduce file size/resolution and share
+reduce_and_share() {
+    # Check if input is a video file
+    if ! ffprobe "$INPUT_FILE" >/dev/null 2>&1; then
+        dialog --msgbox "Error: File is not a valid video/audio file for FFmpeg processing!" 8 60
+        return
+    fi
+
+    # Get video information
+    DURATION=$(ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$INPUT_FILE" 2>/dev/null)
+    ORIGINAL_SIZE=$(du -h "$INPUT_FILE" | cut -f1)
+
+    # Get reduction options
+    if ! FORM_DATA=$(dialog --clear --backtitle "Reduce and Share" \
+        --title "FFmpeg Reduction Options" \
+        --form "Configure video reduction settings:\nOriginal size: $ORIGINAL_SIZE" 20 80 8 \
+        "Max resolution (e.g., 1280x720):" 1 1 "854x480" 1 35 20 0 \
+        "Target file size (MB, 0=auto):" 2 1 "50" 2 35 10 0 \
+        "Max FPS (0=keep original):" 3 1 "30" 3 35 10 0 \
+        "Audio quality (0=no audio, 1-5):" 4 1 "3" 4 35 10 0 \
+        "Video codec (h264/h265/vp9):" 5 1 "h264" 5 35 15 0 \
+        "CRF quality (18-28, lower=better):" 6 1 "23" 6 35 10 0 \
+        "Output filename:" 7 1 "%name_reduced.%ext" 7 35 30 0 \
+        "Start time (HH:MM:SS, optional):" 8 1 "" 8 35 15 0 \
+        2>&1 >/dev/tty); then
+        return
+    fi
+
+    # Parse form data
+    MAX_RESOLUTION=$(echo "$FORM_DATA" | sed -n '1p')
+    TARGET_SIZE=$(echo "$FORM_DATA" | sed -n '2p')
+    MAX_FPS=$(echo "$FORM_DATA" | sed -n '3p')
+    AUDIO_QUALITY=$(echo "$FORM_DATA" | sed -n '4p')
+    VIDEO_CODEC=$(echo "$FORM_DATA" | sed -n '5p')
+    CRF_QUALITY=$(echo "$FORM_DATA" | sed -n '6p')
+    OUTPUT_TEMPLATE=$(echo "$FORM_DATA" | sed -n '7p')
+    START_TIME=$(echo "$FORM_DATA" | sed -n '8p')
+
+    # Process output filename
+    OUTPUT_NAME="$OUTPUT_TEMPLATE"
+    OUTPUT_NAME="${OUTPUT_NAME//%name/$NAME}"
+    OUTPUT_NAME="${OUTPUT_NAME//%ext/$EXT}"
+    OUTPUT_FILE="$CURRENT_DIR/$OUTPUT_NAME"
+
+    # Build FFmpeg command
+    FFMPEG_CMD="ffmpeg -y"
+    
+    # Add start time if specified
+    if [ -n "$START_TIME" ]; then
+        FFMPEG_CMD="$FFMPEG_CMD -ss $START_TIME"
+    fi
+    
+    FFMPEG_CMD="$FFMPEG_CMD -i \"$INPUT_FILE\""
+
+    # Video codec
+    case $VIDEO_CODEC in
+        "h264")
+            FFMPEG_CMD="$FFMPEG_CMD -c:v libx264"
+            ;;
+        "h265")
+            FFMPEG_CMD="$FFMPEG_CMD -c:v libx265"
+            ;;
+        "vp9")
+            FFMPEG_CMD="$FFMPEG_CMD -c:v libvpx-vp9"
+            ;;
+    esac
+
+    # Resolution scaling
+    if [ "$MAX_RESOLUTION" != "0" ] && [ -n "$MAX_RESOLUTION" ]; then
+        FFMPEG_CMD="$FFMPEG_CMD -vf scale=$MAX_RESOLUTION:force_original_aspect_ratio=decrease"
+    fi
+
+    # Frame rate
+    if [ "$MAX_FPS" != "0" ] && [ -n "$MAX_FPS" ]; then
+        FFMPEG_CMD="$FFMPEG_CMD -r $MAX_FPS"
+    fi
+
+    # Audio handling
+    if [ "$AUDIO_QUALITY" = "0" ]; then
+        FFMPEG_CMD="$FFMPEG_CMD -an"
+    else
+        case $AUDIO_QUALITY in
+            "1") FFMPEG_CMD="$FFMPEG_CMD -c:a aac -b:a 64k" ;;
+            "2") FFMPEG_CMD="$FFMPEG_CMD -c:a aac -b:a 96k" ;;
+            "3") FFMPEG_CMD="$FFMPEG_CMD -c:a aac -b:a 128k" ;;
+            "4") FFMPEG_CMD="$FFMPEG_CMD -c:a aac -b:a 192k" ;;
+            "5") FFMPEG_CMD="$FFMPEG_CMD -c:a aac -b:a 256k" ;;
+        esac
+    fi
+
+    # Quality/Bitrate control
+    if [ "$TARGET_SIZE" != "0" ] && [ -n "$TARGET_SIZE" ] && [ -n "$DURATION" ]; then
+        # Calculate target bitrate based on file size
+        TARGET_BITRATE=$(echo "scale=0; ($TARGET_SIZE * 8192) / $DURATION" | bc 2>/dev/null)
+        if [ -n "$TARGET_BITRATE" ] && [ "$TARGET_BITRATE" -gt 0 ]; then
+            FFMPEG_CMD="$FFMPEG_CMD -b:v ${TARGET_BITRATE}k -maxrate ${TARGET_BITRATE}k -bufsize $((TARGET_BITRATE * 2))k"
+        else
+            FFMPEG_CMD="$FFMPEG_CMD -crf $CRF_QUALITY"
+        fi
+    else
+        FFMPEG_CMD="$FFMPEG_CMD -crf $CRF_QUALITY"
+    fi
+
+    FFMPEG_CMD="$FFMPEG_CMD \"$OUTPUT_FILE\""
+
+    # Show conversion progress
+    {
+        echo "XXX"
+        echo "0"
+        echo "Starting video conversion..."
+        echo "XXX"
+        
+        # Run FFmpeg in background and monitor progress
+        eval "$FFMPEG_CMD" 2>&1 | while read -r line; do
+            if echo "$line" | grep -q "time="; then
+                # Extract time progress (this is a simplified progress indicator)
+                echo "XXX"
+                echo "50"
+                echo "Converting... $line"
+                echo "XXX"
+            fi
+        done
+        
+        echo "XXX"
+        echo "100"
+        echo "Conversion completed!"
+        echo "XXX"
+    } | dialog --backtitle "Reduce and Share" --title "Progress" --gauge "Please wait..." 10 80 0
+
+    # Check if conversion was successful
+    if [ -f "$OUTPUT_FILE" ]; then
+        NEW_SIZE=$(du -h "$OUTPUT_FILE" | cut -f1)
+        # Share the file
+        termux-share -a send "$OUTPUT_FILE"
+        dialog --msgbox "Video reduced and shared successfully!\nOriginal: $ORIGINAL_SIZE -> New: $NEW_SIZE\nOutput: $OUTPUT_NAME" 10 60
+    else
+        dialog --msgbox "Error: Video conversion failed!\nCommand: $FFMPEG_CMD" 12 80
+    fi
+}
+
+# Function to copy file to current folder
+copy_to_current() {
+    if [ "$(dirname "$INPUT_FILE")" = "$CURRENT_DIR" ]; then
+        dialog --msgbox "File is already in the current directory!" 8 50
+        return
+    fi
+
+    # Get copy options
+    if ! FORM_DATA=$(dialog --clear --backtitle "Copy to Current Folder" \
+        --title "Copy Options" \
+        --form "Configure copy settings:" 12 60 2 \
+        "New filename:" 1 1 "$BASENAME" 1 15 40 0 \
+        "Action (copy/move):" 2 1 "copy" 2 20 10 0 \
+        2>&1 >/dev/tty); then
+        return
+    fi
+
+    NEW_FILENAME=$(echo "$FORM_DATA" | sed -n '1p')
+    ACTION=$(echo "$FORM_DATA" | sed -n '2p')
+    
+    TARGET_FILE="$CURRENT_DIR/$NEW_FILENAME"
+
+    # Check if target file already exists
+    if [ -f "$TARGET_FILE" ]; then
+        if ! dialog --yesno "File '$NEW_FILENAME' already exists in current directory.\nOverwrite?" 8 60; then
+            return
+        fi
+    fi
+
+    # Perform the action
+    {
+        echo "XXX"
+        echo "50"
+        if [ "$ACTION" = "move" ]; then
+            echo "Moving file..."
+        else
+            echo "Copying file..."
+        fi
+        echo "XXX"
+        
+        if [ "$ACTION" = "move" ]; then
+            mv "$INPUT_FILE" "$TARGET_FILE"
+        else
+            cp "$INPUT_FILE" "$TARGET_FILE"
+        fi
+        
+        echo "XXX"
+        echo "100"
+        echo "Done!"
+        echo "XXX"
+    } | dialog --backtitle "Copy to Current Folder" --title "Progress" --gauge "Please wait..." 8 50 0
+
+    if [ -f "$TARGET_FILE" ]; then
+        if [ "$ACTION" = "move" ]; then
+            dialog --msgbox "File moved successfully to:\n$TARGET_FILE" 8 60
+        else
+            dialog --msgbox "File copied successfully to:\n$TARGET_FILE" 8 60
+        fi
+    else
+        dialog --msgbox "Error: Failed to $ACTION file!" 8 40
+    fi
+}
+
+# Main menu
+while true; do
+    CHOICE=$(dialog --clear --backtitle "Termux File Editor" \
+        --title "Main Menu" \
+        --menu "What would you like to do with '$BASENAME'?" 15 60 3 \
+        1 "Compress to archive and share" \
+        2 "Reduce size/resolution (FFmpeg) and share" \
+        3 "Copy to current folder" \
+        2>&1 >/dev/tty)
+
+    # Handle user choice
+    case $CHOICE in
+        1)
+            compress_and_share
+            ;;
+        2)
+            reduce_and_share
+            ;;
+        3)
+            copy_to_current
+            ;;
+        *)
+            clear
+            exit 0
+            ;;
+    esac
+done
