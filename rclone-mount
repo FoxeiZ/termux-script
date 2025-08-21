@@ -1,0 +1,71 @@
+#!/data/data/com.termux/files/usr/bin/bash -e
+
+
+MOUNT_FOLDER=""
+CONFIG_FILE="/data/data/com.termux/files/home/.config/rclone/rclone.conf"
+REAL_USER="u0_a325"
+
+while getopts ":m:c:u:" opt; do
+    case $opt in
+        m) MOUNT_FOLDER="$OPTARG" ;;
+        c) CONFIG_FILE="$OPTARG" ;;
+        u) REAL_USER="$OPTARG" ;;
+        \?) echo "Usage: $0 -m <mount_folder> [-c <config>] [-u <real_user>]" >&2; exit 1 ;;
+    esac
+
+done
+
+RCLONE_OPTS=()
+while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "--" ]]; then
+        shift
+        while [[ $# -gt 0 ]]; do
+            RCLONE_OPTS+=("$1")
+            shift
+        done
+        break
+    fi
+    shift
+done
+if [ -z "$MOUNT_FOLDER" ]; then
+    echo "Error: mount folder (-m) is required."
+    echo "Usage: $0 -m <mount_folder> [-c <config>] [-u <real_user>] [-- <rclone mount options>]"
+    exit 1
+fi
+
+Unmount() {
+    fusermount -u "$MOUNT_FOLDER"
+}
+
+ResetPermConfig() {
+    chown "$REAL_USER":"$REAL_USER" "$CONFIG_FILE"
+}
+
+# make sure it's not already mounted
+Unmount
+
+# make sure it's unmounted after rclone is killed
+trap 'sleep 1; ResetPermConfig; Unmount' EXIT
+
+rclone --config "$CONFIG_FILE" mount GDCrypt-remiliascarlet: "$MOUNT_FOLDER" \
+--allow-other \
+--gid 9997 \
+--dir-perms 0771 \
+--file-perms 0660 \
+--umask=0 \
+--no-modtime \
+--vfs-cache-mode full \
+--vfs-cache-max-size 2G \
+--vfs-cache-max-age 30m \
+--vfs-fast-fingerprint \
+--vfs-links \
+--vfs-write-wait 3s \
+--vfs-refresh \
+--dir-cache-time 10h \
+--tpslimit 10 \
+--drive-pacer-min-sleep 10ms \
+--drive-pacer-burst 20 \
+--poll-interval 5m \
+--checkers 4 \
+--async-read \
+"${RCLONE_OPTS[@]}"
