@@ -715,8 +715,11 @@ ytdl_opts = {
     "extractor_args": {
         "youtube": {
             "lang": ["en"],
-            "player_client": ["web"],
-        }
+            "player_client": ["mweb"],
+        },
+        "youtubepot-bgutilhttp": {
+            "base_url": "https://bgutil-ytdlp-pot-vercal.vercel.app"
+        },
     },
     "retries": 10,
     "updatetime": False,
@@ -733,9 +736,9 @@ if (
     ytdl_opts["outtmpl"]["default"] = (
         "/sdcard/Music/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s"
     )
-    ytdl_opts["extractor_args"]["youtube"]["getpot_bgutil_script"] = (
-        "$HOME/projects/bgutil-ytdlp-pot-provider/server/build/generate_once.js",
-    )
+    # ytdl_opts["extractor_args"]["youtube"]["getpot_bgutil_script"] = (
+    #     "$HOME/projects/bgutil-ytdlp-pot-provider/server/build/generate_once.js",
+    # )
     ytdl_opts["postprocessors"].extend(
         [
             {
