@@ -718,7 +718,7 @@ ytdl_opts = {
             "player_client": ["mweb"],
         },
         "youtubepot-bgutilhttp": {
-            "base_url": "https://bgutil-ytdlp-pot-vercal.vercel.app"
+            "base_url": ["https://bgutil-ytdlp-pot-vercal.vercel.app"]
         },
     },
     "retries": 10,
@@ -732,7 +732,7 @@ if (
     or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr"
 ):
     ytdl_opts["cachedir"] = "$HOME/.config/yt-dlp/"
-    ytdl_opts["cookiefile"] = "/storage/emulated/0/mpv/youtube.com_cookies.txt"
+    # ytdl_opts["cookiefile"] = "/storage/emulated/0/mpv/youtube.com_cookies.txt"
     ytdl_opts["outtmpl"]["default"] = (
         "/sdcard/Music/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s"
     )
