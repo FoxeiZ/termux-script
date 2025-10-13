@@ -1,12 +1,12 @@
-from pathlib import Path
-from queue import Empty
+import logging
 import os
 import re
-import sys
 import signal
 import subprocess
+import sys
 import time
-import logging
+from pathlib import Path
+from queue import Empty
 
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -87,6 +87,8 @@ class Tailscaled(subprocess.Popen):
                 ):
                     logging.debug("Connection established")
                     return True
+                else:
+                    logging.debug(line)
             except Empty:
                 if self.poll() is not None:
                     raise Exception("Tailscaled stopped unexpectedly")
