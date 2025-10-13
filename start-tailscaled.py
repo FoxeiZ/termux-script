@@ -80,6 +80,10 @@ class Tailscaled(subprocess.Popen):
         while time.time() - start_time < timeout:
             try:
                 line = stdout.readline()
+                if not line.strip():
+                    time.sleep(0.1)
+                    continue
+
                 if pattern.search(
                     line.decode("utf-8", errors="surrogateescape")
                     if isinstance(line, bytes)
