@@ -88,7 +88,8 @@ class Tailscaled(subprocess.Popen):
                     logging.debug("Connection established")
                     return True
                 else:
-                    logging.debug(line)
+                    time.sleep(0.1)
+                    logging.debug(line.strip())
             except Empty:
                 if self.poll() is not None:
                     raise Exception("Tailscaled stopped unexpectedly")
