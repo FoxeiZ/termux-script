@@ -160,8 +160,14 @@ class Tailscaled(subprocess.Popen):
         logging.debug("Stopping Tailscaled process with timeout: %d seconds", timeout)
 
         for cb in [self._graceful_stop, self._pkill_stop, self._kill_stop]:
-            if cb():
-                break
+            try:
+                if cb():
+                    break
+            except PermissionError:
+                pass
+            except Exception as e:
+                logging.debug("Stop method %s raised exception: %s", cb.__name__, e)
+                continue
             logging.debug("Stop method %s failed, trying next", cb.__name__)
 
         self.stopped = True
