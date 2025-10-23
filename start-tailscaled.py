@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import os
 import re
@@ -132,7 +133,6 @@ class Tailscaled(subprocess.Popen):
         self.send_signal(signal.SIGINT)
         try:
             self.wait(timeout=timeout)
-            logging.debug("Graceful stop successful")
             return True
         except subprocess.TimeoutExpired:
             logging.debug("Graceful stop timed out")
@@ -162,12 +162,28 @@ class Tailscaled(subprocess.Popen):
         for cb in [self._graceful_stop, self._pkill_stop, self._kill_stop]:
             try:
                 if cb():
-                    break
+                    # run poll check first
+                    # if still running, wait for timeout
+                    # then check again
+                    if self.poll() is None:
+                        with contextlib.suppress(subprocess.TimeoutExpired):
+                            self.wait(timeout=timeout)
+
+                    if self.poll() is not None:
+                        logging.debug("Stop method %s succeeded", cb.__name__)
+                        break
+                    else:
+                        logging.debug(
+                            "Stop method %s did not stop the process", cb.__name__
+                        )
+
             except PermissionError:
                 pass
+
             except Exception as e:
                 logging.debug("Stop method %s raised exception: %s", cb.__name__, e)
                 continue
+
             logging.debug("Stop method %s failed, trying next", cb.__name__)
 
         self.stopped = True
