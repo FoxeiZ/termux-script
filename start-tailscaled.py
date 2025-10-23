@@ -139,6 +139,7 @@ class Tailscaled(subprocess.Popen):
             return False
 
     def __call_check(self, *args):
+        logging.debug("Calling command: %s", " ".join(args))
         process = subprocess.run(args)
         if process.returncode == 0:
             return True
@@ -147,7 +148,12 @@ class Tailscaled(subprocess.Popen):
 
     def _pkill_stop(self):
         logging.debug("Attempting pkill stop")
-        return self.__call_check("sudo", "pkill", "tailscaled")
+        return self.__call_check(
+            "sudo",
+            "pkill",
+            "-f",
+            "tailscaled.*userspace-networking.*",
+        )
 
     def _kill_stop(self):
         logging.debug("Attempting calling kill")
