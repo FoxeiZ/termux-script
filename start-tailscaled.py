@@ -15,23 +15,48 @@ logging.basicConfig(
 
 class Tailscaled(subprocess.Popen):
     def __init__(self, home_dir: Path | str):
+        logging.debug("Tailscaled process started")
         logging.debug("Initializing Tailscaled with home_dir: %s", home_dir)
         self.home_dir = Path(home_dir).absolute()
-        self.started = False
         self.stopped = False
-        self.is_up = False
 
         # find binary  # TODO: maybe auto download?
-        tailscaled_bin = self.home_dir / "tailscaled"
-        if not tailscaled_bin.exists():
-            logging.error("%s not found", tailscaled_bin)
-            raise FileNotFoundError(f"{tailscaled_bin} not found")
+        self.logging_file = self.home_dir / "tailscaled.log"
+        self.tailscaled_bin = self.home_dir / "tailscaled"
+        self.tailscale_bin = self.home_dir / "tailscale"
+        missing_files = []
+        if not self.tailscaled_bin.exists():
+            missing_files.append(str(self.tailscaled_bin))
+        if not self.tailscale_bin.exists():
+            missing_files.append(str(self.tailscale_bin))
+        if missing_files:
+            logging.error("Missing required files: %s", ", ".join(missing_files))
+            raise FileNotFoundError(
+                f"Missing required files: {', '.join(missing_files)}"
+            )
 
         state_dir = self.home_dir / "state"
         if not state_dir.exists():
             state_dir.mkdir()
 
-        self.logging_file = self.home_dir / "tailscaled.log"
+        args = [
+            "sudo",  # run with elevated privileges
+            self.tailscaled_bin.as_posix(),
+            "--statedir=" + str(self.home_dir / "state"),
+            # "--socket=" + str(self.home_dir / "tailscaled.sock"),
+            "--tun=userspace-networking",
+            "--socks5-server=localhost:1055",
+            "--outbound-http-proxy-listen=localhost:1055",
+        ]
+
+        super().__init__(
+            args,
+            start_new_session=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+            universal_newlines=True,
+        )
         logging.debug("Tailscaled initialized successfully")
 
     def stdout_reader(self):
@@ -58,6 +83,7 @@ class Tailscaled(subprocess.Popen):
         logging.debug("Bringing up connection")
         sp = subprocess.run(
             [
+                "sudo",  # run with elevated privileges
                 str(self.home_dir / "tailscale"),
                 "up",
                 "--authkey",
@@ -101,39 +127,42 @@ class Tailscaled(subprocess.Popen):
 
         return False
 
-    def start(self):
-        logging.debug("Starting Tailscaled process")
-        self.args = [
-            str(self.home_dir / "tailscaled"),
-            "--statedir=" + str(self.home_dir / "state"),
-            # "--socket=" + str(self.home_dir / "tailscaled.sock"),
-            "--tun=userspace-networking",
-            "--socks5-server=localhost:1055",
-            "--outbound-http-proxy-listen=localhost:1055",
-        ]
+    def _graceful_stop(self, timeout: int = 15):
+        logging.debug("Attempting graceful stop")
+        self.send_signal(signal.SIGINT)
+        try:
+            self.wait(timeout=timeout)
+            logging.debug("Graceful stop successful")
+            return True
+        except subprocess.TimeoutExpired:
+            logging.debug("Graceful stop timed out")
+            return False
 
-        super().__init__(
-            self.args,
-            start_new_session=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            bufsize=1,
-            universal_newlines=True,
-        )
-        self.started = True
-        logging.debug("Tailscaled process started")
+    def __call_check(self, *args):
+        process = subprocess.run(args)
+        if process.returncode == 0:
+            return True
+        else:
+            return False
+
+    def _pkill_stop(self):
+        logging.debug("Attempting pkill stop")
+        return self.__call_check("sudo", "pkill", "tailscaled")
+
+    def _kill_stop(self):
+        logging.debug("Attempting calling kill")
+        return self.__call_check("sudo", "kill", str(self.pid))
 
     def stop(self, timeout: int = 15):
-        if self.stopped or not self.started:
+        if self.stopped:
             return
 
         logging.debug("Stopping Tailscaled process with timeout: %d seconds", timeout)
-        if self.poll() is None:  # if running
-            self.send_signal(signal.SIGINT)
-            try:
-                self.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                self.kill()  # force kill if sigint failed
+
+        for cb in [self._graceful_stop, self._pkill_stop, self._kill_stop]:
+            if cb():
+                break
+            logging.debug("Stop method %s failed, trying next", cb.__name__)
 
         self.stopped = True
         logging.debug("Tailscaled process stopped")
@@ -187,7 +216,6 @@ class Manager:
 
     def start(self):
         logging.debug("Starting Manager")
-        self.tailscaled.start()
         if not self.tailscaled.wait_for_connection():
             raise Exception("Tailscaled failed to connect")
 
@@ -207,10 +235,6 @@ class Manager:
 
 if __name__ == "__main__":
     logging.debug("Script started")
-    if not os.getuid() == 0:  # type: ignore
-        logging.error("Please run as root")
-        sys.exit(1)
-
     manager = Manager(sys.argv[1] if len(sys.argv) > 1 else "~/.tailscale")
     try:
         manager.start()
