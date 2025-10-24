@@ -31,7 +31,7 @@ if __name__ == "__main__":
         manager.register_plugin(TestCron2Min)
 
     if is_termux:
-        manager.register_plugin(InterfaceMonitorPlugin)
+        manager.register_plugin(InterfaceMonitorPlugin, reboot=True, hotspot=True)
         manager.register_plugin(SystemServerPlugin)
         manager.register_plugin(SystemMonitorPlugin)
 

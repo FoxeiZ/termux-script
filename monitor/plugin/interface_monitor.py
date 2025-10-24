@@ -83,7 +83,15 @@ class InterfaceMonitorPlugin(IntervalPlugin):
 
     exclude_interfaces = ["dummy0", "lo", "r_rmnet_data0", "rmnet_data0", "rmnet_ipa0"]
 
-    def __init__(self, manager, interval: int = 5, webhook_url: str = "") -> None:
+    def __init__(
+        self,
+        manager,
+        interval: int = 5,
+        webhook_url: str = "",
+        reboot: bool = False,
+        hotspot: bool = False,
+        reboot_threshold: int = 1800,
+    ) -> None:
         super().__init__(
             manager,
             interval=interval,
@@ -93,8 +101,13 @@ class InterfaceMonitorPlugin(IntervalPlugin):
         self.username = "RN10P"
         self.avatar_url = "https://cdn.discordapp.com/app-assets/1049685078508314696/1249009769075703888.png"
 
+        self.reboot_enabled = reboot
+        self.reboot_threshold = reboot_threshold
+        self.hotspot_enabled = hotspot
+
         self._previous_state = {}
         self._lost_network_since: datetime.datetime | None = None
+        self._hotspot_started: bool = False
 
     @log_function_call
     def compare_states(self, old_state: dict, new_state: dict) -> bool:
@@ -211,16 +224,96 @@ class InterfaceMonitorPlugin(IntervalPlugin):
         return embeds_list
 
     @log_function_call
+    def perform_reboot(self):
+        try:
+            self.logger.warning(
+                "network has been down for more than 30 minutes, initiating system reboot"
+            )
+            subprocess.run(["sudo", "reboot"], check=True, shell=False)
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"failed to execute reboot command: {e}")
+        except Exception as e:
+            self.logger.error(f"unexpected error during reboot: {e}")
+
+    @log_function_call
+    def start_wifi_hotspot(self):
+        """Start WiFi hotspot when network connection is lost."""
+        if self._hotspot_started:
+            self.logger.info("hotspot already started, skipping")
+            return
+
+        try:
+            self.logger.info("starting WiFi hotspot due to network loss")
+
+            try:
+                subprocess.run(
+                    ["cmd", "wifi", "stop-softap"],
+                    check=False,
+                    shell=False,
+                    capture_output=True,
+                )
+            except Exception:
+                pass
+
+            subprocess.run(
+                ["cmd", "wifi", "start-softap", "qwerty123", "open"],
+                check=True,
+                shell=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self._hotspot_started = True
+            self.logger.info("wifi hotspot started successfully")
+
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"failed to start WiFi hotspot: {e}")
+            if e.stderr:
+                self.logger.error(f"hotspot error output: {e.stderr}")
+        except Exception as e:
+            self.logger.error(f"unexpected error starting hotspot: {e}")
+
+    @log_function_call
+    def stop_wifi_hotspot(self):
+        if not self._hotspot_started:
+            return
+
+        try:
+            self.logger.info("stopping WiFi hotspot as network is restored")
+
+            subprocess.run(
+                ["cmd", "wifi", "stop-softap"],
+                check=True,
+                shell=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self._hotspot_started = False
+            self.logger.info("hotspot stopped successfully")
+
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"failed to stop WiFi hotspot: {e}")
+            if e.stderr:
+                self.logger.error(f"hotspot stop error output: {e.stderr}")
+        except Exception as e:
+            self.logger.error(f"unexpected error stopping hotspot: {e}")
+
+    @log_function_call
     def start(self):
         current_state = self.parse_network_interfaces(self.get_ifconfig_output())
         changes = self.compare_states(self._previous_state, current_state)
         if changes:
             if "wlan0" not in current_state:
                 self.logger.warning(
-                    "Network interface wlan0 not found, assuming no network"
+                    "network interface wlan0 not found, assuming no network"
                 )
 
-                self._lost_network_since = datetime.datetime.now(datetime.UTC)
+                if not self._lost_network_since:
+                    self._lost_network_since = datetime.datetime.now(datetime.UTC)
+                    if self.hotspot_enabled:
+                        self.start_wifi_hotspot()
+
                 self._previous_state = current_state
                 return
 
@@ -248,6 +341,8 @@ class InterfaceMonitorPlugin(IntervalPlugin):
                     }
                 )
                 self._lost_network_since = None
+                if self.hotspot_enabled:
+                    self.stop_wifi_hotspot()
 
             embeds = self.build_embeds(current_state)
             self.send_webhook(
@@ -258,8 +353,15 @@ class InterfaceMonitorPlugin(IntervalPlugin):
                     "embeds": embeds,
                 }
             )
-            self.logger.info("Network change detected, sent update to Discord")
+            self.logger.info("network change detected, sent update to Discord")
             self._previous_state = current_state
+        else:
+            if self._lost_network_since and self.reboot_enabled:
+                time_since_lost = (
+                    datetime.datetime.now(datetime.UTC) - self._lost_network_since
+                )
+                if time_since_lost.total_seconds() > self.reboot_threshold:
+                    self.perform_reboot()
 
 
 if __name__ == "__main__":
