@@ -247,7 +247,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
 
             try:
                 subprocess.run(
-                    ["cmd", "wifi", "stop-softap"],
+                    ["sudo", "cmd", "wifi", "stop-softap"],
                     check=False,
                     shell=False,
                     capture_output=True,
@@ -256,7 +256,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
                 pass
 
             subprocess.run(
-                ["cmd", "wifi", "start-softap", "qwerty123", "open"],
+                ["sudo", "cmd", "wifi", "start-softap", "qwerty123", "open"],
                 check=True,
                 shell=False,
                 capture_output=True,
@@ -282,7 +282,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
             self.logger.info("stopping WiFi hotspot as network is restored")
 
             subprocess.run(
-                ["cmd", "wifi", "stop-softap"],
+                ["sudo", "cmd", "wifi", "stop-softap"],
                 check=True,
                 shell=False,
                 capture_output=True,
