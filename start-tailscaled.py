@@ -157,7 +157,7 @@ class Tailscaled(subprocess.Popen):
                 [
                     "sudo",  # run with elevated privileges
                     self.tailscale_bin,
-                    "--socket=",
+                    "--socket",
                     str(self.tailscale_socket),
                     "up",
                     "--authkey",
