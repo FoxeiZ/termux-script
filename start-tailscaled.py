@@ -162,6 +162,7 @@ class Tailscaled(subprocess.Popen):
                     "up",
                     "--authkey",
                     os.getenv("TAILSCALE_AUTHKEY") or "",
+                    "--advertise-exit-node",
                 ],
                 check=True,
             )
