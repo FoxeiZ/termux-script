@@ -152,20 +152,24 @@ class Tailscaled(subprocess.Popen):
 
     def bring_up_connection(self):
         logging.debug("bringing up connection")
-        sp = subprocess.run(
-            [
-                "sudo",  # run with elevated privileges
-                self.tailscale_bin,
-                "--socket=",
-                str(self.tailscale_socket),
-                "up",
-                "--authkey",
-                os.getenv("TAILSCALE_AUTHKEY") or "",
-            ],
-            check=True,
-        )
-        if sp.returncode != 0:
-            raise Exception("failed to bring up connection")
+        try:
+            subprocess.run(
+                [
+                    "sudo",  # run with elevated privileges
+                    self.tailscale_bin,
+                    "--socket=",
+                    str(self.tailscale_socket),
+                    "up",
+                    "--authkey",
+                    os.getenv("TAILSCALE_AUTHKEY") or "",
+                ],
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            logging.error("failed to bring up connection: %s", e)
+            logging.error("tailscale up stderr: %s", e.stderr)
+            logging.error("tailscale up stdout: %s", e.stdout)
+            raise RuntimeError("failed to bring up connection")
 
     def wait_for_connection(self, timeout: int = 60):
         logging.debug("waiting for connection with timeout: %d seconds", timeout)
