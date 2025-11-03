@@ -628,7 +628,7 @@ class CustomMetadataPP(PostProcessor):
 
 ytdl_opts = {
     "extract_flat": False,
-    "format": "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best/b",
+    "format": "bestaudio[ext=webm]/bestaudio[acodec=opus]/bestaudio[ext=m4a]/bestaudio/best/b",
     "fragment_retries": 10,
     "ignoreerrors": "only_download",
     "outtmpl": {
@@ -723,7 +723,7 @@ ytdl_opts = {
     "extractor_args": {
         "youtube": {
             "lang": ["en"],
-            "player_client": ["mweb"],
+            "player_client": ["web"],
         },
         "youtubepot-bgutilhttp": {
             "base_url": ["https://bgutil-ytdlp-pot-vercal.vercel.app"]
@@ -740,7 +740,8 @@ if (
     or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr"
 ):
     ytdl_opts["cachedir"] = "$HOME/.config/yt-dlp/"
-    # ytdl_opts["cookiefile"] = "/storage/emulated/0/mpv/youtube.com_cookies.txt"
+    ytdl_opts["cookiefile"] = "$HOME/.config/yt-dlp/youtube.com_cookies.txt"
+    ytdl_opts["allowed_extractors"] = ["^([yY].*?)([tT]).*e?$"]
     ytdl_opts["outtmpl"]["default"] = (
         "/sdcard/Music/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s"
     )
