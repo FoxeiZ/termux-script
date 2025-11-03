@@ -751,6 +751,16 @@ if (
     ytdl_opts["postprocessors"].extend(
         [
             {
+                "exec_cmd": ["echo {}"],
+                "key": "Exec",
+                "when": "after_video",
+            },
+            {
+                "exec_cmd": ["echo {}"],
+                "key": "Exec",
+                "when": "playlist",
+            },
+            {
                 "exec_cmd": ["termux-media-scan -r {}"],
                 "key": "Exec",
                 "when": "playlist",
