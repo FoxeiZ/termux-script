@@ -12,6 +12,12 @@ from typing import TYPE_CHECKING, Generator, Literal, TypedDict
 
 import requests
 import yt_dlp
+from yt_dlp.postprocessor.common import PostProcessor
+from yt_dlp.postprocessor.ffmpeg import FFmpegMetadataPP
+from yt_dlp.postprocessor.metadataparser import MetadataParserPP
+
+if TYPE_CHECKING:
+    from typing import Any, Dict
 
 
 def notify(
@@ -455,8 +461,9 @@ def get_lyrics(info) -> Generator[tuple[Literal["-metadata"], str]]:
 
 
 ### Ugly, but works ¯\_(ツ)_/¯ ###
-def Patched_get_metadata_opts(self: yt_dlp.postprocessor.FFmpegMetadataPP, info):
-    yield from self.Unpatched_get_metadata_opts(info)  # type: ignore[no-untyped-call]
+# apperently this is called monkey patching?
+def Patched_get_metadata_opts(self: FFmpegMetadataPP, info):
+    yield from self.__getattribute__("Unpatched_get_metadata_opts")(info)  # type: ignore[no-untyped-call]
 
     # video_id = info.get("id")
     # if not video_id:
@@ -471,12 +478,12 @@ def Patched_get_metadata_opts(self: yt_dlp.postprocessor.FFmpegMetadataPP, info)
 
 
 setattr(
-    yt_dlp.postprocessor.FFmpegMetadataPP,
+    FFmpegMetadataPP,
     "Unpatched_get_metadata_opts",
-    yt_dlp.postprocessor.FFmpegMetadataPP._get_metadata_opts,
+    FFmpegMetadataPP._get_metadata_opts,
 )
 setattr(
-    yt_dlp.postprocessor.FFmpegMetadataPP,
+    FFmpegMetadataPP,
     "_get_metadata_opts",
     Patched_get_metadata_opts,
 )
@@ -495,7 +502,7 @@ def fetch_album_info(browse_id: str | None) -> dict:
         "source_address": None,
     }
 
-    with yt_dlp.YoutubeDL(options) as _ydl:
+    with yt_dlp.YoutubeDL(options) as _ydl:  # type: ignore
         album_info = _ydl.extract_info(
             f"https://music.youtube.com/browse/{browse_id}", download=False
         )
@@ -569,9 +576,10 @@ def is_various_artist(album_browse_id: str) -> bool:
     return False
 
 
-class CustomMetadataPP(yt_dlp.postprocessor.PostProcessor):
-    def run(self, information):
-        self.to_screen("Checking metadata...")
+# my focking god, stub in pylance so annoying
+class CustomMetadataPP(PostProcessor):
+    def run(self, information: Dict[str, Any]):  # type: ignore[override]
+        self.to_screen("Checking metadata...")  # type: ignore
 
         chnl = information.get("channel") or information.get("uploader") or ""
         if chnl.endswith(" - Topic"):
@@ -595,23 +603,23 @@ class CustomMetadataPP(yt_dlp.postprocessor.PostProcessor):
             information.get("playlist_title") or information.get("playlist") or ""
         )
         if not (pl_name.startswith("Album - ") or pl_name.startswith("Single - ")):
-            self.to_screen("Not an album, getting metadata for album manually")
+            self.to_screen("Not an album, getting metadata for album manually")  # type: ignore
             try:
                 information["track_number"] = get_track_num_from_album(
                     information["id"]
                 )
             except ValueError:
-                self.to_screen("Hmm, doesn't look like an album. Skipping...")
+                self.to_screen("Hmm, doesn't look like an album. Skipping...")  # type: ignore
                 # information["track_number"] = None
                 return [], information
 
         try:
             if is_various_artist(find_album_id(information["id"])):  # type: ignore
-                self.to_screen("Album is a Various Artists compilation")
+                self.to_screen("Album is a Various Artists compilation")  # type: ignore
                 information["meta_album_artist"] = "Various Artists"
                 # information.setdefault("album_artist", "Various Artists")
         except ValueError:
-            self.to_screen("Hmm, doesn't look like an album. Skipping...")
+            self.to_screen("Hmm, doesn't look like an album. Skipping...")  # type: ignore
             # information["track_number"] = None
 
         # Custom logic to handle metadata
@@ -631,60 +639,60 @@ ytdl_opts = {
         {
             "actions": [
                 (
-                    yt_dlp.postprocessor.metadataparser.MetadataParserPP.interpretter,
+                    MetadataParserPP.interpretter,
                     "",
                     "(?P<meta_synopsis>)",
                 ),
                 (
-                    yt_dlp.postprocessor.metadataparser.MetadataParserPP.interpretter,
+                    MetadataParserPP.interpretter,
                     "",
                     "(?P<meta_date>)",
                 ),
                 (
-                    yt_dlp.postprocessor.metadataparser.MetadataParserPP.replacer,
+                    MetadataParserPP.replacer,
                     "meta_artist",
                     " - Topic$",
                     "",
                 ),
                 (
-                    yt_dlp.postprocessor.metadataparser.MetadataParserPP.interpretter,
+                    MetadataParserPP.interpretter,
                     "artist",
                     "(?P<meta_album_artist>.*)",
                 ),
                 (
-                    yt_dlp.postprocessor.metadataparser.MetadataParserPP.replacer,
+                    MetadataParserPP.replacer,
                     "meta_album_artist",
                     "[,/&].+",
                     "",
                 ),
                 (
-                    yt_dlp.postprocessor.metadataparser.MetadataParserPP.interpretter,
+                    MetadataParserPP.interpretter,
                     "%(track_number,playlist_index|01)s",
                     "%(track_number)s",
                 ),
                 (
-                    yt_dlp.postprocessor.metadataparser.MetadataParserPP.interpretter,
+                    MetadataParserPP.interpretter,
                     "%(album,playlist_title|Unknown Album)s",
                     "%(album)s",
                 ),
                 (
-                    yt_dlp.postprocessor.metadataparser.MetadataParserPP.replacer,
+                    MetadataParserPP.replacer,
                     "album",
                     "^Album - ",
                     "",
                 ),
                 (
-                    yt_dlp.postprocessor.metadataparser.MetadataParserPP.interpretter,
+                    MetadataParserPP.interpretter,
                     "%(genre|Unknown Genre)s",
                     "%(genre)s",
                 ),
                 (
-                    yt_dlp.postprocessor.metadataparser.MetadataParserPP.interpretter,
+                    MetadataParserPP.interpretter,
                     "description",
                     "(?P<meta_date>(?<=Released on: )\\d{4})",
                 ),
                 (
-                    yt_dlp.postprocessor.metadataparser.MetadataParserPP.interpretter,
+                    MetadataParserPP.interpretter,
                     "",
                     "(?P<description>)",
                 ),
@@ -766,7 +774,7 @@ def download(url: str, extra_options: dict | None = None):
     if extra_options:
         options.update(extra_options)
 
-    with yt_dlp.YoutubeDL(options) as ydl:
+    with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore
         ydl.add_post_processor(CustomMetadataPP(), when="pre_process")
         ydl.download([url])
 
@@ -774,7 +782,7 @@ def download(url: str, extra_options: dict | None = None):
 def main(url: str | None = None):
     if not url:
         if len(sys.argv) < 2:
-            print("Usage: termux-url-opener.py <url>")
+            print("Usage: python ytmusic-downloader.py <url>")
             return
         url = sys.argv[1]
 
@@ -794,4 +802,4 @@ def main(url: str | None = None):
 
 if __name__ == "__main__":
     main()
-    # sys.exit(main("https://music.youtube.com/watch?v=8UVNT4wvIGY&si=YD4i0G0IpW9-h0jH"))
+    sys.exit(main("https://music.youtube.com/watch?v=peORBtRz_vs"))
