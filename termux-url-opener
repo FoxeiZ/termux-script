@@ -199,8 +199,9 @@ use_simple_ui() {
     exit 0
 }
 
-# Youtube usually fuck up the encryption key so this here is to just make sure everything is up to date
+# ensure stuff are up to date
 pip install -U yt-dlp
+pip install -U yt-dlp-ejs  # damn, y*tube really didnt want us to have media ownership huh
 
 if socket_handler  # check if socket is alive
 then
