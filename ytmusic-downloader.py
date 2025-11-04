@@ -475,6 +475,9 @@ class ShazamLyricsPlugin(LyricsPluginBase):
                 yield from self._deep_search_all(item, target_key)
 
     def get_unsynced(self):
+        if not self.has_lyrics:
+            return
+
         pattern = r'<script type="application/ld\+json">(.*?)</script>'
         match = re.search(pattern, self.page_content, re.S)
         if not match:
@@ -555,6 +558,9 @@ class ShazamLyricsPlugin(LyricsPluginBase):
                     yield f"[{start_time}] {text}"
 
     def get_synced(self):
+        if not self.has_synced_lyrics:
+            return
+
         lyrics_lines = self._get_synced_lyrics()
         if lyrics_lines is None:
             return
@@ -1104,4 +1110,4 @@ def main(url: str | None = None):
 
 if __name__ == "__main__":
     # main()
-    sys.exit(main("https://music.youtube.com/watch?v=jtVbPSJzyRQ"))
+    sys.exit(main("https://music.youtube.com/watch?v=7U35uu6n_1U"))
