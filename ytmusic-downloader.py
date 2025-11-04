@@ -605,21 +605,22 @@ class ShazamLyricsPlugin(LyricsPluginBase):
         return None
 
 
-LrcLibResponse = TypedDict(
-    "LrcLibResponse",
-    {
-        "id": str,
-        "name": str,
-        "trackName": str,
-        "artistName": str,
-        "albumName": str,
-        "duration": float,
-        "instrumental": bool,
-        "plainLyrics": str,
-        "syncedLyrics": str,
-    },
-    total=False,
-)
+if TYPE_CHECKING:
+    LrcLibResponse = TypedDict(
+        "LrcLibResponse",
+        {
+            "id": str,
+            "name": str,
+            "trackName": str,
+            "artistName": str,
+            "albumName": str,
+            "duration": float,
+            "instrumental": bool,
+            "plainLyrics": str,
+            "syncedLyrics": str,
+        },
+        total=False,
+    )
 
 
 class LrcLibLyricsPlugin(LyricsPluginBase):
