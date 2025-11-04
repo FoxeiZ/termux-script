@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+import traceback
 from collections import OrderedDict
+from difflib import SequenceMatcher
 from functools import cache, lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Generator, Literal, TypedDict
 
 import requests
@@ -17,7 +21,20 @@ from yt_dlp.postprocessor.ffmpeg import FFmpegMetadataPP
 from yt_dlp.postprocessor.metadataparser import MetadataParserPP
 
 if TYPE_CHECKING:
-    from typing import Any, Dict
+    from typing import Any, Callable, Dict, Iterator, List, Optional, Union
+
+###  _____              __ _
+### /  __ \            / _(_)
+### | /  \/ ___  _ __ | |_ _  __ _
+### | |    / _ \| '_ \|  _| |/ _` |
+### | \__/\ (_) | | | | | | | (_| |
+###  \____/\___/|_| |_|_| |_|\__, |
+###                           __/ |
+###                          |___/
+# Save lyrics as .lrc file
+SAVE_LRC = True
+# Embed lyrics into audio file metadata
+EMBED_LYRICS = False
 
 
 def notify(
@@ -135,9 +152,23 @@ class InnerTubeBase:
 
 
 class LyricsPluginBase:
-    def __init__(self, info: dict):
-        self.video_id = info.get("id")
+    if TYPE_CHECKING:
+        video_id: str
+        title: str | None
+        artist: str | None
+
+    def __init__(self, info: dict, to_screen):
+        self.video_id = info.get("id") or ""
+        self.title = info.get("title")
+        self.artist = (
+            info.get("artists") or info.get("creators") or [info.get("uploader")]
+        )[0]  # always pick the first artist to avoid issues
+
         self.inner_tube = InnerTubeBase()
+        self._to_screen: Callable[[str], None] = to_screen
+
+    def to_screen(self, message: str):
+        self._to_screen(f"{self.__class__.__name__}: {message}")
 
     def run(self) -> tuple[bool, str] | None:
         raise NotImplementedError("Subclasses must implement this method")
@@ -194,13 +225,8 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
     BASE_URL = "https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get?format=json&namespace=lyrics_richsynched&subtitle_format=mxm&app_id=web-desktop-app-v1.0&"
     HEADERS = {
         "authority": "apic-desktop.musixmatch.com",
-        "cookie": "x-mxm-token-guid=",
+        "cookie": "mxm_bab=AB",
     }
-
-    def __init__(self, info: dict):
-        super().__init__(info)
-        self.title = info.get("title")
-        self.artist = info.get("artist") or info.get("uploader")
 
     @lru_cache(maxsize=5)
     def find_lyrics(
@@ -227,7 +253,7 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
             response = requests.get(self.BASE_URL, params=params, headers=self.HEADERS)
             response.raise_for_status()
         except (requests.RequestException, ConnectionError) as e:
-            print(repr(e))
+            self.to_screen(repr(e))
             return
 
         r = response.json()
@@ -235,24 +261,24 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
             r["message"]["header"]["status_code"] != 200
             and r["message"]["header"].get("hint") == "renew"
         ):
-            print("Invalid token")
+            self.to_screen("Invalid token")
             return
 
         body = r["message"]["body"]["macro_calls"]
         status_code = body["matcher.track.get"]["message"]["header"].get("status_code")
         if status_code != 200:
             if status_code == 404:
-                print("No lyrics/songs found.")
+                self.to_screen("No lyrics/songs found.")
             elif status_code == 401:
-                print("Timed out.")
+                self.to_screen("Timed out.")
             else:
-                print(
+                self.to_screen(
                     f"Requested error: {body['matcher.track.get']['message']['header']}"
                 )
             return
         elif isinstance(body["track.lyrics.get"]["message"].get("body"), dict):
             if body["track.lyrics.get"]["message"]["body"]["lyrics"]["restricted"]:
-                print("Restricted lyrics.")
+                self.to_screen("Restricted lyrics.")
                 return
 
         return body
@@ -316,8 +342,265 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
                 if lyrics:
                     return synced, "\n".join(lyrics)
             except ValueError:
-                print("No lyrics found")
+                self.to_screen("No lyrics found")
                 continue
+
+        return None
+
+
+if TYPE_CHECKING:
+    # albumName: "Splash!!"
+    # artistName: "Massive New Krew & RoughSketch"
+    # artwork: {bgColor: "85b5bb", hasP3: false, height: 3000, textColor1: "0a122a", textColor2: "132837",…}
+    # audioLocale: "ja"
+    # audioTraits: ["lossless", "lossy-stereo"]
+    # composerName: "Massive New Krew"
+    # discNumber: 1
+    # durationInMillis: 282280
+    # genreNames: ["Dance", "Music"]  # TODO: use this later?
+    # hasLyrics: true
+    # hasTimeSyncedLyrics: true
+    # isAppleDigitalMaster: false
+    # isMasteredForItunes: false
+    # isVocalAttenuationAllowed: true
+    # isrc: "JPQ891600122"
+    # name: "Extreme Music School (feat. Nanahira)"
+    class ShazamSongAttributes(TypedDict):
+        hasLyrics: bool
+        hasTimeSyncedLyrics: bool
+        name: str
+
+    class ShazamSongData(TypedDict):
+        attributes: ShazamSongAttributes
+        id: str
+        type: str
+
+    class ShazamSong(TypedDict):
+        data: list[ShazamSongData]
+
+    class ShazamSongResult(TypedDict):
+        songs: ShazamSong
+
+    class ShazamSearchResult(TypedDict):
+        results: ShazamSongResult
+
+    ShazamPageCreativeWorkLyrics = TypedDict(
+        "ShazamPageCreativeWorkLyrics", {"text": str, "@type": str}
+    )
+
+    ShazamPagePerson = TypedDict("ShazamPagePerson", {"name": str, "@type": str})
+    ShazamPageMusicComposition = TypedDict(
+        "ShazamPageMusicComposition",
+        {
+            "composer": List[ShazamPagePerson],
+            "@type": str,
+            "lyrics": Optional[ShazamPageCreativeWorkLyrics],
+        },
+    )
+    ShazamPageMusicRecordingCompact = TypedDict(
+        "ShazamPageMusicRecordingCompact",
+        {
+            "name": str,
+            "url": str,
+            "byArtist": str,
+            "recordingOf": ShazamPageMusicComposition,
+            "@context": str,
+            "@type": str,
+            "@id": str,
+            "lyricist": List[ShazamPagePerson],
+            "duration": Optional[str],
+            "description": Optional[str],
+            "genre": Optional[str],
+            "isFamilyFriendly": Optional[bool],
+            "datePublished": Optional[str],
+        },
+    )
+
+
+class ShazamLyricsPlugin(LyricsPluginBase):
+    # BASE_URL = "https://www.shazam.com/services/search/v3/en-US/GB/web/search?query={query}&numResults=3&offset=0&types=songs"
+    HEADERS = {
+        "X-Shazam-Platform": "IPHONE",
+        "X-Shazam-AppVersion": "14.1.0",
+        "Accept": "*/*",
+        "Accept-Language": "en-US",
+        "Accept-Encoding": "gzip, deflate",
+        "User-Agent": "Mozilla/5.0 (iPad; U; CPU OS 4_3_3 like Mac OS X; en-us) AppleWebKit/533.17.9 (KHTML, like Gecko) Mobile/8J2",
+    }
+
+    def _make_request(
+        self, url: str
+    ) -> requests.Response | None:  # use Any to avoid deep nesting
+        try:
+            response = requests.get(url, headers=self.HEADERS, allow_redirects=True)
+            response.raise_for_status()
+        except (requests.RequestException, ConnectionError) as e:
+            self.to_screen(repr(e))
+            return
+
+        return response
+
+    def _search_for_id(
+        self, query: str, language: str = "GB"
+    ) -> tuple[str, bool, bool]:
+        resp = self._make_request(
+            f"https://www.shazam.com/services/amapi/v1/catalog/{language}/search?types=songs&term={query}&limit=3"
+        )
+        if resp is None:
+            raise ValueError("Failed to fetch data")
+
+        data: ShazamSearchResult = resp.json()
+        if data is None:
+            raise ValueError("No data found")
+
+        for song in data["results"]["songs"]["data"]:
+            sz_name = song["attributes"]["name"]
+            sm = SequenceMatcher(
+                lambda x: x in ("-", "_"),
+                self.title.lower(),  # type: ignore | if error, damn mypy
+                sz_name.lower(),
+            )
+            ratio = round(sm.ratio(), 2)
+            if ratio >= 0.7:
+                return (
+                    song["id"],
+                    song["attributes"]["hasLyrics"],
+                    song["attributes"]["hasTimeSyncedLyrics"],
+                )
+
+        raise ValueError("No matching song found")
+
+    def _get_real_page(
+        self,
+        track_id: str,
+    ) -> str | None:
+        song_page = self._make_request(f"https://www.shazam.com/song/{track_id}")
+        if song_page is None:
+            return None
+
+        regex = r"<link\s+rel=\"canonical\"\s+href=\"([^\"]+)"
+        match = re.search(regex, song_page.text, re.NOFLAG)
+        if match:
+            return match.group(1)
+        return None
+
+    def _deep_search_all(
+        self, data: Union[Dict, List, Any], target_key: str
+    ) -> Iterator[Any]:
+        if isinstance(data, dict):
+            if target_key in data:
+                yield data[target_key]
+
+            for value in data.values():
+                yield from self._deep_search_all(value, target_key)
+
+        elif isinstance(data, list):
+            for item in data:
+                yield from self._deep_search_all(item, target_key)
+
+    def get_unsynced_lyrics(self, page_content: str) -> str | None:
+        pattern = r'<script type="application/ld\+json">(.*?)</script>'
+        match = re.search(pattern, page_content, re.S)
+        if not match:
+            self.to_screen("Failed to find lyrics data in the song page.")
+            return
+
+        json_data = match.group(1).strip()
+        data: ShazamPageMusicRecordingCompact = json.loads(json_data)
+        lyrics_data = data["recordingOf"]["lyrics"]
+        if not lyrics_data:
+            self.to_screen("No lyrics found for this track.")
+            return
+
+        return lyrics_data["text"]
+
+    def get_synced_lyrics(self, page_content: str) -> Iterator[str] | None:
+        pattern = r"self\.__next_f\.push\(\[\s*1,\s*\"..?:(.*?)\"\]\)"
+        match = re.finditer(pattern, page_content, re.S)
+        if not match:
+            self.to_screen("Failed to find synced lyrics data in the song page.")
+            return
+
+        lyrics_block_js_string = None
+        for m in match:
+            if not m:
+                continue
+            content = m.group(1)
+            if "startTimeInSeconds" in content or "endTimeInSeconds" in content:
+                lyrics_block_js_string = content
+                break
+
+        if not lyrics_block_js_string:
+            self.to_screen("No synced lyrics found for this track.")
+            return
+
+        lyrics_block_js_string = lyrics_block_js_string.encode().decode(
+            "unicode_escape"
+        )
+
+        lyrics_data = json.loads(lyrics_block_js_string)
+        if not lyrics_data:
+            self.to_screen("No synced lyrics data could be parsed.")
+            return
+
+        # lyrics_data[-1]["children"][-1]["children"][-1]["children"][-1][0][-1]["children"][-1][-1]["lyrics"]["lyricLines"]
+        lyric_lines_gen = self._deep_search_all(lyrics_data, "lyricLines")
+        for lyric_lines in lyric_lines_gen:
+            if isinstance(lyric_lines, list) and len(lyric_lines) > 0:
+                for line in lyric_lines:
+                    time_raw: str = line.get("startTimeInSeconds", "0")
+                    try:
+                        time_float = float(time_raw)
+                        minutes = int(time_float // 60)
+                        seconds = int(time_float % 60)
+                        hundredths = int((time_float - int(time_float)) * 100)
+                        start_time = f"{minutes:02d}:{seconds:02d}.{hundredths:02d}"
+                    except ValueError:
+                        start_time = time_raw
+
+                    text = line.get("content", "♪")
+                    yield f"[{start_time}] {text}"
+
+    def run(
+        self,
+    ):
+        track_id: str = ""
+        has_lyrics: bool = False
+        has_synced_lyrics: bool = False
+
+        assert self.title is not None
+        query = f"{self.artist} {self.title}" if self.artist else self.title
+        for language in ["GB", "JP"]:
+            try:
+                track_id, has_lyrics, has_synced_lyrics = self._search_for_id(
+                    query, language
+                )
+            except ValueError as e:
+                self.to_screen(repr(e))
+                continue
+
+        if not track_id:
+            self.to_screen("No matching track found on Shazam.")
+            return False, track_id
+
+        song_url = self._get_real_page(track_id)
+        if not song_url:
+            self.to_screen("Failed to retrieve the song page.")
+            return False, track_id
+
+        song_page = self._make_request(song_url)
+        if song_page is None:
+            self.to_screen("Failed to retrieve the song page content.")
+            return False, track_id
+
+        if has_synced_lyrics:
+            lyrics = self.get_synced_lyrics(song_page.text)
+            if lyrics:
+                return True, "\n".join(lyrics)
+        elif has_lyrics:
+            lyrics = self.get_unsynced_lyrics(song_page.text)
+            if lyrics:
+                return False, lyrics
 
         return None
 
@@ -346,10 +629,8 @@ class LrcLibLyricsPlugin(LyricsPluginBase):
         "Accept": "application/json",
     }
 
-    def __init__(self, info: dict):
-        super().__init__(info)
-        self.title = info.get("title")
-        self.artist = info.get("artist") or info.get("uploader")
+    def __init__(self, info: dict, to_screen=None):
+        super().__init__(info, to_screen=to_screen)
         self.album = info.get("album") or info.get("playlist_title") or ""
 
     @lru_cache(maxsize=5)
@@ -379,7 +660,7 @@ class LrcLibLyricsPlugin(LyricsPluginBase):
             return None
 
         except (requests.RequestException, ConnectionError) as e:
-            print(repr(e))
+            self.to_screen(repr(e))
             return
 
     def get_unsynced(
@@ -423,13 +704,19 @@ class LrcLibLyricsPlugin(LyricsPluginBase):
                 if lyrics:
                     return synced, lyrics
             except ValueError:
-                print("No lyrics found")
+                self.to_screen("No lyrics found")
                 continue
 
         return None
 
 
-def get_lyrics(info) -> Generator[tuple[Literal["-metadata"], str]]:
+def get_lyrics(
+    info,
+    *,
+    to_screen: Callable[[str], None] | None = None,
+) -> Generator[tuple[Literal["-metadata"], str]]:
+    to_screen = to_screen or print
+
     def lyrics_ext_helper(is_synced: bool = False) -> str:
         if is_synced:
             return "lyrics"
@@ -441,21 +728,30 @@ def get_lyrics(info) -> Generator[tuple[Literal["-metadata"], str]]:
             return "lyrics-eng"
 
     for plugin in [
+        ShazamLyricsPlugin,
         LrcLibLyricsPlugin,
-        MusixMatchLyricsPlugin,
+        # MusixMatchLyricsPlugin,  # TODO: fix unath
         YoutubeMusicLyricsPlugin,
     ]:
         if not issubclass(plugin, LyricsPluginBase):
             raise TypeError("Invalid plugin type")
 
-        lyrics_plugin = plugin(info)
+        lyrics_plugin = plugin(info, to_screen=to_screen)
         result = lyrics_plugin.run()
         if not result:
             continue
 
         if isinstance(result, tuple) and len(result) == 2:
             is_synced, lyrics_text = result
-            yield ("-metadata", f"{lyrics_ext_helper(is_synced)}={lyrics_text}")
+            if EMBED_LYRICS:
+                yield ("-metadata", f"{lyrics_ext_helper(is_synced)}={lyrics_text}")
+            if SAVE_LRC:
+                if is_synced:
+                    _filename = Path(f"{info['filepath']}").with_suffix(".lrc")
+                else:
+                    _filename = Path(f"{info['filepath']}").with_suffix(".txt")
+                _filename.write_text(lyrics_text, encoding="utf-8")
+                to_screen(f"Saved lyrics to {_filename}")
             return
     return
 
@@ -470,10 +766,14 @@ def Patched_get_metadata_opts(self: FFmpegMetadataPP, info):
     #     self.to_screen("No video ID found")
     #     return
 
+    if not SAVE_LRC and not EMBED_LYRICS:
+        return
+
     try:
-        yield from get_lyrics(info)
+        yield from get_lyrics(info, to_screen=self.to_screen)
     except ValueError as e:
         self.to_screen(f"Error getting lyrics: {e}")
+        traceback.print_exc()
         return
 
 
@@ -719,6 +1019,16 @@ ytdl_opts = {
         },
         {"already_have_thumbnail": False, "key": "EmbedThumbnail"},
         {"key": "FFmpegConcat", "only_multi_video": True, "when": "playlist"},
+        {
+            "exec_cmd": ["echo {}"],
+            "key": "Exec",
+            "when": "after_video",
+        },
+        {
+            "exec_cmd": ["echo {}"],
+            "key": "Exec",
+            "when": "playlist",
+        },
     ],
     "extractor_args": {
         "youtube": {
@@ -751,16 +1061,6 @@ if (
     ytdl_opts["postprocessors"].extend(
         [
             {
-                "exec_cmd": ["echo {}"],
-                "key": "Exec",
-                "when": "after_video",
-            },
-            {
-                "exec_cmd": ["echo {}"],
-                "key": "Exec",
-                "when": "playlist",
-            },
-            {
                 "exec_cmd": ["termux-media-scan -r {}"],
                 "key": "Exec",
                 "when": "playlist",
@@ -778,6 +1078,8 @@ if (
             },
         ]
     )
+elif os.name == "nt":
+    ytdl_opts["js_runtimes"] = {"node": {}}
 
 
 def download(url: str, extra_options: dict | None = None):
@@ -813,4 +1115,4 @@ def main(url: str | None = None):
 
 if __name__ == "__main__":
     main()
-    sys.exit(main("https://music.youtube.com/watch?v=peORBtRz_vs"))
+    # sys.exit(main("https://music.youtube.com/watch?v=2fJ6hfjG2c8"))
