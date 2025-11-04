@@ -741,12 +741,14 @@ def get_lyrics(
     for plugin in plugins:
         synced_lyrics = plugin.get_synced()
         if synced_lyrics:
+            to_screen("Found synced lyrics.")
             yield from process(True, synced_lyrics)
             return
 
     for plugin in plugins:
         unsynced_lyrics = plugin.get_unsynced()
         if unsynced_lyrics:
+            to_screen("Found unsynced lyrics.")
             yield from process(False, unsynced_lyrics)
             return
 
@@ -1109,5 +1111,5 @@ def main(url: str | None = None):
 
 
 if __name__ == "__main__":
-    # main()
-    sys.exit(main("https://music.youtube.com/watch?v=7U35uu6n_1U"))
+    main()
+    # sys.exit(main("https://music.youtube.com/watch?v=7U35uu6n_1U"))
