@@ -170,12 +170,18 @@ class LyricsPluginBase:
     def to_screen(self, message: str):
         self._to_screen(f"{self.__class__.__name__}: {message}")
 
-    def run(self) -> tuple[bool, str] | None:
+    def get_synced(self) -> str | None:
+        raise NotImplementedError("Subclasses must implement this method")
+
+    def get_unsynced(self) -> str | None:
         raise NotImplementedError("Subclasses must implement this method")
 
 
 class YoutubeMusicLyricsPlugin(LyricsPluginBase):
-    def run(self):
+    def get_synced(self) -> None:
+        return
+
+    def get_unsynced(self):
         if not self.video_id:
             return
 
@@ -191,7 +197,7 @@ class YoutubeMusicLyricsPlugin(LyricsPluginBase):
         if not lyrics_text:
             return
 
-        return False, lyrics_text
+        return lyrics_text
 
     def extract_lyrics_text(self, data):
         try:
@@ -283,14 +289,8 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
 
         return body
 
-    def get_unsynced(
-        self,
-        *,
-        album: str = "",
-        artist: str = "",
-        title: str = "",
-    ) -> list[str] | None:
-        body = self.find_lyrics(album=album, artist=artist, title=title)
+    def get_unsynced(self):
+        body = self.find_lyrics(artist=self.artist, title=self.title)
         if body is None:
             raise ValueError("No body found")
 
@@ -300,18 +300,12 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
 
         lyrics = lyrics_body["lyrics"]["lyrics_body"]
         if lyrics:
-            return [line for line in list(filter(None, lyrics.split("\n")))]
+            return "\n".join([line for line in list(filter(None, lyrics.split("\n")))])
 
         return None
 
-    def get_synced(
-        self,
-        *,
-        album: str = "",
-        artist: str = "",
-        title: str = "",
-    ):
-        body = self.find_lyrics(album=album, artist=artist, title=title)
+    def get_synced(self):
+        body = self.find_lyrics(artist=self.artist, title=self.title)
         if body is None:
             raise ValueError("No body found")
 
@@ -320,30 +314,12 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
             return None
         subtitle = subtitle_body["subtitle_list"][0]["subtitle"]
         if subtitle:
-            return [
-                f"[{line['time']['minutes']:02d}:{line['time']['seconds']:02d}.{line['time']['hundredths']:02d}]{line['text'] or '♪'}"
-                for line in json.loads(subtitle["subtitle_body"])
-            ]
-
-        return None
-
-    def run(
-        self,
-    ):
-        if not self.video_id or not self.title or not self.artist:
-            return
-
-        for synced, cb in (
-            (True, self.get_synced),
-            (False, self.get_unsynced),
-        ):
-            try:
-                lyrics = cb(title=self.title, artist=self.artist)
-                if lyrics:
-                    return synced, "\n".join(lyrics)
-            except ValueError:
-                self.to_screen("No lyrics found")
-                continue
+            return "\n".join(
+                [
+                    f"[{line['time']['minutes']:02d}:{line['time']['seconds']:02d}.{line['time']['hundredths']:02d}]{line['text'] or '♪'}"
+                    for line in json.loads(subtitle["subtitle_body"])
+                ]
+            )
 
         return None
 
@@ -498,9 +474,9 @@ class ShazamLyricsPlugin(LyricsPluginBase):
             for item in data:
                 yield from self._deep_search_all(item, target_key)
 
-    def get_unsynced_lyrics(self, page_content: str) -> str | None:
+    def get_unsynced(self):
         pattern = r'<script type="application/ld\+json">(.*?)</script>'
-        match = re.search(pattern, page_content, re.S)
+        match = re.search(pattern, self.page_content, re.S)
         if not match:
             self.to_screen("Failed to find lyrics data in the song page.")
             return
@@ -514,9 +490,9 @@ class ShazamLyricsPlugin(LyricsPluginBase):
 
         return lyrics_data["text"]
 
-    def get_synced_lyrics(self, page_content: str) -> Iterator[str] | None:
+    def _get_synced_lyrics(self) -> Iterator[str] | None:
         pattern = r"self\.__next_f\.push\(\[\s*1,\s*\"..?:(.*?)\"\]\)"
-        match = re.finditer(pattern, page_content, re.S)
+        match = re.finditer(pattern, self.page_content, re.S)
         if not match:
             self.to_screen("Failed to find synced lyrics data in the song page.")
             return
@@ -534,8 +510,12 @@ class ShazamLyricsPlugin(LyricsPluginBase):
             self.to_screen("No synced lyrics found for this track.")
             return
 
-        lyrics_block_js_string = lyrics_block_js_string.encode().decode(
-            "unicode_escape"
+        # annoying double escape sequences in the JS string, need to decode properly
+        lyrics_block_js_string = (
+            lyrics_block_js_string.encode()
+            .decode("unicode_escape")  # for removing double escape sequences
+            .encode("latin-1")  # for correct byte representation
+            .decode("utf-8")  # final decode to utf-8
         )
 
         lyrics_data = json.loads(lyrics_block_js_string)
@@ -556,14 +536,53 @@ class ShazamLyricsPlugin(LyricsPluginBase):
                         hundredths = int((time_float - int(time_float)) * 100)
                         start_time = f"{minutes:02d}:{seconds:02d}.{hundredths:02d}"
                     except ValueError:
-                        start_time = time_raw
+                        parts = time_raw.split(":")
+                        if len(parts) == 3:
+                            hours = int(parts[0])
+                            minutes = int(parts[1])
+                            seconds = float(parts[2])
+                            if hours > 0:
+                                minutes += hours * 60
+                            start_time = f"{minutes:02d}:{seconds:05.2f}"
+                        elif len(parts) == 2:
+                            minutes = int(parts[0])
+                            seconds = float(parts[1])
+                            start_time = f"{minutes:02d}:{seconds:05.2f}"
+                        else:
+                            start_time = "00:00.000"
 
                     text = line.get("content", "♪")
                     yield f"[{start_time}] {text}"
 
-    def run(
-        self,
-    ):
+    def get_synced(self):
+        lyrics_lines = self._get_synced_lyrics()
+        if lyrics_lines is None:
+            return
+
+        return "\n".join(lyrics_lines)
+
+    @property
+    def raw_data(self):
+        if not hasattr(self, "_raw_data"):
+            self._raw_data = self._get_data()
+
+        if self._raw_data is None:
+            raise ValueError("No raw data available")
+        return self._raw_data
+
+    @property
+    def page_content(self) -> str:
+        return self.raw_data[0]
+
+    @property
+    def has_lyrics(self) -> bool:
+        return self.raw_data[1]
+
+    @property
+    def has_synced_lyrics(self) -> bool:
+        return self.raw_data[2]
+
+    def _get_data(self) -> tuple[str, bool, bool] | None:
         track_id: str = ""
         has_lyrics: bool = False
         has_synced_lyrics: bool = False
@@ -581,28 +600,19 @@ class ShazamLyricsPlugin(LyricsPluginBase):
 
         if not track_id:
             self.to_screen("No matching track found on Shazam.")
-            return False, track_id
+            return
 
         song_url = self._get_real_page(track_id)
         if not song_url:
             self.to_screen("Failed to retrieve the song page.")
-            return False, track_id
+            return
 
         song_page = self._make_request(song_url)
         if song_page is None:
             self.to_screen("Failed to retrieve the song page content.")
-            return False, track_id
+            return
 
-        if has_synced_lyrics:
-            lyrics = self.get_synced_lyrics(song_page.text)
-            if lyrics:
-                return True, "\n".join(lyrics)
-        elif has_lyrics:
-            lyrics = self.get_unsynced_lyrics(song_page.text)
-            if lyrics:
-                return False, lyrics
-
-        return None
+        return song_page.text, has_lyrics, has_synced_lyrics
 
 
 if TYPE_CHECKING:
@@ -633,8 +643,8 @@ class LrcLibLyricsPlugin(LyricsPluginBase):
     def __init__(self, info: dict, to_screen=None):
         super().__init__(info, to_screen=to_screen)
         self.album = info.get("album") or info.get("playlist_title") or ""
+        self._lyrics_data = None
 
-    @lru_cache(maxsize=5)
     def find_lyrics(
         self,
         *,
@@ -664,51 +674,24 @@ class LrcLibLyricsPlugin(LyricsPluginBase):
             self.to_screen(repr(e))
             return
 
-    def get_unsynced(
-        self,
-        *,
-        album: str = "",
-        artist: str = "",
-        title: str = "",
-    ) -> str | None:
-        body = self.find_lyrics(track_name=title, artist_name=artist, album_name=album)
-        if body is None:
-            raise ValueError("No body found")
+    @property
+    def lyrics_data(self) -> LrcLibResponse | None:
+        if self._lyrics_data is None:
+            self._lyrics_data = self.find_lyrics(
+                track_name=self.title or "",
+                artist_name=self.artist or "",
+                album_name=self.album,
+            )
 
-        return body.get("plainLyrics", None)
+        return self._lyrics_data
 
-    def get_synced(
-        self,
-        *,
-        album: str = "",
-        artist: str = "",
-        title: str = "",
-    ) -> str | None:
-        body = self.find_lyrics(track_name=title, artist_name=artist, album_name=album)
-        if body is None:
-            raise ValueError("No body found")
+    def get_unsynced(self) -> str | None:
+        if self.lyrics_data:
+            return self.lyrics_data.get("plainLyrics", None)
 
-        return body.get("syncedLyrics", None)
-
-    def run(
-        self,
-    ):
-        if not self.video_id or not self.title or not self.artist:
-            return
-
-        for synced, cb in (
-            (True, self.get_synced),
-            (False, self.get_unsynced),
-        ):
-            try:
-                lyrics = cb(title=self.title, artist=self.artist, album=self.album)
-                if lyrics:
-                    return synced, lyrics
-            except ValueError:
-                self.to_screen("No lyrics found")
-                continue
-
-        return None
+    def get_synced(self) -> str | None:
+        if self.lyrics_data:
+            return self.lyrics_data.get("syncedLyrics", None)
 
 
 def get_lyrics(
@@ -718,43 +701,48 @@ def get_lyrics(
 ) -> Generator[tuple[Literal["-metadata"], str]]:
     to_screen = to_screen or print
 
-    def lyrics_ext_helper(is_synced: bool = False) -> str:
+    plugins: list[LyricsPluginBase] = [
+        ShazamLyricsPlugin(info, to_screen=to_screen),
+        LrcLibLyricsPlugin(info, to_screen=to_screen),
+        # MusixMatchLyricsPlugin(info, to_screen=to_screen),  # TODO: fix unath
+        YoutubeMusicLyricsPlugin(info, to_screen=to_screen),
+    ]
+
+    def save(is_synced: bool, lyrics: str):
+        suffix = ".lrc" if is_synced else ".txt"
+        _filename = Path(f"{info['filepath']}").with_suffix(suffix)
+        _filename.write_text(lyrics, encoding="utf-8")
+        to_screen(f"Saved lyrics to {_filename}")
+
+    def embed(is_synced: bool, lyrics: str):
         if is_synced:
-            return "lyrics"
-
-        # TODO: fill in later
+            tag = "lyrics"
         if info["ext"] == "opus":
-            return "lyrics"
+            tag = "lyrics"
         else:
-            return "lyrics-eng"
+            tag = "lyrics-eng"
 
-    for plugin in [
-        ShazamLyricsPlugin,
-        LrcLibLyricsPlugin,
-        # MusixMatchLyricsPlugin,  # TODO: fix unath
-        YoutubeMusicLyricsPlugin,
-    ]:
-        if not issubclass(plugin, LyricsPluginBase):
-            raise TypeError("Invalid plugin type")
+        yield ("-metadata", f"{tag}={lyrics}")
 
-        lyrics_plugin = plugin(info, to_screen=to_screen)
-        result = lyrics_plugin.run()
-        if not result:
-            continue
+    def process(
+        is_synced: bool, lyrics: str
+    ) -> Generator[tuple[Literal["-metadata"], str], Any, None]:
+        if EMBED_LYRICS:
+            yield from embed(is_synced, lyrics)
+        if SAVE_LRC:
+            save(is_synced, lyrics)
 
-        if isinstance(result, tuple) and len(result) == 2:
-            is_synced, lyrics_text = result
-            if EMBED_LYRICS:
-                yield ("-metadata", f"{lyrics_ext_helper(is_synced)}={lyrics_text}")
-            if SAVE_LRC:
-                if is_synced:
-                    _filename = Path(f"{info['filepath']}").with_suffix(".lrc")
-                else:
-                    _filename = Path(f"{info['filepath']}").with_suffix(".txt")
-                _filename.write_text(lyrics_text, encoding="utf-8")
-                to_screen(f"Saved lyrics to {_filename}")
+    for plugin in plugins:
+        synced_lyrics = plugin.get_synced()
+        if synced_lyrics:
+            yield from process(True, synced_lyrics)
             return
-    return
+
+    for plugin in plugins:
+        unsynced_lyrics = plugin.get_unsynced()
+        if unsynced_lyrics:
+            yield from process(False, unsynced_lyrics)
+            return
 
 
 ### Ugly, but works ¯\_(ツ)_/¯ ###
@@ -1115,5 +1103,5 @@ def main(url: str | None = None):
 
 
 if __name__ == "__main__":
-    main()
-    # sys.exit(main("https://music.youtube.com/watch?v=2fJ6hfjG2c8"))
+    # main()
+    sys.exit(main("https://music.youtube.com/watch?v=jtVbPSJzyRQ"))
