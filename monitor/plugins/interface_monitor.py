@@ -1,12 +1,20 @@
+# ruff: noqa: E501
+
+from __future__ import annotations
+
+import contextlib
 import datetime
 import re
 import subprocess
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from lib._types import Embed, EmbedField
-from lib.plugins import IntervalPlugin
+from lib.plugin import IntervalPlugin
 from lib.utils import log_function_call
+
+if TYPE_CHECKING:
+    from lib._types import Embed, EmbedField
+    from lib.manager import PluginManager
 
 
 def default_ifconfig_output():
@@ -78,16 +86,16 @@ class InterfaceMonitorPlugin(IntervalPlugin):
     if TYPE_CHECKING:
         username: str
         avatar_url: str
-        exclude_interfaces: list[str]
         _previous_state: dict[str, Any]
 
-    exclude_interfaces = ["dummy0", "lo", "r_rmnet_data0", "rmnet_data0", "rmnet_ipa0"]
+    exclude_interfaces: ClassVar[list[str]] = ["dummy0", "lo", "r_rmnet_data0", "rmnet_data0", "rmnet_ipa0"]
 
     def __init__(
         self,
-        manager,
+        manager: PluginManager,
         interval: int = 5,
         webhook_url: str = "",
+        *,
         reboot: bool = False,
         hotspot: bool = False,
         reboot_threshold: int = 1800,
@@ -128,21 +136,23 @@ class InterfaceMonitorPlugin(IntervalPlugin):
     @log_function_call
     def get_ifconfig_output(self):
         try:
-            result = subprocess.run(["ifconfig"], capture_output=True, text=True)
+            result = subprocess.run(["ifconfig"], check=False, capture_output=True, text=True)
             if result.returncode == 0:
                 return result.stdout
 
-            result = subprocess.run(["/sbin/ifconfig"], capture_output=True, text=True)
+            result = subprocess.run(["/sbin/ifconfig"], check=False, capture_output=True, text=True)
             return result.stdout
 
         except FileNotFoundError:
             return default_ifconfig_output()
 
     @log_function_call
-    def parse_network_interfaces(self, ifconfig_output):
+    def parse_network_interfaces(self, ifconfig_output: str) -> dict:
         interface_pattern = r"^(\w+[\w\d_]*): "
 
-        inet_pattern = r"inet (\d+\.\d+\.\d+\.\d+)(?:\s+netmask (\d+\.\d+\.\d+\.\d+))?(?:\s+destination (\d+\.\d+\.\d+\.\d+))?"
+        inet_pattern = (
+            r"inet (\d+\.\d+\.\d+\.\d+)(?:\s+netmask (\d+\.\d+\.\d+\.\d+))?(?:\s+destination (\d+\.\d+\.\d+\.\d+))?"
+        )
         inet6_pattern = r"inet6 ([a-f0-9:]+)\s+prefixlen (\d+)"
 
         interfaces = {}
@@ -165,9 +175,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
                     ipv4_info = {
                         "address": inet_match.group(1),
                         "netmask": inet_match.group(2) if inet_match.group(2) else None,
-                        "destination": inet_match.group(3)
-                        if inet_match.group(3)
-                        else None,
+                        "destination": inet_match.group(3) if inet_match.group(3) else None,
                     }
                     interfaces[current_interface]["ipv4"].append(ipv4_info)
 
@@ -192,13 +200,8 @@ class InterfaceMonitorPlugin(IntervalPlugin):
                 info += f"\nDestination: {ip['destination']}"
             ipv4_info.append(info)
 
-        ipv6_info = []
-        for ip in data["ipv6"]:
-            ipv6_info.append(
-                f"Address: {ip['address']}\nPrefix Length: {ip['prefixlen']}"
-            )
-
         field_value = ""
+        ipv6_info = [f"Address: {ip['address']}\nPrefix Length: {ip['prefixlen']}" for ip in data["ipv6"]]
         if ipv4_info:
             field_value += "**IPv4:**\n" + "\n\n".join(ipv4_info) + "\n\n"
         if ipv6_info:
@@ -226,9 +229,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
     @log_function_call
     def perform_reboot(self):
         try:
-            self.logger.warning(
-                "network has been down for more than 30 minutes, initiating system reboot"
-            )
+            self.logger.warning("network has been down for more than 30 minutes, initiating system reboot")
             subprocess.run(["sudo", "reboot"], check=True, shell=False)
         except subprocess.CalledProcessError as e:
             self.logger.error(f"failed to execute reboot command: {e}")
@@ -245,15 +246,13 @@ class InterfaceMonitorPlugin(IntervalPlugin):
         try:
             self.logger.info("starting WiFi hotspot due to network loss")
 
-            try:
+            with contextlib.suppress(Exception):
                 subprocess.run(
                     ["sudo", "cmd", "wifi", "stop-softap"],
                     check=False,
                     shell=False,
                     capture_output=True,
                 )
-            except Exception:
-                pass
 
             subprocess.run(
                 ["sudo", "cmd", "wifi", "start-softap", "qwerty123", "open"],
@@ -305,9 +304,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
         changes = self.compare_states(self._previous_state, current_state)
         if changes:
             if "wlan0" not in current_state:
-                self.logger.warning(
-                    "network interface wlan0 not found, assuming no network"
-                )
+                self.logger.warning("network interface wlan0 not found, assuming no network")
 
                 if not self._lost_network_since:
                     self._lost_network_since = datetime.datetime.now(datetime.UTC)
@@ -329,7 +326,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
                                 "fields": [
                                     {
                                         "name": "Network connection restored",
-                                        "value": f"Network connection restored after {datetime.datetime.now(datetime.UTC) - self._lost_network_since}",
+                                        "value": f"Network connection restored after {datetime.datetime.now(datetime.UTC) - self._lost_network_since}.",
                                         "inline": False,
                                     }
                                 ],
@@ -355,13 +352,10 @@ class InterfaceMonitorPlugin(IntervalPlugin):
             )
             self.logger.info("network change detected, sent update to Discord")
             self._previous_state = current_state
-        else:
-            if self._lost_network_since and self.reboot_enabled:
-                time_since_lost = (
-                    datetime.datetime.now(datetime.UTC) - self._lost_network_since
-                )
-                if time_since_lost.total_seconds() > self.reboot_threshold:
-                    self.perform_reboot()
+        elif self._lost_network_since and self.reboot_enabled:
+            time_since_lost = datetime.datetime.now(datetime.UTC) - self._lost_network_since
+            if time_since_lost.total_seconds() > self.reboot_threshold:
+                self.perform_reboot()
 
 
 if __name__ == "__main__":

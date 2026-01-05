@@ -36,7 +36,6 @@ class IntervalPlugin(Plugin):
 
     def on_stop(self) -> None:
         """Called when the plugin is stopped. Useful for cleanup."""
-        pass
 
     @override
     def stop(self) -> None:

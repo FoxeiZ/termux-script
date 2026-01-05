@@ -1,11 +1,16 @@
+from __future__ import annotations
+
 import os
 import subprocess
 from typing import TYPE_CHECKING
 
 import psutil
 from lib.errors import PluginError
-from lib.plugins import IntervalPlugin
+from lib.plugin import IntervalPlugin
 from lib.utils import log_function_call
+
+if TYPE_CHECKING:
+    from lib.manager import PluginManager
 
 
 class SystemServerPlugin(IntervalPlugin):
@@ -17,19 +22,17 @@ class SystemServerPlugin(IntervalPlugin):
 
     def __init__(
         self,
-        manager,
-        interval=10,
-        webhook_url="",
+        manager: PluginManager,
+        interval: int = 10,
+        webhook_url: str = "",
         *,
         cpu_threshold: int = 100,
         threshold_count_max: int = 3,
     ):
         try:
             os.lstat("/proc/stat")
-        except PermissionError:
-            raise PluginError(
-                "Permission denied to access /proc/stat. Please run as root."
-            )
+        except PermissionError as e:
+            raise PluginError("Permission denied to access /proc/stat. Please run as root.") from e
 
         super().__init__(manager, interval, webhook_url)
         self.cpu_threshold = cpu_threshold
@@ -39,13 +42,9 @@ class SystemServerPlugin(IntervalPlugin):
         self._cpu_tracker_proc = None
 
     @log_function_call
-    def _find_process(self, name="CpuTracker"):
+    def _find_process(self, name: str = "CpuTracker"):
         try:
-            system_server_proc = next(
-                p
-                for p in psutil.process_iter(attrs=["name"])
-                if p.name() == "system_server"
-            )
+            system_server_proc = next(p for p in psutil.process_iter(attrs=["name"]) if p.name() == "system_server")
             threads = system_server_proc.threads()
             for thread in threads:
                 p = psutil.Process(thread.id)
@@ -58,12 +57,8 @@ class SystemServerPlugin(IntervalPlugin):
             return None
 
     @log_function_call
-    def find_process(self, force=False):
-        if (
-            force
-            or not self._cpu_tracker_proc
-            or not self._cpu_tracker_proc.is_running()
-        ):
+    def find_process(self, force: bool = False):
+        if force or not self._cpu_tracker_proc or not self._cpu_tracker_proc.is_running():
             self._cpu_tracker_proc = self._find_process()
 
         return self._cpu_tracker_proc
@@ -84,7 +79,5 @@ class SystemServerPlugin(IntervalPlugin):
         if self._threshold_count >= self.threshold_count_max:
             msg = f"system_server-CpuTracker is abnormally using {cpu_percent}% CPU. Rebooting."
             self.logger.warning(msg)
-            self.send_webhook(
-                {"embeds": [{"title": "System Server Monitor", "description": msg}]}
-            )
-            subprocess.run(["reboot"])
+            self.send_webhook({"embeds": [{"title": "System Server Monitor", "description": msg}]})
+            subprocess.run(["reboot"], check=False)

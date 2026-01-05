@@ -7,16 +7,16 @@ from .plugin_test.long_process import (
 )
 from .system_monitor import SystemMonitorPlugin
 from .system_server_monitor import SystemServerPlugin
-from .tailscale import TailscalePlugin
+from .tailscale import TailscaledPlugin
 
 __all__ = [
     "InterfaceMonitorPlugin",
-    "TailscalePlugin",
     "LongProcessPlugin",
     "LongProcessPluginWithError",
     "LongProcessPluginWithLongOutput",
-    "SystemServerPlugin",
     "SystemMonitorPlugin",
-    "TestCronPerMin",
+    "SystemServerPlugin",
+    "TailscaledPlugin",
     "TestCron2Min",
+    "TestCronPerMin",
 ]

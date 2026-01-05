@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import threading
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 
@@ -9,7 +10,6 @@ import requests
 from lib.utils import get_logger
 
 if TYPE_CHECKING:
-    import threading
     from logging import Logger
 
     from lib._types import WebhookPayload
@@ -42,12 +42,10 @@ class Plugin:
         self.name = name or getattr(self.__class__, "name", self.__class__.__name__)
         self.logger = get_logger(name=self.name)
 
-        self.__http_session = (
-            http_session or requests.Session() if self.webhook_url else None
-        )
+        self.__http_session = http_session or requests.Session() if self.webhook_url else None
 
     def __init_subclass__(cls, name: str = "") -> None:
-        """Support class-level parameters like Plugin(name="...")"""
+        """Support class-level parameters like ``class CustomPlugin(Plugin, name="...")``"""
         super().__init_subclass__()
         if name:
             cls.name = name
@@ -70,9 +68,7 @@ class Plugin:
             self.__http_session = requests.Session()
         return self.__http_session
 
-    def send_webhook(
-        self, payload: WebhookPayload, wait: bool = False, *args, **kwargs
-    ) -> None:
+    def send_webhook(self, payload: WebhookPayload, wait: bool = False, *args, **kwargs) -> None:
         """Send a message to the webhook.
 
         Args:
@@ -93,7 +89,7 @@ class Plugin:
             json=payload,
             params={"wait": wait} if wait else None,
             timeout=self.manager.retry_delay,
-            *args,
+            *args,  # noqa: B026
             **kwargs,
         )
         resp.raise_for_status()
@@ -114,20 +110,17 @@ class Plugin:
         url = f"{self.webhook_url}/messages/{msg_id}"
         self.http_session.patch(url, json=payload, timeout=self.manager.retry_delay)
 
-    def send_message(
-        self, title: str, description: str, color: int, content: str | None, wait: bool
-    ):
+    def send_message(self, title: str, description: str, color: int, content: str | None, wait: bool):
         files = None
-        if content:
-            if len(content) > 2000:
-                files = {
-                    "filetag": (
-                        "filename",
-                        io.BytesIO(content.encode("utf-8")),
-                        "text/plain",
-                    )
-                }
-                content = "Content too large, see attachment."
+        if content and len(content) > 2000:
+            files = {
+                "filetag": (
+                    "filename",
+                    io.BytesIO(content.encode("utf-8")),
+                    "text/plain",
+                )
+            }
+            content = "Content too large, see attachment."
 
         payload: WebhookPayload = {
             "embeds": [
@@ -207,8 +200,6 @@ class Plugin:
 
     def stop(self) -> None:
         """Stop the plugin. Default implementation does nothing."""
-        pass
 
     def force_stop(self) -> None:
         """Force stop the plugin. Default implementation does nothing."""
-        pass

@@ -5,13 +5,15 @@ import time
 from typing import TYPE_CHECKING
 
 from .errors import DuplicatePluginError, PluginNotLoadedError
-from .plugins import Plugin
 from .utils import get_logger, log_function_call
 
 __all__ = ["PluginManager"]
 
 if TYPE_CHECKING:
     import logging
+    from typing import Any
+
+    from .plugin import Plugin
 
 
 class PluginManager:
@@ -23,9 +25,7 @@ class PluginManager:
         _webhook_url: str | None
         _stopped: bool
 
-    def __init__(
-        self, max_retries: int = 3, retry_delay: int = 5, webhook_url: str | None = None
-    ) -> None:
+    def __init__(self, max_retries: int = 3, retry_delay: int = 5, webhook_url: str | None = None) -> None:
         self.plugins = []
         self.logger = get_logger("PluginManager")
 
@@ -43,7 +43,8 @@ class PluginManager:
     def register_plugin(
         self,
         plugin: type[Plugin],
-        **kwargs,
+        *args: Any,
+        **kwargs: Any,
     ) -> None:
         """
         Add a plugin to the manager.
@@ -51,17 +52,15 @@ class PluginManager:
         Args:
             plugin: A class that inherits from BasePlugin.
         """
-        if not issubclass(plugin, Plugin):
-            raise TypeError("Plugin must be a subclass of Plugin")
+        # if not issubclass(plugin, Plugin):
+        #     raise TypeError("Plugin must be a subclass of Plugin")
 
         try:
             kwargs.setdefault("webhook_url", self._webhook_url)
-            plugin_instance = plugin(manager=self, **kwargs)
+            plugin_instance = plugin(manager=self, *args, **kwargs)  # noqa: B026
 
         except PluginNotLoadedError as e:
-            self.logger.error(
-                f"Plugin {plugin.__name__} failed to load: {e.__class__.__name__}: {e}"
-            )
+            self.logger.error(f"Plugin {plugin.__name__} failed to load: {e.__class__.__name__}: {e}")
             return
 
         except Exception as e:
@@ -71,9 +70,7 @@ class PluginManager:
             return
 
         if plugin_instance.name in [p.name for p in self.plugins]:
-            raise DuplicatePluginError(
-                f"Plugin {plugin_instance.name} already registered"
-            )
+            raise DuplicatePluginError(f"Plugin {plugin_instance.name} already registered")
 
         self.plugins.append(plugin_instance)
 
@@ -128,9 +125,7 @@ class PluginManager:
 
             # If thread is still alive, try force stop
             if plugin._thread.is_alive():
-                self.logger.warning(
-                    f"Plugin {plugin.name} didn't stop gracefully, trying force stop..."
-                )
+                self.logger.warning(f"Plugin {plugin.name} didn't stop gracefully, trying force stop...")
                 try:
                     plugin.force_stop()
                     plugin._thread.join(timeout=2.0)

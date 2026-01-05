@@ -1,6 +1,6 @@
 import argparse
 import os
-from typing import Any, Optional
+from typing import Any
 
 
 class ConfigSingleton:
@@ -13,7 +13,7 @@ class ConfigSingleton:
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(ConfigSingleton, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
             cls._instance._initialize()
         return cls._instance
 
@@ -26,9 +26,7 @@ class ConfigSingleton:
     def _parse_args(self):
         """Parse command line arguments."""
         parser = argparse.ArgumentParser()
-        parser.add_argument(
-            "--webhook-url", dest="WEBHOOK_URL", help="Webhook URL for notifications"
-        )
+        parser.add_argument("--webhook-url", dest="WEBHOOK_URL", help="Webhook URL for notifications")
         parser.add_argument(
             "--log-level",
             dest="LOG_LEVEL",
@@ -83,7 +81,7 @@ class ConfigSingleton:
         self._config[key] = value
 
     @property
-    def webhook_url(self) -> Optional[str]:
+    def webhook_url(self) -> str | None:
         """Get the webhook URL."""
         return self._config.get("WEBHOOK_URL")
 

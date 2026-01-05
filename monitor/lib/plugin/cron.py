@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 from abc import abstractmethod
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Optional, Set, override
+from typing import TYPE_CHECKING, Any, override
 
 from .base import Plugin
 
@@ -16,17 +16,13 @@ class CronParser:
 
     def __init__(self, cron_expression: str):
         self.expression = cron_expression.strip()
-        self.minute, self.hour, self.day, self.month, self.weekday = (
-            self._parse_expression()
-        )
+        self.minute, self.hour, self.day, self.month, self.weekday = self._parse_expression()
 
     def _parse_expression(self) -> tuple:
         """Parse the cron expression into sets of valid values."""
         fields = self.expression.split()
         if len(fields) != 5:
-            raise ValueError(
-                "Cron expression must have exactly 5 fields (minute hour day month weekday)"
-            )
+            raise ValueError("Cron expression must have exactly 5 fields (minute hour day month weekday)")
 
         return (
             self._parse_field(fields[0], 0, 59),  # minute
@@ -36,7 +32,7 @@ class CronParser:
             self._parse_field(fields[4], 0, 6),  # weekday (0=Sunday, 6=Saturday)
         )
 
-    def _parse_field(self, field: str, min_val: int, max_val: int) -> Set[int]:
+    def _parse_field(self, field: str, min_val: int, max_val: int) -> set[int]:
         """Parse a single cron field into a set of valid values."""
         if field == "*":
             return set(range(min_val, max_val + 1))
@@ -71,7 +67,7 @@ class CronParser:
         # Filter values to be within valid range
         return {v for v in values if min_val <= v <= max_val}
 
-    def next(self, from_time: Optional[datetime] = None) -> datetime:
+    def next(self, from_time: datetime | None = None) -> datetime:
         """
         Calculate the next execution time based on the cron expression.
 
@@ -98,9 +94,7 @@ class CronParser:
             next_time += timedelta(minutes=1)
             iterations += 1
 
-        raise RuntimeError(
-            "Could not find next execution time within reasonable timeframe"
-        )
+        raise RuntimeError("Could not find next execution time within reasonable timeframe")
 
     def _matches_time(self, dt: datetime) -> bool:
         """Check if a datetime matches the cron expression."""
@@ -145,26 +139,18 @@ class CronPlugin(Plugin):
         super().__init__(manager, webhook_url, **kwargs)
 
         # Support class-level cron_expression and run_on_startup
-        self.cron_expression = cron_expression or getattr(
-            self.__class__, "cron_expression", ""
-        )
-        self.run_on_startup = run_on_startup or getattr(
-            self.__class__, "run_on_startup", False
-        )
+        self.cron_expression = cron_expression or getattr(self.__class__, "cron_expression", "")
+        self.run_on_startup = run_on_startup or getattr(self.__class__, "run_on_startup", False)
 
         if not self.cron_expression:
-            raise ValueError(
-                "cron_expression must be provided either in __init__ or as class attribute"
-            )
+            raise ValueError("cron_expression must be provided either in __init__ or as class attribute")
 
         self._cron_parser = CronParser(self.cron_expression)
         self._stop_event = threading.Event()
         self._last_run = None
 
-    def __init_subclass__(
-        cls, cron_expression: str = "", run_on_startup: bool = False, **kwargs
-    ) -> None:
-        """Support class-level parameters like CronPlugin(cron_expression="...")"""
+    def __init_subclass__(cls, cron_expression: str = "", run_on_startup: bool = False, **kwargs) -> None:
+        """Support class-level parameters like ``class CustomCronPlugin(CronPlugin, cron_expression="...")``"""
         super().__init_subclass__(**kwargs)
         if cron_expression:
             cls.cron_expression = cron_expression
@@ -189,9 +175,7 @@ class CronPlugin(Plugin):
         wait_seconds = (next_run - now).total_seconds()
 
         if wait_seconds > 0:
-            self.logger.debug(
-                f"Next run scheduled for {next_run} (in {wait_seconds:.1f} seconds)"
-            )
+            self.logger.debug(f"Next run scheduled for {next_run} (in {wait_seconds:.1f} seconds)")
             return self._stop_event.wait(wait_seconds)
 
         return False
@@ -213,9 +197,7 @@ class CronPlugin(Plugin):
 
     @override
     def _start(self) -> None:
-        self.logger.info(
-            f"Starting cron plugin with expression: {self.cron_expression}"
-        )
+        self.logger.info(f"Starting cron plugin with expression: {self.cron_expression}")
 
         # Run immediately on startup if requested
         if self.run_on_startup:
@@ -238,10 +220,9 @@ class CronPlugin(Plugin):
                     self.logger.debug(f"Running scheduled job at {datetime.now()}")
                     self.start()
                     self._last_run = datetime.now().replace(second=0, microsecond=0)
-                else:
-                    # Small sleep to prevent busy waiting
-                    if self._stop_event.wait(1):
-                        break
+                # Small sleep to prevent busy waiting
+                elif self._stop_event.wait(1):
+                    break
 
             except Exception as e:
                 self.logger.error(f"Plugin {self.name} failed: {e}")

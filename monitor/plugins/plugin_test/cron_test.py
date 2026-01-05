@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from lib.plugins.cron import CronPlugin
+from lib.plugin.cron import CronPlugin
 
 
 class TestCronPerMin(CronPlugin, cron_expression="*/1 * * * *", run_on_startup=True):

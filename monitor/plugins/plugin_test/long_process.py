@@ -3,14 +3,17 @@ from __future__ import annotations
 from subprocess import PIPE, Popen, TimeoutExpired
 from typing import TYPE_CHECKING
 
-from lib.plugins import Plugin
+from lib.plugin import Plugin
+
+if TYPE_CHECKING:
+    from lib.manager import PluginManager
 
 
 class LongProcessPlugin(Plugin):
     if TYPE_CHECKING:
         _process: Popen | None
 
-    def __init__(self, manager, webhook_url=""):
+    def __init__(self, manager: PluginManager, webhook_url: str = ""):
         super().__init__(manager, webhook_url)
 
         self._process = None

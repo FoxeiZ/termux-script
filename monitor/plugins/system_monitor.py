@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+import contextlib
 import datetime
 import os
 from typing import TYPE_CHECKING, TypeVar
 
 import psutil
 from lib.errors import PluginError
-from lib.plugins import IntervalPlugin
+from lib.plugin import IntervalPlugin
 from lib.utils import log_function_call
 
 if TYPE_CHECKING:
     from typing import TextIO, TypedDict
 
     from lib._types import WebhookPayload
+    from lib.manager import PluginManager
 
     class _ProcessT(TypedDict):
         pid: int
@@ -20,7 +22,7 @@ if TYPE_CHECKING:
         cpu_percent: float
 
 
-def sizeof_fmt(num, suffix="B"):
+def sizeof_fmt(num: float, suffix: str = "B"):
     for unit in ("", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"):
         if abs(num) < 1024.0:
             return f"{num:3.1f}{unit}{suffix}"
@@ -36,13 +38,11 @@ class SystemMonitorPlugin(IntervalPlugin):
 
         ReadT = TypeVar("ReadT", bound=str | int | float)
 
-    def __init__(self, manager, interval=10, webhook_url="", **kwargs):
+    def __init__(self, manager: PluginManager, interval: int = 10, webhook_url: str = "", **kwargs):
         try:
             os.lstat("/proc/stat")
         except PermissionError:
-            raise PluginError(
-                "Permission denied to access /proc/stat. Please run as root."
-            )
+            raise PluginError("Permission denied to access /proc/stat. Please run as root.") from None
 
         super().__init__(manager, interval, webhook_url)
 
@@ -53,10 +53,7 @@ class SystemMonitorPlugin(IntervalPlugin):
     def get_uptime(self) -> str:
         return str(
             datetime.timedelta(
-                seconds=(
-                    datetime.datetime.now()
-                    - datetime.datetime.fromtimestamp(psutil.boot_time())
-                ).seconds
+                seconds=(datetime.datetime.now() - datetime.datetime.fromtimestamp(psutil.boot_time())).seconds
             )
         )
 
@@ -64,20 +61,16 @@ class SystemMonitorPlugin(IntervalPlugin):
     def get_top_processes(self) -> list[_ProcessT]:
         processes = []
         for p in psutil.process_iter(["pid", "name", "cpu_percent"]):
-            try:
+            with contextlib.suppress(psutil.NoSuchProcess):
                 processes.append(p.info)
-            except psutil.NoSuchProcess:
-                pass
         processes.sort(key=lambda x: x["cpu_percent"], reverse=True)
         return processes[:5]
 
     @log_function_call
-    def __read_file(self, file_name: str, _type: type["ReadT"] = str) -> "ReadT | None":
+    def __read_file(self, file_name: str, _type: type[ReadT] = str) -> ReadT | None:
         try:
             if file_name not in self._file_cache:
-                self._file_cache[file_name] = open(
-                    os.path.join(self.BATT_PATH, file_name), "r"
-                )
+                self._file_cache[file_name] = open(os.path.join(self.BATT_PATH, file_name))
             file = self._file_cache[file_name]
             file.seek(0)
             value = file.read().strip()
@@ -89,9 +82,7 @@ class SystemMonitorPlugin(IntervalPlugin):
             pass
 
         except PermissionError:
-            self.logger.warning(
-                f"Permission denied to read {file_name} in {self.BATT_PATH}"
-            )
+            self.logger.warning(f"Permission denied to read {file_name} in {self.BATT_PATH}")
 
         except Exception as e:
             self.logger.error(f"Error reading {file_name} in {self.BATT_PATH}: {e}")
@@ -103,7 +94,7 @@ class SystemMonitorPlugin(IntervalPlugin):
         self,
         c: int,
         file_name: str,
-        _type: type["ReadT"] = str,
+        _type: type[ReadT] = str,
         *,
         decimal: int = 1,
     ) -> float | str:
@@ -161,10 +152,7 @@ class SystemMonitorPlugin(IntervalPlugin):
                         },
                         {
                             "name": "Top Processes",
-                            "value": "\n".join(
-                                f"{p['name']} ({p['pid']}): {p['cpu_percent']}%"
-                                for p in top_processes
-                            ),
+                            "value": "\n".join(f"{p['name']} ({p['pid']}): {p['cpu_percent']}%" for p in top_processes),
                             "inline": False,
                         },
                     ],
