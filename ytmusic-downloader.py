@@ -1,5 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/python
 # ruff: noqa: B019, S105, E501
+# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false
 from __future__ import annotations
 
 import json
@@ -9,10 +10,11 @@ import subprocess
 import sys
 import traceback
 from collections import OrderedDict
+from collections.abc import Callable, Generator, Iterator
 from difflib import SequenceMatcher
 from functools import cache, lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict
 
 import requests
 import yt_dlp
@@ -62,13 +64,13 @@ def notify(
 ):
     cmd = ["termux-notification", "--title", title, "--content", content]
 
-    for button, action in [
+    for button, act in [
         (button1, button1_action),
         (button2, button2_action),
         (button3, button3_action),
     ]:
-        if action and not button:
-            raise ValueError(f"{action} requires the corresponding button to be set")
+        if act and not button:
+            raise ValueError(f"{act} requires the corresponding button to be set")
 
     options = {
         "--action": action,
@@ -398,6 +400,10 @@ class ShazamLyricsPlugin(LyricsPluginBase):
         "User-Agent": "Mozilla/5.0 (iPad; U; CPU OS 4_3_3 like Mac OS X; en-us) AppleWebKit/533.17.9 (KHTML, like Gecko) Mobile/8J2",
     }
 
+    def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
+        super().__init__(info, to_screen=to_screen)
+        self._raw_data: tuple[str, bool, bool] | None = None
+
     def _make_request(self, url: str) -> requests.Response | None:  # use Any to avoid deep nesting
         try:
             response = requests.get(url, headers=self.HEADERS, allow_redirects=True, timeout=10)
@@ -456,6 +462,8 @@ class ShazamLyricsPlugin(LyricsPluginBase):
                 yield data[target_key]
 
             for value in data.values():
+                if TYPE_CHECKING:
+                    value: Any
                 yield from self._deep_search_all(value, target_key)
 
         elif isinstance(data, list):
@@ -516,6 +524,9 @@ class ShazamLyricsPlugin(LyricsPluginBase):
 
         # lyrics_data[-1]["children"][-1]["children"][-1]["children"][-1][0][-1]["children"][-1][-1]["lyrics"]["lyricLines"]
         lyric_lines_gen = self._deep_search_all(lyrics_data, "lyricLines")
+        if TYPE_CHECKING:
+            lyric_lines_gen: Iterator[list[dict[str, Any]]]
+
         for lyric_lines in lyric_lines_gen:
             if isinstance(lyric_lines, list) and len(lyric_lines) > 0:
                 for line in lyric_lines:
@@ -557,7 +568,7 @@ class ShazamLyricsPlugin(LyricsPluginBase):
 
     @property
     def raw_data(self):
-        if not hasattr(self, "_raw_data"):
+        if not self._raw_data:
             self._raw_data = self._get_data()
 
         if self._raw_data is None:
@@ -631,7 +642,7 @@ class LrcLibLyricsPlugin(LyricsPluginBase):
     def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
         super().__init__(info, to_screen=to_screen)
         self.album = info.get("album") or info.get("playlist_title") or ""
-        self._lyrics_data = None
+        self._lyrics_data: LrcLibResponse | None = None
 
     def find_lyrics(
         self,
@@ -648,7 +659,7 @@ class LrcLibLyricsPlugin(LyricsPluginBase):
             "album_name": album_name,
         }
         try:
-            response = requests.get(self.BASE_URL + "/search", params=params)
+            response = requests.get(self.BASE_URL + "/search", params=params, headers=self.HEADERS, timeout=10)
             response.raise_for_status()
             for item in response.json():
                 if item.get("track_name") == track_name and item.get("artist_name") == artist_name:
@@ -745,7 +756,7 @@ def patched_get_metadata_opts(
         return
 
     try:
-        yield from get_lyrics(info, to_screen=self.to_screen)  # type: ignore
+        yield from get_lyrics(info, to_screen=self.to_screen)
     except ValueError as e:
         self.to_screen(f"Error getting lyrics: {e}")
         traceback.print_exc()
