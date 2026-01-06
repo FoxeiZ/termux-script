@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/python
-
+# ruff: noqa: B019, S105, E501
 from __future__ import annotations
 
 import json
@@ -12,7 +12,7 @@ from collections import OrderedDict
 from difflib import SequenceMatcher
 from functools import cache, lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator, Literal, TypedDict
+from typing import TYPE_CHECKING, ClassVar, Literal, TypedDict
 
 import requests
 import yt_dlp
@@ -21,7 +21,8 @@ from yt_dlp.postprocessor.ffmpeg import FFmpegMetadataPP
 from yt_dlp.postprocessor.metadataparser import MetadataParserPP
 
 if TYPE_CHECKING:
-    from typing import Any, Callable, Dict, Iterator, List, Optional, Union
+    from collections.abc import Callable, Generator, Iterator
+    from typing import Any
 
 ###  _____              __ _
 ### /  __ \            / _(_)
@@ -57,7 +58,7 @@ def notify(
     sound: bool = False,
     vibrate: bool = False,
     type: Literal["default", "media"] = "default",
-    subprocess_timeout: float | None = None,
+    timeout: float | None = None,
 ):
     cmd = ["termux-notification", "--title", title, "--content", content]
 
@@ -96,9 +97,10 @@ def notify(
     try:
         subprocess.run(
             cmd,
+            check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            timeout=subprocess_timeout,
+            timeout=timeout,
         )
 
     except Exception as e:
@@ -108,20 +110,23 @@ def notify(
 
 class InnerTubeBase:
     if TYPE_CHECKING:
-        session: requests.Session
+        session: requests.Session  # type: ignore
 
     _instance = None
 
     API_KEY = "AIzaSyDkZV5Q2b1e0Qf4Zc0wRjM3vW3rmpZ_mD0"
     INNER_TUBE_BASE = "https://music.youtube.com/youtubei/v1"
-    HEADERS = {
+    HEADERS: ClassVar = {
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0",
         "Origin": "https://music.youtube.com",
         "Referer": "https://music.youtube.com/",
     }
-    CLIENT_CONTEXT = {
-        "client": {"clientName": "WEB_REMIX", "clientVersion": "1.20210912.07.00"}
+    CLIENT_CONTEXT: ClassVar = {
+        "client": {
+            "clientName": "WEB_REMIX",
+            "clientVersion": "1.20210912.07.00",
+        },
     }
 
     def __new__(cls):
@@ -131,23 +136,21 @@ class InnerTubeBase:
             cls._instance.session.headers.update(cls.HEADERS)
         return cls._instance
 
-    def fetch(self, endpoint: Literal["next", "browse"], payload: dict) -> dict:
+    def fetch(self, endpoint: Literal["next", "browse"], payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.INNER_TUBE_BASE}/{endpoint}?key={self.API_KEY}"
         if payload.get("context") is None:
             payload["context"] = self.CLIENT_CONTEXT
 
-        response = self.session.post(
-            url, json={**payload, "context": self.CLIENT_CONTEXT}
-        )
+        response = self.session.post(url, json={**payload, "context": self.CLIENT_CONTEXT})
         response.raise_for_status()
         return response.json()
 
     @cache
-    def fetch_next(self, video_id: str) -> dict:
+    def fetch_next(self, video_id: str) -> dict[str, Any]:
         return self.fetch("next", {"videoId": video_id})
 
     @cache
-    def fetch_browse(self, browse_id: str):
+    def fetch_browse(self, browse_id: str) -> dict[str, Any]:
         return self.fetch("browse", {"browseId": browse_id})
 
 
@@ -157,15 +160,15 @@ class LyricsPluginBase:
         title: str | None
         artist: str | None
 
-    def __init__(self, info: dict, to_screen):
+    def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
         self.video_id = info.get("id") or ""
         self.title = info.get("title")
-        self.artist = (
-            info.get("artists") or info.get("creators") or [info.get("uploader")]
-        )[0]  # always pick the first artist to avoid issues
+        self.artist = (info.get("artists") or info.get("creators") or [info.get("uploader")])[
+            0
+        ]  # always pick the first artist to avoid issues
 
         self.inner_tube = InnerTubeBase()
-        self._to_screen: Callable[[str], None] = to_screen
+        self._to_screen: Callable[[str], None] = to_screen or print
 
     def to_screen(self, message: str):
         self._to_screen(f"{self.__class__.__name__}: {message}")
@@ -199,16 +202,16 @@ class YoutubeMusicLyricsPlugin(LyricsPluginBase):
 
         return lyrics_text
 
-    def extract_lyrics_text(self, data):
+    def extract_lyrics_text(self, data: dict[str, Any]) -> str | None:
         try:
-            lyrics_runs = data["contents"]["sectionListRenderer"]["contents"][0][
-                "musicDescriptionShelfRenderer"
-            ]["description"]["runs"]
+            lyrics_runs = data["contents"]["sectionListRenderer"]["contents"][0]["musicDescriptionShelfRenderer"][
+                "description"
+            ]["runs"]
             return "".join([r["text"] for r in lyrics_runs])
         except (KeyError, IndexError):
             return None
 
-    def extract_lyrics_browse_id(self, data):
+    def extract_lyrics_browse_id(self, data: dict[str, Any]) -> str | None:
         tabs = (
             data.get("contents", {})
             .get("singleColumnMusicWatchNextResultsRenderer", {})
@@ -217,9 +220,7 @@ class YoutubeMusicLyricsPlugin(LyricsPluginBase):
             .get("tabs", [])
         )
         for tab in tabs:
-            endpoint = (
-                tab.get("tabRenderer", {}).get("endpoint", {}).get("browseEndpoint", {})
-            )
+            endpoint = tab.get("tabRenderer", {}).get("endpoint", {}).get("browseEndpoint", {})
             browse_id = endpoint.get("browseId", "")
             if browse_id.startswith("MPLY"):
                 return browse_id
@@ -229,7 +230,7 @@ class YoutubeMusicLyricsPlugin(LyricsPluginBase):
 class MusixMatchLyricsPlugin(LyricsPluginBase):
     TOKEN = "2203269256ff7abcb649269df00e14c833dbf4ddfb5b36a1aae8b0"
     BASE_URL = "https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get?format=json&namespace=lyrics_richsynched&subtitle_format=mxm&app_id=web-desktop-app-v1.0&"
-    HEADERS = {
+    HEADERS: ClassVar = {
         "authority": "apic-desktop.musixmatch.com",
         "cookie": "mxm_bab=AB",
     }
@@ -256,17 +257,14 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
         }
 
         try:
-            response = requests.get(self.BASE_URL, params=params, headers=self.HEADERS)
+            response = requests.get(self.BASE_URL, params=params, headers=self.HEADERS, timeout=10)
             response.raise_for_status()
         except (requests.RequestException, ConnectionError) as e:
             self.to_screen(repr(e))
             return
 
         r = response.json()
-        if (
-            r["message"]["header"]["status_code"] != 200
-            and r["message"]["header"].get("hint") == "renew"
-        ):
+        if r["message"]["header"]["status_code"] != 200 and r["message"]["header"].get("hint") == "renew":
             self.to_screen("Invalid token")
             return
 
@@ -278,9 +276,7 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
             elif status_code == 401:
                 self.to_screen("Timed out.")
             else:
-                self.to_screen(
-                    f"Requested error: {body['matcher.track.get']['message']['header']}"
-                )
+                self.to_screen(f"Requested error: {body['matcher.track.get']['message']['header']}")
             return
         elif isinstance(body["track.lyrics.get"]["message"].get("body"), dict):
             if body["track.lyrics.get"]["message"]["body"]["lyrics"]["restricted"]:
@@ -298,9 +294,9 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
         if lyrics_body is None:
             return None
 
-        lyrics = lyrics_body["lyrics"]["lyrics_body"]
+        lyrics: str = lyrics_body["lyrics"]["lyrics_body"]
         if lyrics:
-            return "\n".join([line for line in list(filter(None, lyrics.split("\n")))])
+            return "\n".join(filter(None, lyrics.split("\n")))
 
         return None
 
@@ -360,17 +356,15 @@ if TYPE_CHECKING:
     class ShazamSearchResult(TypedDict):
         results: ShazamSongResult
 
-    ShazamPageCreativeWorkLyrics = TypedDict(
-        "ShazamPageCreativeWorkLyrics", {"text": str, "@type": str}
-    )
+    ShazamPageCreativeWorkLyrics = TypedDict("ShazamPageCreativeWorkLyrics", {"text": str, "@type": str})
 
     ShazamPagePerson = TypedDict("ShazamPagePerson", {"name": str, "@type": str})
     ShazamPageMusicComposition = TypedDict(
         "ShazamPageMusicComposition",
         {
-            "composer": List[ShazamPagePerson],
+            "composer": list[ShazamPagePerson],
             "@type": str,
-            "lyrics": Optional[ShazamPageCreativeWorkLyrics],
+            "lyrics": ShazamPageCreativeWorkLyrics | None,
         },
     )
     ShazamPageMusicRecordingCompact = TypedDict(
@@ -383,19 +377,19 @@ if TYPE_CHECKING:
             "@context": str,
             "@type": str,
             "@id": str,
-            "lyricist": List[ShazamPagePerson],
-            "duration": Optional[str],
-            "description": Optional[str],
-            "genre": Optional[str],
-            "isFamilyFriendly": Optional[bool],
-            "datePublished": Optional[str],
+            "lyricist": list[ShazamPagePerson],
+            "duration": str | None,
+            "description": str | None,
+            "genre": str | None,
+            "isFamilyFriendly": bool | None,
+            "datePublished": str | None,
         },
     )
 
 
 class ShazamLyricsPlugin(LyricsPluginBase):
     # BASE_URL = "https://www.shazam.com/services/search/v3/en-US/GB/web/search?query={query}&numResults=3&offset=0&types=songs"
-    HEADERS = {
+    HEADERS: ClassVar = {
         "X-Shazam-Platform": "IPHONE",
         "X-Shazam-AppVersion": "14.1.0",
         "Accept": "*/*",
@@ -404,11 +398,9 @@ class ShazamLyricsPlugin(LyricsPluginBase):
         "User-Agent": "Mozilla/5.0 (iPad; U; CPU OS 4_3_3 like Mac OS X; en-us) AppleWebKit/533.17.9 (KHTML, like Gecko) Mobile/8J2",
     }
 
-    def _make_request(
-        self, url: str
-    ) -> requests.Response | None:  # use Any to avoid deep nesting
+    def _make_request(self, url: str) -> requests.Response | None:  # use Any to avoid deep nesting
         try:
-            response = requests.get(url, headers=self.HEADERS, allow_redirects=True)
+            response = requests.get(url, headers=self.HEADERS, allow_redirects=True, timeout=10)
             response.raise_for_status()
         except (requests.RequestException, ConnectionError) as e:
             self.to_screen(repr(e))
@@ -416,9 +408,7 @@ class ShazamLyricsPlugin(LyricsPluginBase):
 
         return response
 
-    def _search_for_id(
-        self, query: str, language: str = "GB"
-    ) -> tuple[str, bool, bool]:
+    def _search_for_id(self, query: str, language: str = "GB") -> tuple[str, bool, bool]:
         resp = self._make_request(
             f"https://www.shazam.com/services/amapi/v1/catalog/{language}/search?types=songs&term={query}&limit=3"
         )
@@ -426,7 +416,7 @@ class ShazamLyricsPlugin(LyricsPluginBase):
             raise ValueError("Failed to fetch data")
 
         data: ShazamSearchResult = resp.json()
-        if data is None:
+        if not data:
             raise ValueError("No data found")
 
         for song in data["results"]["songs"]["data"]:
@@ -460,9 +450,7 @@ class ShazamLyricsPlugin(LyricsPluginBase):
             return match.group(1)
         return None
 
-    def _deep_search_all(
-        self, data: Union[Dict, List, Any], target_key: str
-    ) -> Iterator[Any]:
+    def _deep_search_all(self, data: dict[str, Any] | list[Any] | Any, target_key: str) -> Iterator[Any]:
         if isinstance(data, dict):
             if target_key in data:
                 yield data[target_key]
@@ -474,12 +462,12 @@ class ShazamLyricsPlugin(LyricsPluginBase):
             for item in data:
                 yield from self._deep_search_all(item, target_key)
 
-    def get_unsynced(self):
+    def get_unsynced(self) -> str | None:
         if not self.has_lyrics:
             return
 
         pattern = r'<script type="application/ld\+json">(.*?)</script>'
-        match = re.search(pattern, self.page_content, re.S)
+        match = re.search(pattern, self.page_content, re.DOTALL)
         if not match:
             self.to_screen("Failed to find lyrics data in the song page.")
             return
@@ -495,7 +483,7 @@ class ShazamLyricsPlugin(LyricsPluginBase):
 
     def _get_synced_lyrics(self) -> Iterator[str] | None:
         pattern = r"self\.__next_f\.push\(\[\s*1,\s*\"..?:(.*?)\"\]\)"
-        match = re.finditer(pattern, self.page_content, re.S)
+        match = re.finditer(pattern, self.page_content, re.DOTALL)
         if not match:
             self.to_screen("Failed to find synced lyrics data in the song page.")
             return
@@ -597,9 +585,7 @@ class ShazamLyricsPlugin(LyricsPluginBase):
         query = f"{self.artist} {self.title}" if self.artist else self.title
         for language in ["GB", "JP"]:
             try:
-                track_id, has_lyrics, has_synced_lyrics = self._search_for_id(
-                    query, language
-                )
+                track_id, has_lyrics, has_synced_lyrics = self._search_for_id(query, language)
             except ValueError as e:
                 self.to_screen(repr(e))
                 continue
@@ -622,31 +608,27 @@ class ShazamLyricsPlugin(LyricsPluginBase):
 
 
 if TYPE_CHECKING:
-    LrcLibResponse = TypedDict(
-        "LrcLibResponse",
-        {
-            "id": str,
-            "name": str,
-            "trackName": str,
-            "artistName": str,
-            "albumName": str,
-            "duration": float,
-            "instrumental": bool,
-            "plainLyrics": str,
-            "syncedLyrics": str,
-        },
-        total=False,
-    )
+
+    class LrcLibResponse(TypedDict):
+        id: str
+        name: str
+        trackName: str
+        artistName: str
+        albumName: str
+        duration: float
+        instrumental: bool
+        plainLyrics: str
+        syncedLyrics: str
 
 
 class LrcLibLyricsPlugin(LyricsPluginBase):
     BASE_URL = "https://lrclib.net/api"
-    HEADERS = {
+    HEADERS: ClassVar = {
         "User-Agent": "Mozilla/5.0",
         "Accept": "application/json",
     }
 
-    def __init__(self, info: dict, to_screen=None):
+    def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
         super().__init__(info, to_screen=to_screen)
         self.album = info.get("album") or info.get("playlist_title") or ""
         self._lyrics_data = None
@@ -669,10 +651,7 @@ class LrcLibLyricsPlugin(LyricsPluginBase):
             response = requests.get(self.BASE_URL + "/search", params=params)
             response.raise_for_status()
             for item in response.json():
-                if (
-                    item.get("track_name") == track_name
-                    and item.get("artist_name") == artist_name
-                ):
+                if item.get("track_name") == track_name and item.get("artist_name") == artist_name:
                     return item
             return None
 
@@ -701,7 +680,7 @@ class LrcLibLyricsPlugin(LyricsPluginBase):
 
 
 def get_lyrics(
-    info,
+    info: dict[str, Any],
     *,
     to_screen: Callable[[str], None] | None = None,
 ) -> Generator[tuple[Literal["-metadata"], str]]:
@@ -723,16 +702,11 @@ def get_lyrics(
     def embed(is_synced: bool, lyrics: str):
         if is_synced:
             tag = "lyrics"
-        if info["ext"] == "opus":
-            tag = "lyrics"
-        else:
-            tag = "lyrics-eng"
+        tag = "lyrics" if info["ext"] == "opus" else "lyrics-eng"
 
         yield ("-metadata", f"{tag}={lyrics}")
 
-    def process(
-        is_synced: bool, lyrics: str
-    ) -> Generator[tuple[Literal["-metadata"], str], Any, None]:
+    def process(is_synced: bool, lyrics: str) -> Generator[tuple[Literal["-metadata"], str], Any, None]:
         if EMBED_LYRICS:
             yield from embed(is_synced, lyrics)
         if SAVE_LRC:
@@ -755,8 +729,12 @@ def get_lyrics(
 
 ### Ugly, but works ¯\_(ツ)_/¯ ###
 # apperently this is called monkey patching?
-def Patched_get_metadata_opts(self: FFmpegMetadataPP, info):
-    yield from self.__getattribute__("Unpatched_get_metadata_opts")(info)  # type: ignore[no-untyped-call]
+def patched_get_metadata_opts(
+    self: FFmpegMetadataPP, info: dict[str, Any]
+) -> Generator[
+    tuple[Literal["-write_id3v1"], Literal["1"]] | tuple[Literal["-metadata"], str] | tuple[str, str], Any, None
+]:
+    yield from self.__getattribute__("unpatched_get_metadata_opts")(info)
 
     # video_id = info.get("id")
     # if not video_id:
@@ -767,27 +745,19 @@ def Patched_get_metadata_opts(self: FFmpegMetadataPP, info):
         return
 
     try:
-        yield from get_lyrics(info, to_screen=self.to_screen)
+        yield from get_lyrics(info, to_screen=self.to_screen)  # type: ignore
     except ValueError as e:
         self.to_screen(f"Error getting lyrics: {e}")
         traceback.print_exc()
         return
 
 
-setattr(
-    FFmpegMetadataPP,
-    "Unpatched_get_metadata_opts",
-    FFmpegMetadataPP._get_metadata_opts,
-)
-setattr(
-    FFmpegMetadataPP,
-    "_get_metadata_opts",
-    Patched_get_metadata_opts,
-)
+FFmpegMetadataPP.unpatched_get_metadata_opts = FFmpegMetadataPP._get_metadata_opts  # type: ignore
+FFmpegMetadataPP._get_metadata_opts = patched_get_metadata_opts
 
 
 @cache
-def fetch_album_info(browse_id: str | None) -> dict:
+def fetch_album_info(browse_id: str | None) -> dict[str, Any]:
     if not browse_id:
         raise ValueError("Invalid browse ID")
 
@@ -800,14 +770,8 @@ def fetch_album_info(browse_id: str | None) -> dict:
     }
 
     with yt_dlp.YoutubeDL(options) as _ydl:  # type: ignore
-        album_info = _ydl.extract_info(
-            f"https://music.youtube.com/browse/{browse_id}", download=False
-        )
-        if (
-            not album_info
-            or not isinstance(album_info, dict)
-            or "entries" not in album_info
-        ):
+        album_info = _ydl.extract_info(f"https://music.youtube.com/browse/{browse_id}", download=False)
+        if not album_info or not isinstance(album_info, dict) or "entries" not in album_info:
             raise ValueError("Failed to get data from album")
 
         return album_info
@@ -818,7 +782,7 @@ def find_album_id(video_id: str) -> str | None:
     data = InnerTubeBase().fetch_next(video_id)
 
     # Recursively find the first MPREb ID (albums/singles)
-    def find(obj) -> str | None:
+    def find(obj: Any) -> str | None:
         if isinstance(obj, dict):
             for k, v in obj.items():
                 if k == "browseEndpoint" and isinstance(v, dict):
@@ -838,7 +802,7 @@ def find_album_id(video_id: str) -> str | None:
     return find(data)
 
 
-def find_album_info(video_id: str) -> dict:
+def find_album_info(video_id: str) -> dict[str, Any]:
     """Find album info from the music URL or video ID."""
 
     album_browse_id = find_album_id(video_id)
@@ -867,25 +831,19 @@ def is_various_artist(album_browse_id: str) -> bool:
 
     entries = album_info["entries"]
     first_channel = entries[0].get("channel_id")
-    for entry in entries[1:]:
-        if entry.get("channel_id") != first_channel:
-            return True
-    return False
+    return any(entry.get("channel_id") != first_channel for entry in entries[1:])
 
 
 # my focking god, stub in pylance so annoying
 class CustomMetadataPP(PostProcessor):
-    def run(self, information: Dict[str, Any]):  # type: ignore[override]
-        self.to_screen("Checking metadata...")  # type: ignore
+    def run(self, information: dict[str, Any]):  # type: ignore[override]
+        self.to_screen("Checking metadata...")
 
         chnl = information.get("channel") or information.get("uploader") or ""
         if chnl.endswith(" - Topic"):
             # Remove duplicate artist names while preserving order
             artists = list(
-                OrderedDict.fromkeys(
-                    information.get("artists")
-                    or information.get("artist", "").split(", ")
-                )
+                OrderedDict.fromkeys(information.get("artists") or information.get("artist", "").split(", "))
             )
             information.update(
                 {
@@ -896,27 +854,23 @@ class CustomMetadataPP(PostProcessor):
                 }
             )
 
-        pl_name: str = (
-            information.get("playlist_title") or information.get("playlist") or ""
-        )
-        if not (pl_name.startswith("Album - ") or pl_name.startswith("Single - ")):
-            self.to_screen("Not an album, getting metadata for album manually")  # type: ignore
+        pl_name: str = information.get("playlist_title") or information.get("playlist") or ""
+        if not (pl_name.startswith(("Album - ", "Single - "))):
+            self.to_screen("Not an album, getting metadata for album manually")
             try:
-                information["track_number"] = get_track_num_from_album(
-                    information["id"]
-                )
+                information["track_number"] = get_track_num_from_album(information["id"])
             except ValueError:
-                self.to_screen("Hmm, doesn't look like an album. Skipping...")  # type: ignore
+                self.to_screen("Hmm, doesn't look like an album. Skipping...")
                 # information["track_number"] = None
                 return [], information
 
         try:
-            if is_various_artist(find_album_id(information["id"])):  # type: ignore
-                self.to_screen("Album is a Various Artists compilation")  # type: ignore
+            if is_various_artist(find_album_id(information["id"])):
+                self.to_screen("Album is a Various Artists compilation")
                 information["meta_album_artist"] = "Various Artists"
                 # information.setdefault("album_artist", "Various Artists")
         except ValueError:
-            self.to_screen("Hmm, doesn't look like an album. Skipping...")  # type: ignore
+            self.to_screen("Hmm, doesn't look like an album. Skipping...")
             # information["track_number"] = None
 
         # Custom logic to handle metadata
@@ -1032,9 +986,7 @@ ytdl_opts = {
             "lang": ["en"],
             "player_client": ["web"],
         },
-        "youtubepot-bgutilhttp": {
-            "base_url": ["https://bgutil-ytdlp-pot-vercal.vercel.app"]
-        },
+        "youtubepot-bgutilhttp": {"base_url": ["https://bgutil-ytdlp-pot-vercal.vercel.app"]},
     },
     "retries": 10,
     "updatetime": False,
@@ -1042,20 +994,17 @@ ytdl_opts = {
     "writethumbnail": True,
 }
 
-if (
-    "com.termux" in os.environ.get("SHELL", "")
-    or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr"
-):
+if "com.termux" in os.environ.get("SHELL", "") or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr":
     ytdl_opts["cachedir"] = "$HOME/.config/yt-dlp/"
     ytdl_opts["cookiefile"] = "$HOME/.config/yt-dlp/youtube.com_cookies.txt"
-    ytdl_opts["allowed_extractors"] = ["^([yY].*?)([tT]).*e?$"]
-    ytdl_opts["outtmpl"]["default"] = (
+    ytdl_opts["allowed_extractors"] = ["^([yY].*?)([tT]).*e?$"]  # type: ignore
+    ytdl_opts["outtmpl"]["default"] = (  # type: ignore
         "/sdcard/Music/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s"
     )
     # ytdl_opts["extractor_args"]["youtube"]["getpot_bgutil_script"] = (
     #     "$HOME/projects/bgutil-ytdlp-pot-provider/server/build/generate_once.js",
     # )
-    ytdl_opts["postprocessors"].extend(
+    ytdl_opts["postprocessors"].extend(  # type: ignore
         [
             {
                 "exec_cmd": ["termux-media-scan -r {}"],
@@ -1079,7 +1028,7 @@ elif os.name == "nt":
     ytdl_opts["js_runtimes"] = {"node": {}}
 
 
-def download(url: str, extra_options: dict | None = None):
+def download(url: str, extra_options: dict[str, Any] | None = None):
     options = ytdl_opts.copy()
     if extra_options:
         options.update(extra_options)
