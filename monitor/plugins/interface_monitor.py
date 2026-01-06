@@ -118,7 +118,11 @@ class InterfaceMonitorPlugin(IntervalPlugin):
         self._hotspot_started: bool = False
 
     @log_function_call
-    def compare_states(self, old_state: dict, new_state: dict) -> bool:
+    def compare_states(
+        self,
+        old_state: dict[str, Any],
+        new_state: dict[str, Any],
+    ) -> bool:
         if set(old_state.keys()) != set(new_state.keys()):
             return True
 
@@ -147,7 +151,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
             return default_ifconfig_output()
 
     @log_function_call
-    def parse_network_interfaces(self, ifconfig_output: str) -> dict:
+    def parse_network_interfaces(self, ifconfig_output: str) -> dict[str, Any]:
         interface_pattern = r"^(\w+[\w\d_]*): "
 
         inet_pattern = (
@@ -155,7 +159,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
         )
         inet6_pattern = r"inet6 ([a-f0-9:]+)\s+prefixlen (\d+)"
 
-        interfaces = {}
+        interfaces: dict[str, Any] = {}
         current_interface = None
 
         for line in ifconfig_output.splitlines():
@@ -190,8 +194,8 @@ class InterfaceMonitorPlugin(IntervalPlugin):
         return interfaces
 
     @log_function_call
-    def format_interface_info(self, interface_name: str, data: dict) -> EmbedField:
-        ipv4_info = []
+    def format_interface_info(self, interface_name: str, data: dict[str, Any]) -> EmbedField:
+        ipv4_info: list[str] = []
         for ip in data["ipv4"]:
             info = f"Address: {ip['address']}"
             if ip["netmask"]:
@@ -214,10 +218,10 @@ class InterfaceMonitorPlugin(IntervalPlugin):
         }
 
     @log_function_call
-    def build_embeds(self, interfaces: dict) -> list[Embed]:
-        embeds_list = []
+    def build_embeds(self, interfaces: dict[str, Any]) -> list[Embed]:
+        embeds_list: list[Embed] = []
         for interface, data in interfaces.items():
-            embed = {
+            embed: Embed = {
                 "title": f"Interface: {interface}",
                 "color": 3447003 + hash(interface) % 5 * 1000000,
                 "fields": [self.format_interface_info(interface, data)],

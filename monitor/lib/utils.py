@@ -1,22 +1,19 @@
 from __future__ import annotations
 
 import logging
+import shlex
 import subprocess
 from functools import wraps
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, cast
 
 from .config import Config
 
 if TYPE_CHECKING:
-    from typing import Callable, ParamSpec, TypeVar
+    from collections.abc import Callable
+    from typing import Any, Protocol
 
-    P = ParamSpec("P")
-    R = TypeVar("R")
-    T = TypeVar("T")
-
-
-class HasLogger(Protocol):
-    logger: logging.Logger
+    class HasLogger(Protocol):
+        logger: logging.Logger
 
 
 def get_logger(
@@ -34,14 +31,14 @@ def get_logger(
     return logger
 
 
-def log_function_call(func: Callable[P, R]) -> Callable[P, R]:
+def log_function_call[**P, R](func: Callable[P, R]) -> Callable[P, R]:
     if not Config.debug or not Config.log_function_call:
         return func
 
     @wraps(func)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         try:
-            logger = cast(HasLogger, args[0]).logger
+            logger = cast("HasLogger", args[0]).logger
         except AttributeError:
             logger = get_logger(func.__name__)
 
@@ -53,27 +50,31 @@ def log_function_call(func: Callable[P, R]) -> Callable[P, R]:
     return wrapper
 
 
-def run_as_root(command: str | list[str], **kwargs) -> subprocess.CompletedProcess:
+def run_as_root(command: str | list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
     """Run a command as root using sudo."""
     if isinstance(command, str):
-        command = command.split()
+        try:
+            command_list = shlex.split(command)
+        except ValueError as exc:
+            raise RuntimeError("invalid command string") from exc
+    else:
+        if not all(isinstance(part, str) for part in command):
+            raise TypeError("command list must contain only strings")
+        command_list = list(command)
 
-    if not isinstance(command, list):
-        raise ValueError("command must be a string or a list")
+    if not command_list:
+        raise ValueError("empty command provided")
 
+    full_cmd = ["sudo", *command_list]
     try:
         return subprocess.run(
-            ["sudo"] + command,
+            full_cmd,
             check=True,
             text=True,
             capture_output=True,
             **kwargs,
         )
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(
-            f"Command '{' '.join(command)}' failed with error: {e.stderr.strip()}"
-        ) from e
+        raise RuntimeError(f"Command '{' '.join(command)}' failed with error: {e.stderr.strip()}") from e
     except FileNotFoundError as e:
-        raise RuntimeError(
-            f"Command '{' '.join(command)}' not found. Please install sudo."
-        ) from e
+        raise RuntimeError(f"Command '{' '.join(command)}' not found. Please install sudo.") from e

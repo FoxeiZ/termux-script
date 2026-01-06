@@ -3,7 +3,7 @@ from datetime import datetime
 from lib.plugin.cron import CronPlugin
 
 
-class TestCronPerMin(CronPlugin, cron_expression="*/1 * * * *", run_on_startup=True):
+class TestCronPerMin(CronPlugin, cron_expression="*/1 * * * *", run_on_startup=False):
     """Test cron job that runs every 1 minutes with startup execution."""
 
     def start(self):

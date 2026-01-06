@@ -1,6 +1,19 @@
+from __future__ import annotations
+
 import argparse
 import os
-from typing import Any
+from typing import TYPE_CHECKING, ClassVar
+
+if TYPE_CHECKING:
+    from typing import Any, TypedDict
+
+    class _ConfigT(TypedDict):
+        WEBHOOK_URL: str | None
+        LOG_LEVEL: str
+        LOG_FUNCTION_CALL: bool
+        RUN_ROOT_ONLY: bool
+        RUN_NON_ROOT_ONLY: bool
+        RUN_ALL: bool
 
 
 class ConfigSingleton:
@@ -10,6 +23,16 @@ class ConfigSingleton:
     """
 
     _instance = None
+    _defaults: ClassVar[_ConfigT] = {
+        "WEBHOOK_URL": None,
+        "LOG_LEVEL": "INFO",
+        "LOG_FUNCTION_CALL": False,
+        "RUN_ROOT_ONLY": False,
+        "RUN_NON_ROOT_ONLY": False,
+        "RUN_ALL": False,
+    }
+    if TYPE_CHECKING:
+        _config: _ConfigT  # type: ignore
 
     def __new__(cls):
         if cls._instance is None:
@@ -19,14 +42,18 @@ class ConfigSingleton:
 
     def _initialize(self):
         """Initialize the configuration values."""
-        self._config = {}
+        self._config = self._defaults.copy()
         self._parse_args()
         self._load_from_env()
 
     def _parse_args(self):
         """Parse command line arguments."""
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--webhook-url", dest="WEBHOOK_URL", help="Webhook URL for notifications")
+        parser = argparse.ArgumentParser(add_help=True)
+        parser.add_argument(
+            "--webhook-url",
+            dest="WEBHOOK_URL",
+            help="Webhook URL for notifications",
+        )
         parser.add_argument(
             "--log-level",
             dest="LOG_LEVEL",
@@ -47,6 +74,24 @@ class ConfigSingleton:
             action="store_true",
             help="Log function calls. Use with --debug or --log-level=DEBUG",
         )
+        parser.add_argument(
+            "--run-root-only",
+            dest="RUN_ROOT_ONLY",
+            action="store_true",
+            help="Run only plugins that require root privileges",
+        )
+        parser.add_argument(
+            "--run-non-root-only",
+            dest="RUN_NON_ROOT_ONLY",
+            action="store_true",
+            help="Run only plugins that do not require root privileges",
+        )
+        parser.add_argument(
+            "--run-all",
+            dest="RUN_ALL",
+            action="store_true",
+            help="Run all plugins regardless of root privileges",
+        )
 
         args, _ = parser.parse_known_args()
         for key, value in vars(args).items():
@@ -55,13 +100,7 @@ class ConfigSingleton:
 
     def _load_from_env(self):
         """Load configuration from environment variables (if not already set by args)."""
-        env_vars = {
-            "WEBHOOK_URL": None,
-            "LOG_LEVEL": "INFO",
-            "LOG_FUNCTION_CALL": False,
-        }
-
-        for key, default in env_vars.items():
+        for key, default in self._defaults.items():
             if key not in self._config:
                 env_value = os.environ.get(key)
                 if env_value is not None:
@@ -99,6 +138,21 @@ class ConfigSingleton:
     def log_function_call(self) -> bool:
         """Get the log function call setting."""
         return self._config.get("LOG_FUNCTION_CALL", False)
+
+    @property
+    def run_root_only(self) -> bool:
+        """Get the run root only setting."""
+        return self._config.get("RUN_ROOT_ONLY", False)
+
+    @property
+    def run_non_root_only(self) -> bool:
+        """Get the run non-root only setting."""
+        return self._config.get("RUN_NON_ROOT_ONLY", False)
+
+    @property
+    def run_all(self) -> bool:
+        """Get the run all setting."""
+        return self._config.get("RUN_ALL", False)
 
 
 Config = ConfigSingleton()

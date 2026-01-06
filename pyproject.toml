@@ -22,11 +22,12 @@ reportMissingParameterType = "information"
 reportUnknownParameterType = "information"
 reportUnknownVariableType  = "information"
 reportUnknownArgumentType  = "information"
-reportUnusedCallResult  = false
-reportUnknownMemberType = false
-reportMissingTypeStubs  = false
-reportPrivateUsage      = false
-reportCallIssue         = false
+reportUnusedCallResult      = false
+reportUnknownMemberType     = false
+reportMissingTypeStubs      = false
+reportPrivateUsage          = false
+reportCallIssue             = false
+reportUnnecessaryIsInstance = false
 
 [tool.ruff]
 line-length = 120
@@ -102,5 +103,6 @@ ignore = [
     "ASYNC109", # Async function definition with a `timeout` parameter
     "RUF001",   # String contains ambiguous
     "F403",     # import "*" used; unable to detect undefined names
+    "S603",     # `subprocess` call: check for execution of untrusted input
     "S607",     # Starting a process with a partial executable path
 ]

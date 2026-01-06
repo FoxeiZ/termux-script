@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import threading
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 
@@ -10,7 +9,9 @@ import requests
 from lib.utils import get_logger
 
 if TYPE_CHECKING:
+    import threading
     from logging import Logger
+    from typing import Any
 
     from lib._types import WebhookPayload
     from lib.manager import PluginManager
@@ -24,9 +25,21 @@ class Plugin:
         manager: PluginManager
         logger: Logger
         webhook_url: str
+        _requires_root: bool
         _message_id: str | None
         _thread: threading.Thread | None
         __http_session: requests.Session | None
+
+    __slots__ = (
+        "__http_session",
+        "_message_id",
+        "_requires_root",
+        "_thread",
+        "logger",
+        "manager",
+        "name",
+        "webhook_url",
+    )
 
     def __init__(
         self,
@@ -39,16 +52,26 @@ class Plugin:
         """Initialize plugin."""
         self.manager = manager
         self.webhook_url = webhook_url
-        self.name = name or getattr(self.__class__, "name", self.__class__.__name__)
+        self.name = name or getattr(self, "name", self.__class__.__name__) or self.__class__.__name__
         self.logger = get_logger(name=self.name)
+
+        self._requires_root = False
+        self._message_id = None
+        self._thread = None
 
         self.__http_session = http_session or requests.Session() if self.webhook_url else None
 
-    def __init_subclass__(cls, name: str = "") -> None:
+    def __init_subclass__(cls, name: str = "", requires_root: bool = False) -> None:
         """Support class-level parameters like ``class CustomPlugin(Plugin, name="...")``"""
         super().__init_subclass__()
         if name:
             cls.name = name
+        cls._requires_root = requires_root
+
+    @property
+    def requires_root(self) -> bool:
+        """Return whether the plugin requires root privileges."""
+        return self._requires_root
 
     @property
     def thread(self) -> threading.Thread | None:
@@ -58,8 +81,6 @@ class Plugin:
     @thread.setter
     def thread(self, thread: threading.Thread | None) -> None:
         """Set the thread for the plugin."""
-        if thread and not isinstance(thread, threading.Thread):
-            raise TypeError("thread must be an instance of threading.Thread")
         self._thread = thread
 
     @property
@@ -68,7 +89,13 @@ class Plugin:
             self.__http_session = requests.Session()
         return self.__http_session
 
-    def send_webhook(self, payload: WebhookPayload, wait: bool = False, *args, **kwargs) -> None:
+    def send_webhook(
+        self,
+        payload: WebhookPayload,
+        wait: bool = False,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
         """Send a message to the webhook.
 
         Args:

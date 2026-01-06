@@ -3,7 +3,8 @@ from __future__ import annotations
 import contextlib
 import datetime
 import os
-from typing import TYPE_CHECKING, TypeVar
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import psutil
 from lib.errors import PluginError
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
 
     from lib._types import WebhookPayload
     from lib.manager import PluginManager
+
+    _ReadT = TypeVar("_ReadT", bound=str | int | float)
 
     class _ProcessT(TypedDict):
         pid: int
@@ -36,9 +39,7 @@ class SystemMonitorPlugin(IntervalPlugin):
         _first_run: bool
         _file_cache: dict[str, TextIO]
 
-        ReadT = TypeVar("ReadT", bound=str | int | float)
-
-    def __init__(self, manager: PluginManager, interval: int = 10, webhook_url: str = "", **kwargs):
+    def __init__(self, manager: PluginManager, interval: int = 10, webhook_url: str = "", **kwargs: Any):
         try:
             os.lstat("/proc/stat")
         except PermissionError:
@@ -59,18 +60,18 @@ class SystemMonitorPlugin(IntervalPlugin):
 
     @log_function_call
     def get_top_processes(self) -> list[_ProcessT]:
-        processes = []
+        processes: list[_ProcessT] = []
         for p in psutil.process_iter(["pid", "name", "cpu_percent"]):
             with contextlib.suppress(psutil.NoSuchProcess):
-                processes.append(p.info)
+                processes.append(p.info)  # type: ignore
         processes.sort(key=lambda x: x["cpu_percent"], reverse=True)
         return processes[:5]
 
     @log_function_call
-    def __read_file(self, file_name: str, _type: type[ReadT] = str) -> ReadT | None:
+    def __read_file(self, file_name: str, _type: type[_ReadT] = str) -> _ReadT | None:
         try:
             if file_name not in self._file_cache:
-                self._file_cache[file_name] = open(os.path.join(self.BATT_PATH, file_name))
+                self._file_cache[file_name] = (Path(self.BATT_PATH) / file_name).open()
             file = self._file_cache[file_name]
             file.seek(0)
             value = file.read().strip()
@@ -94,18 +95,18 @@ class SystemMonitorPlugin(IntervalPlugin):
         self,
         c: int,
         file_name: str,
-        _type: type[ReadT] = str,
+        _type: type[_ReadT] = str,
         *,
         decimal: int = 1,
-    ) -> float | str:
+    ) -> str:
         r = self.__read_file(file_name, _type)
-        if not r or isinstance(r, str):
+        if r is None:
             return "Unknown"
-        return f"{r / c:.{decimal}f}"
+        return f"{float(r) / c:.{decimal}f}"
 
     @log_function_call
-    def get_battery_info(self) -> dict:
-        if not os.path.exists(self.BATT_PATH):
+    def get_battery_info(self) -> dict[str, Any]:
+        if not Path(self.BATT_PATH).exists():
             return {}
 
         return {

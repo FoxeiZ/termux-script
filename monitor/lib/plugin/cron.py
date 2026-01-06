@@ -18,7 +18,7 @@ class CronParser:
         self.expression = cron_expression.strip()
         self.minute, self.hour, self.day, self.month, self.weekday = self._parse_expression()
 
-    def _parse_expression(self) -> tuple:
+    def _parse_expression(self) -> tuple[set[int], set[int], set[int], set[int], set[int]]:
         """Parse the cron expression into sets of valid values."""
         fields = self.expression.split()
         if len(fields) != 5:
@@ -37,7 +37,7 @@ class CronParser:
         if field == "*":
             return set(range(min_val, max_val + 1))
 
-        values = set()
+        values: set[int] = set()
 
         # Handle comma-separated values
         for part in field.split(","):
@@ -149,7 +149,7 @@ class CronPlugin(Plugin):
         self._stop_event = threading.Event()
         self._last_run = None
 
-    def __init_subclass__(cls, cron_expression: str = "", run_on_startup: bool = False, **kwargs) -> None:
+    def __init_subclass__(cls, cron_expression: str = "", run_on_startup: bool = False, **kwargs: Any) -> None:
         """Support class-level parameters like ``class CustomCronPlugin(CronPlugin, cron_expression="...")``"""
         super().__init_subclass__(**kwargs)
         if cron_expression:

@@ -4,16 +4,17 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
+from .config import Config
 from .errors import DuplicatePluginError, PluginNotLoadedError
+from .plugin import Plugin
 from .utils import get_logger, log_function_call
 
 __all__ = ["PluginManager"]
 
+
 if TYPE_CHECKING:
     import logging
     from typing import Any
-
-    from .plugin import Plugin
 
 
 class PluginManager:
@@ -24,6 +25,15 @@ class PluginManager:
         retry_delay: int
         _webhook_url: str | None
         _stopped: bool
+
+    __slots__ = (
+        "_stopped",
+        "_webhook_url",
+        "logger",
+        "max_retries",
+        "plugins",
+        "retry_delay",
+    )
 
     def __init__(self, max_retries: int = 3, retry_delay: int = 5, webhook_url: str | None = None) -> None:
         self.plugins = []
@@ -52,8 +62,16 @@ class PluginManager:
         Args:
             plugin: A class that inherits from BasePlugin.
         """
-        # if not issubclass(plugin, Plugin):
-        #     raise TypeError("Plugin must be a subclass of Plugin")
+        if not issubclass(plugin, Plugin):
+            raise TypeError("Plugin must be a subclass of Plugin")
+
+        if Config.run_root_only and not plugin._requires_root:
+            self.logger.info(f"Skipping plugin {plugin.__name__} (requires root privileges)")
+            return
+
+        if Config.run_non_root_only and plugin._requires_root:
+            self.logger.info(f"Skipping plugin {plugin.__name__} (requires non-root privileges)")
+            return
 
         try:
             kwargs.setdefault("webhook_url", self._webhook_url)

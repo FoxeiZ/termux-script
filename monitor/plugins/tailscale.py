@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from lib.manager import PluginManager
 
 
-class Tailscaled(subprocess.Popen):
+class Tailscaled(subprocess.Popen[bytes]):
     def __init__(self, home_dir: Path | str, auth_key: str = ""):
         self.logger = get_logger("TailscaledProcess")
         self.logger.debug("tailscaled process started")
@@ -36,7 +36,7 @@ class Tailscaled(subprocess.Popen):
             self._download_tailscale_binaries()
 
         # check again after download attempt
-        missing_files = []
+        missing_files: list[str] = []
         if not self.tailscaled_bin.exists():
             missing_files.append(str(self.tailscaled_bin))
         if not self.tailscale_bin.exists():
@@ -198,7 +198,7 @@ class Tailscaled(subprocess.Popen):
             self.logger.debug("graceful stop timed out")
             return False
 
-    def __call_check(self, *args):
+    def __call_check(self, *args: str) -> bool:
         self.logger.debug("calling command: %s", " ".join(args))
         process = subprocess.run(args, check=False)
         return process.returncode == 0
@@ -251,7 +251,7 @@ class Tailscaled(subprocess.Popen):
         self.logger.debug("tailscaled process stopped")
 
 
-class Socatd(subprocess.Popen):
+class Socatd(subprocess.Popen[bytes]):
     def __init__(self):
         self.logger = get_logger("SocatdProcess")
 
