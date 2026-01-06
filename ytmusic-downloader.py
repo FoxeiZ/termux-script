@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 SAVE_LRC = True
 # Embed lyrics into audio file metadata
 EMBED_LYRICS = False
+PREFER_SYNCED = True
 
 
 def notify(
@@ -165,7 +166,7 @@ class LyricsPluginBase:
     def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
         self.video_id = info.get("id") or ""
         self.title = info.get("title")
-        self.artist = (info.get("artists") or info.get("creators") or [info.get("uploader")])[
+        self.artist = (info.get("artists") or info.get("creators") or [info.get("uploader", "")])[
             0
         ]  # always pick the first artist to avoid issues
 
@@ -572,7 +573,7 @@ class ShazamLyricsPlugin(LyricsPluginBase):
             self._raw_data = self._get_data()
 
         if self._raw_data is None:
-            raise ValueError("No raw data available")
+            return "", False, False
         return self._raw_data
 
     @property
@@ -723,8 +724,9 @@ def get_lyrics(
         if SAVE_LRC:
             save(is_synced, lyrics)
 
-    for plugin in plugins:
+    for plugin in plugins if PREFER_SYNCED else []:
         synced_lyrics = plugin.get_synced()
+        to_screen(f"Checking synced lyrics with {plugin.__class__.__name__}...")
         if synced_lyrics:
             to_screen("Found synced lyrics.")
             yield from process(True, synced_lyrics)
@@ -1071,5 +1073,5 @@ def main(url: str | None = None):
 
 
 if __name__ == "__main__":
-    main()
-    # sys.exit(main("https://music.youtube.com/watch?v=7U35uu6n_1U"))
+    # main()
+    sys.exit(main("https://music.youtube.com/watch?v=iyilehKHCKg"))
