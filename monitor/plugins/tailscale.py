@@ -140,7 +140,6 @@ class Tailscaled(subprocess.Popen[bytes]):
 
             self.logger.debug(
                 line.decode("utf-8", errors="surrogateescape") if isinstance(line, bytes) else line,
-                end="",
             )
 
         self.logger.debug("output reader thread stopped")
