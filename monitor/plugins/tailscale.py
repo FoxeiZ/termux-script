@@ -53,7 +53,7 @@ class Tailscaled(subprocess.Popen[bytes]):
             "sudo",  # run with elevated privileges
             self.tailscaled_bin.as_posix(),
             "--statedir=" + str(self.home_dir / "state"),
-            # "--socket=" + str(self.home_dir / "tailscaled.sock"),
+            "--socket=" + str(self.home_dir / "tailscaled.sock"),
             "--tun=userspace-networking",
             "--socks5-server=localhost:1055",
             "--outbound-http-proxy-listen=localhost:1055",
@@ -66,6 +66,7 @@ class Tailscaled(subprocess.Popen[bytes]):
             stderr=subprocess.STDOUT,
             bufsize=1,
             universal_newlines=True,
+            cwd=self.home_dir,
         )
         self.logger.debug("tailscaled initialized successfully")
 
@@ -156,6 +157,7 @@ class Tailscaled(subprocess.Popen[bytes]):
                 "--advertise-exit-node",
             ],
             check=True,
+            cwd=self.home_dir,
         )
         if sp.returncode != 0:
             raise Exception("failed to bring up connection")
