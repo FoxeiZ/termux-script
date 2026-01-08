@@ -14,6 +14,7 @@ if TYPE_CHECKING:
         RUN_ROOT_ONLY: bool
         RUN_NON_ROOT_ONLY: bool
         RUN_ALL: bool
+        TAILSCALE_AUTH_KEY: str | None
 
 
 class ConfigLoader:
@@ -24,6 +25,7 @@ class ConfigLoader:
         "RUN_ROOT_ONLY": False,
         "RUN_NON_ROOT_ONLY": False,
         "RUN_ALL": False,
+        "TAILSCALE_AUTH_KEY": None,
     }
 
     if TYPE_CHECKING:
@@ -79,6 +81,11 @@ class ConfigLoader:
             dest="RUN_ALL",
             action="store_true",
             help="Run all plugins regardless of root privileges",
+        )
+        parser.add_argument(
+            "--tailscale-auth-key",
+            dest="TAILSCALE_AUTH_KEY",
+            help="Tailscale authentication key",
         )
 
         args, _ = parser.parse_known_args()
@@ -141,6 +148,11 @@ class ConfigLoader:
     def run_all(self) -> bool:
         """Get the run all setting."""
         return self._config.get("RUN_ALL", False)
+
+    @property
+    def tailscale_auth_key(self) -> str | None:
+        """Get the Tailscale authentication key."""
+        return self._config.get("TAILSCALE_AUTH_KEY")
 
 
 Config = ConfigLoader()
