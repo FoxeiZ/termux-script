@@ -342,15 +342,20 @@ class TailscaledPlugin(Plugin):
 
     def start(self):
         self.logger.debug("starting Manager")
-        if not self.tailscaled.wait_for_connection():
-            raise Exception("tailscaled failed to connect")
+        try:
+            if not self.tailscaled.wait_for_connection():
+                raise Exception("tailscaled failed to connect")
 
-        self.tailscaled.bring_up_connection()
-        self.socatd.start()
-        self.logger.debug("manager started successfully")
+            self.tailscaled.bring_up_connection()
+            self.socatd.start()
+            self.logger.debug("manager started successfully")
 
-        # main loop start here
-        self.tailscaled.stdout_reader()
+            # main loop start here
+            self.tailscaled.stdout_reader()
+        except Exception as e:
+            self.logger.error(f"Failed to start TailscaledPlugin: {e}")
+            self.stop()
+            raise
 
     def stop(self):
         self.logger.debug("stopping Manager")
