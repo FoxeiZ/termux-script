@@ -134,7 +134,7 @@ class Tailscaled(subprocess.Popen[bytes]):
             return
 
         while not self.stopped:
-            line = stdout.readline(1)
+            line = stdout.readline()
             if not line:
                 break
 
