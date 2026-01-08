@@ -17,7 +17,22 @@ if TYPE_CHECKING:
     from lib.manager import PluginManager
 
 
-class Tailscaled(subprocess.Popen[bytes]):
+class BasePopen(subprocess.Popen[bytes]):
+    def cleanup(self):
+        with contextlib.suppress(Exception):
+            if self.stdout is not None:
+                self.stdout.close()
+
+        with contextlib.suppress(Exception):
+            if self.stdin is not None:
+                self.stdin.close()
+
+        with contextlib.suppress(Exception):
+            if self.stderr is not None:
+                self.stderr.close()
+
+
+class Tailscaled(BasePopen):
     def __init__(self, home_dir: Path | str, auth_key: str = ""):
         self.logger = get_logger("TailscaledProcess")
         self.logger.debug("tailscaled process started")
@@ -226,6 +241,11 @@ class Tailscaled(subprocess.Popen[bytes]):
 
         self.logger.debug("stopping Tailscaled process with timeout: %d seconds", timeout)
 
+        try:
+            self.cleanup()
+        except Exception:
+            self.logger.debug("cleanup raised an exception", exc_info=True)
+
         for cb in [self._graceful_stop, self._pkill_stop, self._kill_stop]:
             try:
                 if cb():
@@ -255,7 +275,7 @@ class Tailscaled(subprocess.Popen[bytes]):
         self.logger.debug("tailscaled process stopped")
 
 
-class Socatd(subprocess.Popen[bytes]):
+class Socatd(BasePopen):
     def __init__(self):
         self.logger = get_logger("SocatdProcess")
 
@@ -284,6 +304,12 @@ class Socatd(subprocess.Popen[bytes]):
             return
 
         self.logger.debug("stopping Socatd process with timeout: %d seconds", timeout)
+
+        try:
+            self.cleanup()
+        except Exception:
+            self.logger.debug("socatd cleanup raised an exception", exc_info=True)
+
         if self.poll() is None:  # if running
             self.send_signal(signal.SIGINT)
             try:
@@ -324,6 +350,11 @@ class TailscaledPlugin(Plugin):
 
     def stop(self):
         self.logger.debug("stopping Manager")
+        # with contextlib.suppress(Exception):
+        #     self.socatd.cleanup()
+        # with contextlib.suppress(Exception):
+        #     self.tailscaled.cleanup()
         self.socatd.stop()
         self.tailscaled.stop()
+
         self.logger.debug("manager stopped successfully")
