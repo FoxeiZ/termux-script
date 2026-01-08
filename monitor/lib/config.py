@@ -13,6 +13,7 @@ if TYPE_CHECKING:
         LOG_FUNCTION_CALL: bool
         RUN_ROOT_ONLY: bool
         RUN_NON_ROOT_ONLY: bool
+        RUN_SCRIPT_ONLY: bool
         RUN_ALL: bool
         TAILSCALE_AUTH_KEY: str | None
         LOAD_TEST_PLUGINS: bool
@@ -26,6 +27,7 @@ class ConfigLoader:
         "LOG_FUNCTION_CALL": False,
         "RUN_ROOT_ONLY": False,
         "RUN_NON_ROOT_ONLY": False,
+        "RUN_SCRIPT_ONLY": False,
         "RUN_ALL": False,
         "TAILSCALE_AUTH_KEY": None,
         "LOAD_TEST_PLUGINS": False,
@@ -79,6 +81,12 @@ class ConfigLoader:
             dest="RUN_NON_ROOT_ONLY",
             action="store_true",
             help="Run only plugins that do not require root privileges",
+        )
+        parser.add_argument(
+            "--run-script-only",
+            dest="RUN_SCRIPT_ONLY",
+            action="store_true",
+            help="Run only script plugins",
         )
         parser.add_argument(
             "--run-all",
