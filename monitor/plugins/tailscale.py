@@ -17,7 +17,22 @@ if TYPE_CHECKING:
     from lib.manager import PluginManager
 
 
-class Tailscaled(subprocess.Popen[bytes]):
+class BasePopen(subprocess.Popen[bytes]):
+    def cleanup(self):
+        with contextlib.suppress(Exception):
+            if self.stdout is not None:
+                self.stdout.close()
+
+        with contextlib.suppress(Exception):
+            if self.stdin is not None:
+                self.stdin.close()
+
+        with contextlib.suppress(Exception):
+            if self.stderr is not None:
+                self.stderr.close()
+
+
+class Tailscaled(BasePopen):
     def __init__(self, home_dir: Path | str, auth_key: str = ""):
         self.logger = get_logger("TailscaledProcess")
         self.logger.debug("tailscaled process started")
@@ -53,7 +68,7 @@ class Tailscaled(subprocess.Popen[bytes]):
             "sudo",  # run with elevated privileges
             self.tailscaled_bin.as_posix(),
             "--statedir=" + str(self.home_dir / "state"),
-            # "--socket=" + str(self.home_dir / "tailscaled.sock"),
+            "--socket=" + str(self.home_dir / "tailscaled.sock"),
             "--tun=userspace-networking",
             "--socks5-server=localhost:1055",
             "--outbound-http-proxy-listen=localhost:1055",
@@ -66,6 +81,7 @@ class Tailscaled(subprocess.Popen[bytes]):
             stderr=subprocess.STDOUT,
             bufsize=1,
             universal_newlines=True,
+            cwd=self.home_dir,
         )
         self.logger.debug("tailscaled initialized successfully")
 
@@ -133,14 +149,17 @@ class Tailscaled(subprocess.Popen[bytes]):
             return
 
         while not self.stopped:
-            line = stdout.readline(1)
+            try:
+                line = stdout.readline()
+            except ValueError:  # stdout closed
+                break
+
             if not line:
                 break
 
-            print(
-                line.decode("utf-8", errors="surrogateescape") if isinstance(line, bytes) else line,
-                end="",
-            )
+            line_str = line.decode("utf-8", errors="surrogateescape") if isinstance(line, bytes) else line
+            line_str = line_str.strip()
+            self.logger.debug(line_str)
 
         self.logger.debug("output reader thread stopped")
 
@@ -153,15 +172,17 @@ class Tailscaled(subprocess.Popen[bytes]):
                 "up",
                 "--authkey",
                 self.auth_key,
+                "--advertise-exit-node",
             ],
             check=True,
+            cwd=self.home_dir,
         )
         if sp.returncode != 0:
             raise Exception("failed to bring up connection")
 
     def wait_for_connection(self, timeout: int = 60):
         self.logger.debug("waiting for connection with timeout: %d seconds", timeout)
-        pattern = re.compile(r"magicsock.*connected")
+        # pattern = re.compile(r"magicsock.*connected")
         start_time = time.time()
 
         stdout = self.stdout
@@ -170,12 +191,18 @@ class Tailscaled(subprocess.Popen[bytes]):
 
         while time.time() - start_time < timeout:
             try:
-                line = stdout.readline()
+                try:
+                    line = stdout.readline()
+                except ValueError:  # stdout closed
+                    break
+
                 if not line.strip():
                     time.sleep(0.1)
                     continue
 
-                if pattern.search(line.decode("utf-8", errors="surrogateescape") if isinstance(line, bytes) else line):
+                if "bootstrap dial succeeded" in (
+                    line.decode("utf-8", errors="surrogateescape") if isinstance(line, bytes) else line
+                ):
                     self.logger.debug("connection established")
                     return True
                 else:
@@ -247,11 +274,12 @@ class Tailscaled(subprocess.Popen[bytes]):
 
             self.logger.debug("stop method %s failed, trying next", cb.__name__)
 
+        self.cleanup()
         self.stopped = True
         self.logger.debug("tailscaled process stopped")
 
 
-class Socatd(subprocess.Popen[bytes]):
+class Socatd(BasePopen):
     def __init__(self):
         self.logger = get_logger("SocatdProcess")
 
@@ -280,6 +308,7 @@ class Socatd(subprocess.Popen[bytes]):
             return
 
         self.logger.debug("stopping Socatd process with timeout: %d seconds", timeout)
+
         if self.poll() is None:  # if running
             self.send_signal(signal.SIGINT)
             try:
@@ -287,6 +316,7 @@ class Socatd(subprocess.Popen[bytes]):
             except subprocess.TimeoutExpired:
                 self.kill()  # force kill if sigint failed
 
+        self.cleanup()
         self.stopped = True
         self.logger.debug("socatd process stopped")
 
@@ -308,18 +338,28 @@ class TailscaledPlugin(Plugin):
 
     def start(self):
         self.logger.debug("starting Manager")
-        if not self.tailscaled.wait_for_connection():
-            raise Exception("tailscaled failed to connect")
+        try:
+            if not self.tailscaled.wait_for_connection():
+                raise Exception("tailscaled failed to connect")
 
-        self.tailscaled.bring_up_connection()
-        self.socatd.start()
-        self.logger.debug("manager started successfully")
+            self.tailscaled.bring_up_connection()
+            self.socatd.start()
+            self.logger.debug("manager started successfully")
 
-        # main loop start here
-        self.tailscaled.stdout_reader()
+            # main loop start here
+            self.tailscaled.stdout_reader()
+        except Exception as e:
+            self.logger.error(f"Failed to start TailscaledPlugin: {e}")
+            self.stop()
+            raise
 
     def stop(self):
         self.logger.debug("stopping Manager")
+        # with contextlib.suppress(Exception):
+        #     self.socatd.cleanup()
+        # with contextlib.suppress(Exception):
+        #     self.tailscaled.cleanup()
         self.socatd.stop()
         self.tailscaled.stop()
+
         self.logger.debug("manager stopped successfully")
