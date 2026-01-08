@@ -274,11 +274,7 @@ class Tailscaled(BasePopen):
 
             self.logger.debug("stop method %s failed, trying next", cb.__name__)
 
-        try:
-            self.cleanup()
-        except Exception:
-            self.logger.debug("cleanup raised an exception", exc_info=True)
-
+        self.cleanup()
         self.stopped = True
         self.logger.debug("tailscaled process stopped")
 
@@ -320,11 +316,7 @@ class Socatd(BasePopen):
             except subprocess.TimeoutExpired:
                 self.kill()  # force kill if sigint failed
 
-        try:
-            self.cleanup()
-        except Exception:
-            self.logger.debug("socatd cleanup raised an exception", exc_info=True)
-
+        self.cleanup()
         self.stopped = True
         self.logger.debug("socatd process stopped")
 
