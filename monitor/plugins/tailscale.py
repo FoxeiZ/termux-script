@@ -149,7 +149,11 @@ class Tailscaled(BasePopen):
             return
 
         while not self.stopped:
-            line = stdout.readline()
+            try:
+                line = stdout.readline()
+            except ValueError:  # stdout closed
+                break
+
             if not line:
                 break
 
