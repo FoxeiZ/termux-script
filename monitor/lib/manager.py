@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import importlib
 import json
+import os
 import socket
 import threading
 import time
@@ -14,6 +15,7 @@ from .config import Config
 from .errors import DuplicatePluginError, PluginNotLoadedError
 from .ipc_types import IPCCommand, IPCRequest, IPCResponse
 from .plugin import Plugin
+from .plugin.script import ScriptPlugin
 from .utils import get_logger, log_function_call
 
 __all__ = ["PluginManager"]
@@ -47,7 +49,13 @@ class PluginManager:
         "retry_delay",
     )
 
-    def __init__(self, max_retries: int = 3, retry_delay: int = 5, webhook_url: str | None = None) -> None:
+    def __init__(
+        self,
+        max_retries: int = 3,
+        retry_delay: int = 5,
+        webhook_url: str | None = None,
+        ipc_port: int = 8765,
+    ) -> None:
         self.plugins = []
         self.logger = get_logger(self.__class__.__name__)
 
@@ -57,8 +65,8 @@ class PluginManager:
         self._webhook_url = webhook_url
         self._stopped = False
 
+        self.ipc_port: int = ipc_port
         self.ipc_thread: threading.Thread | None = None
-        self.ipc_port: int | None = None
         self._ipc_stop_event: threading.Event | None = None
 
     @property
@@ -158,6 +166,31 @@ class PluginManager:
         plugin._thread = thread
         self.logger.info("Started plugin %s", plugin.name)
 
+    def _load_scripts(self) -> None:
+        """Load scripts from monitor/scripts directory."""
+        scripts_dir = DIR.parent / "scripts"
+        if not scripts_dir.exists():
+            return
+
+        self.logger.info(f"Scanning for scripts in {scripts_dir}")
+        for item in scripts_dir.iterdir():
+            if not item.is_file():
+                continue
+
+            is_executable = item.suffix in (".py", ".sh") or os.access(item, os.X_OK)
+
+            if is_executable:
+                self.logger.info(f"Found script: {item.name}")
+                try:
+                    self.register_plugin(
+                        ScriptPlugin,
+                        script_path=str(item),
+                        use_screen=Config.scripts_use_screen,
+                        force=True,
+                    )
+                except Exception as e:
+                    self.logger.error(f"Failed to load script {item.name}: {e}")
+
     @log_function_call
     def start(self) -> None:
         """
@@ -168,6 +201,8 @@ class PluginManager:
         - Runs 'DaemonPlugin' methods as daemon threads
         """
         self.logger.info("Starting plugin manager...")
+
+        self._load_scripts()
 
         success_count = 0
         try:
@@ -311,6 +346,13 @@ class PluginManager:
                 "data": None,
             }
 
+        if plugin_name.lower() == ScriptPlugin.__name__.lower():
+            return {
+                "status": "failed",
+                "message": "Cannot start ScriptPlugin via IPC. Use specific script plugins instead.",
+                "data": None,
+            }
+
         self.start_plugin(plugin_name, args=args, kwargs=kwargs, force=force)
         return {
             "status": "ok",
@@ -413,7 +455,7 @@ class PluginManager:
             }
             return json.dumps(response)
 
-    def _ipc_worker(self, tcp_port: int | None = None) -> None:
+    def _ipc_worker(self, tcp_port: int = 8765) -> None:
         """TCP worker that listens for JSON commands on localhost.
 
         Args:
@@ -442,7 +484,7 @@ class PluginManager:
         finally:
             srv.close()
 
-    def start_ipc(self, tcp_port: int | None = None) -> None:
+    def start_ipc(self, tcp_port: int = 8765) -> None:
         if self.ipc_thread and self.ipc_thread.is_alive():
             self.logger.info("IPC already running")
             return

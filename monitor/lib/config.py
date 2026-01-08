@@ -16,6 +16,7 @@ if TYPE_CHECKING:
         RUN_ALL: bool
         TAILSCALE_AUTH_KEY: str | None
         LOAD_TEST_PLUGINS: bool
+        SCRIPTS_USE_SCREEN: bool
 
 
 class ConfigLoader:
@@ -28,6 +29,7 @@ class ConfigLoader:
         "RUN_ALL": False,
         "TAILSCALE_AUTH_KEY": None,
         "LOAD_TEST_PLUGINS": False,
+        "SCRIPTS_USE_SCREEN": False,
     }
 
     if TYPE_CHECKING:
@@ -88,6 +90,12 @@ class ConfigLoader:
             "--tailscale-auth-key",
             dest="TAILSCALE_AUTH_KEY",
             help="Tailscale authentication key",
+        )
+        parser.add_argument(
+            "--scripts-use-screen",
+            dest="SCRIPTS_USE_SCREEN",
+            action="store_true",
+            help="Run scripts with screen wrapper",
         )
 
         args, _ = parser.parse_known_args()
@@ -155,6 +163,11 @@ class ConfigLoader:
     def tailscale_auth_key(self) -> str | None:
         """Get the Tailscale authentication key."""
         return self._config.get("TAILSCALE_AUTH_KEY")
+
+    @property
+    def scripts_use_screen(self) -> bool:
+        """Get the script run with screen setting."""
+        return self._config.get("SCRIPTS_USE_SCREEN", False)
 
     @property
     def load_test_plugins(self) -> bool:
