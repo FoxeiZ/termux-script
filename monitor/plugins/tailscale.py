@@ -137,7 +137,7 @@ class Tailscaled(subprocess.Popen[bytes]):
             if not line:
                 break
 
-            print(
+            self.logger.debug(
                 line.decode("utf-8", errors="surrogateescape") if isinstance(line, bytes) else line,
                 end="",
             )
@@ -153,6 +153,7 @@ class Tailscaled(subprocess.Popen[bytes]):
                 "up",
                 "--authkey",
                 self.auth_key,
+                "--advertise-exit-node",
             ],
             check=True,
         )
@@ -161,7 +162,7 @@ class Tailscaled(subprocess.Popen[bytes]):
 
     def wait_for_connection(self, timeout: int = 60):
         self.logger.debug("waiting for connection with timeout: %d seconds", timeout)
-        pattern = re.compile(r"magicsock.*connected")
+        # pattern = re.compile(r"magicsock.*connected")
         start_time = time.time()
 
         stdout = self.stdout
@@ -175,7 +176,9 @@ class Tailscaled(subprocess.Popen[bytes]):
                     time.sleep(0.1)
                     continue
 
-                if pattern.search(line.decode("utf-8", errors="surrogateescape") if isinstance(line, bytes) else line):
+                if "bootstrap dial succeeded" in (
+                    line.decode("utf-8", errors="surrogateescape") if isinstance(line, bytes) else line
+                ):
                     self.logger.debug("connection established")
                     return True
                 else:
