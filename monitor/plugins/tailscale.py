@@ -92,7 +92,7 @@ class Tailscaled(subprocess.Popen[bytes]):
             self.home_dir.mkdir(parents=True, exist_ok=True)
             with requests.get(download_url, stream=True, timeout=60) as r:
                 r.raise_for_status()
-                with open(tar_file, "wb") as f:
+                with Path(tar_file).open("wb") as f:
                     f.writelines(r.iter_content(chunk_size=8192))
 
             self.logger.debug("download completed, extracting to: %s", self.home_dir)

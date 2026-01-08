@@ -16,13 +16,7 @@ if TYPE_CHECKING:
         RUN_ALL: bool
 
 
-class ConfigSingleton:
-    """
-    A singleton class for managing configuration values from environment variables
-    and command-line arguments.
-    """
-
-    _instance = None
+class ConfigLoader:
     _defaults: ClassVar[_ConfigT] = {
         "WEBHOOK_URL": None,
         "LOG_LEVEL": "INFO",
@@ -31,17 +25,11 @@ class ConfigSingleton:
         "RUN_NON_ROOT_ONLY": False,
         "RUN_ALL": False,
     }
+
     if TYPE_CHECKING:
-        _config: _ConfigT  # type: ignore
+        _config: _ConfigT
 
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialize()
-        return cls._instance
-
-    def _initialize(self):
-        """Initialize the configuration values."""
+    def __init__(self):
         self._config = self._defaults.copy()
         self._parse_args()
         self._load_from_env()
@@ -155,4 +143,4 @@ class ConfigSingleton:
         return self._config.get("RUN_ALL", False)
 
 
-Config = ConfigSingleton()
+Config = ConfigLoader()

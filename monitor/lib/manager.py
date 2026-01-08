@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .config import Config
@@ -15,6 +16,8 @@ __all__ = ["PluginManager"]
 if TYPE_CHECKING:
     import logging
     from typing import Any
+
+DIR = Path(__file__).resolve().parent
 
 
 class PluginManager:
