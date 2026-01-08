@@ -191,7 +191,11 @@ class Tailscaled(BasePopen):
 
         while time.time() - start_time < timeout:
             try:
-                line = stdout.readline()
+                try:
+                    line = stdout.readline()
+                except ValueError:  # stdout closed
+                    break
+
                 if not line.strip():
                     time.sleep(0.1)
                     continue
