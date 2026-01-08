@@ -20,7 +20,7 @@ if __name__ == "__main__":
     is_termux = (
         "com.termux" in os.environ.get("SHELL", "") or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr"
     )
-    if Config.debug:
+    if Config.load_test_plugins:
         manager.register_plugin(LongProcessPlugin)
         manager.register_plugin(LongProcessPluginWithError)
         manager.register_plugin(LongProcessPluginWithLongOutput)

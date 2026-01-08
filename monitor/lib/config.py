@@ -15,6 +15,7 @@ if TYPE_CHECKING:
         RUN_NON_ROOT_ONLY: bool
         RUN_ALL: bool
         TAILSCALE_AUTH_KEY: str | None
+        LOAD_TEST_PLUGINS: bool
 
 
 class ConfigLoader:
@@ -26,6 +27,7 @@ class ConfigLoader:
         "RUN_NON_ROOT_ONLY": False,
         "RUN_ALL": False,
         "TAILSCALE_AUTH_KEY": None,
+        "LOAD_TEST_PLUGINS": False,
     }
 
     if TYPE_CHECKING:
@@ -153,6 +155,11 @@ class ConfigLoader:
     def tailscale_auth_key(self) -> str | None:
         """Get the Tailscale authentication key."""
         return self._config.get("TAILSCALE_AUTH_KEY")
+
+    @property
+    def load_test_plugins(self) -> bool:
+        """Get the load test plugins setting."""
+        return self._config.get("LOAD_TEST_PLUGINS", False)
 
 
 Config = ConfigLoader()
