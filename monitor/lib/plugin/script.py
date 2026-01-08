@@ -54,13 +54,7 @@ class ScriptPlugin(Plugin):
         self.logger.info(f"Starting script with command: {cmd}")
 
         try:
-            self._process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=self.cwd,
-            )
-
+            self._process = subprocess.Popen(cmd, cwd=self.cwd)
             while not self._stop_event.is_set():
                 if self._process.poll() is not None:
                     break
@@ -69,12 +63,6 @@ class ScriptPlugin(Plugin):
             if self._stop_event.is_set():
                 self.logger.info("Stopping script process...")
                 self._terminate_process()
-
-            stdout, stderr = self._process.communicate()
-            if stdout:
-                self.logger.info(f"Output: {stdout.decode('utf-8', errors='replace')}")
-            if stderr:
-                self.logger.error(f"Error: {stderr.decode('utf-8', errors='replace')}")
 
         except Exception as e:
             self.logger.error(f"Failed to run script: {e}")
