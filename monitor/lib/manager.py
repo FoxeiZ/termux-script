@@ -182,12 +182,15 @@ class PluginManager:
             if is_executable:
                 self.logger.info(f"Found script: {item.name}")
                 try:
-                    self.register_plugin(
-                        ScriptPlugin,
-                        script_path=str(item),
-                        use_screen=Config.scripts_use_screen,
-                        force=True,
-                    )
+                    if item.suffix == ".py":
+                        self.register_plugin(
+                            ScriptPlugin,
+                            script_path="python",
+                            args=[str(item)],
+                            cwd=str(item.parent),
+                            use_screen=Config.scripts_use_screen,
+                            force=True,
+                        )
                 except Exception as e:
                     self.logger.error(f"Failed to load script {item.name}: {e}")
 

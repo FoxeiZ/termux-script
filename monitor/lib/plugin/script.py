@@ -23,14 +23,18 @@ class ScriptPlugin(Plugin):
         self,
         manager: PluginManager,
         script_path: str,
+        cwd: str | None = None,
         args: list[str] | None = None,
         use_screen: bool = False,
         **kwargs: Any,
     ) -> None:
         path = Path(script_path)
         name = path.stem
+
         super().__init__(manager, name=name, **kwargs)
+
         self.script_path = script_path
+        self.cwd = cwd or str(path.parent)
         self.args = args or []
         self.use_screen = use_screen
         self._process = None
@@ -54,7 +58,7 @@ class ScriptPlugin(Plugin):
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                cwd=str(Path(self.script_path).parent),
+                cwd=self.cwd,
             )
 
             while not self._stop_event.is_set():

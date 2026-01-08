@@ -1,4 +1,3 @@
-# ruff: noqa: F401
 import os
 
 from lib.config import Config
@@ -28,14 +27,14 @@ if __name__ == "__main__":
         manager.register_plugin(TestCron2Min)
 
     if is_termux:
-        # manager.register_plugin(
-        #     InterfaceMonitorPlugin,
-        #     reboot=True,
-        #     hotspot=True,
-        #     reboot_threshold=1800,
-        # )
-        # manager.register_plugin(SystemServerPlugin)
-        # manager.register_plugin(SystemMonitorPlugin)
+        manager.register_plugin(
+            InterfaceMonitorPlugin,
+            reboot=True,
+            hotspot=True,
+            reboot_threshold=1800,
+        )
+        manager.register_plugin(SystemServerPlugin)
+        manager.register_plugin(SystemMonitorPlugin)
         manager.register_plugin(TailscaledPlugin, auth_key=Config.tailscale_auth_key)
 
     manager.run()
