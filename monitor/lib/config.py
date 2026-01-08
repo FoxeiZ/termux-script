@@ -40,7 +40,7 @@ class ConfigLoader:
 
     def _parse_args(self):
         """Parse command line arguments."""
-        parser = argparse.ArgumentParser(add_help=True)
+        parser = argparse.ArgumentParser(add_help=True, exit_on_error=True)
         parser.add_argument(
             "--webhook-url",
             dest="WEBHOOK_URL",
