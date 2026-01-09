@@ -178,6 +178,11 @@ class ConfigLoader:
         return self._config.get("SCRIPTS_USE_SCREEN", False)
 
     @property
+    def run_script_only(self) -> bool:
+        """Get the run script only setting."""
+        return self._config.get("RUN_SCRIPT_ONLY", False)
+
+    @property
     def load_test_plugins(self) -> bool:
         """Get the load test plugins setting."""
         return self._config.get("LOAD_TEST_PLUGINS", False)

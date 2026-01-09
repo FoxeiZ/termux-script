@@ -205,17 +205,20 @@ class PluginManager:
         """
         self.logger.info("Starting plugin manager...")
 
-        self._load_scripts()
-
         success_count = 0
         try:
+            self.start_ipc()
+
+            self._load_scripts()
+            if Config.run_script_only:
+                self.logger.info("RUN_SCRIPT_ONLY is set. Skipping non-script plugins.")
+                return
+
             for plugin in self.plugins:
                 self.start_plugin(plugin=plugin)
                 success_count += 1
 
             self.logger.info(f"Plugin manager started with {success_count} plugins")
-
-            self.start_ipc()
 
         except Exception as e:
             self.logger.error(f"Failed to start plugin manager: {e}")
