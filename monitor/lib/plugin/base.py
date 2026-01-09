@@ -59,20 +59,12 @@ class Plugin:
         """Initialize plugin."""
         self.manager = manager
         self.webhook_url = webhook_url
-        self.name = (
-            name
-            if name is not None
-            else self.__class__.name or getattr(self, "name", self.__class__.__name__) or self.__class__.__name__
-        )
+        self.name = name or self.__class__.name
         self.logger = get_logger(name=self.name)
 
-        self._requires_root = (
-            requires_root if requires_root is not None else getattr(self.__class__, "_requires_root", False)
-        )
+        self._requires_root = requires_root if requires_root is not None else self.__class__._requires_root
         self._restart_on_failure = (
-            restart_on_failure
-            if restart_on_failure is not None
-            else getattr(self.__class__, "_restart_on_failure", False)
+            restart_on_failure if restart_on_failure is not None else self.__class__._restart_on_failure
         )
         self._message_id = None
         self._thread = None
@@ -87,8 +79,7 @@ class Plugin:
     ) -> None:
         """Support class-level parameters like ``class CustomPlugin(Plugin, name="...")``"""
         super().__init_subclass__()
-        if name:
-            cls.name = name
+        cls.name = name or cls.__name__
         cls._requires_root = requires_root
         cls._restart_on_failure = restart_on_failure
 
