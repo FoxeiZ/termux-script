@@ -33,7 +33,7 @@ def sizeof_fmt(num: float, suffix: str = "B"):
     return f"{num:.1f}Yi{suffix}"
 
 
-class SystemMonitorPlugin(IntervalPlugin):
+class SystemMonitorPlugin(IntervalPlugin, requires_root=True):
     BATT_PATH = "/sys/class/power_supply/battery"
     if TYPE_CHECKING:
         _first_run: bool

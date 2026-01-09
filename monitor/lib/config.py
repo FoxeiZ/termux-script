@@ -8,26 +8,32 @@ if TYPE_CHECKING:
     from typing import Any, TypedDict
 
     class _ConfigT(TypedDict):
-        WEBHOOK_URL: str | None
-        LOG_LEVEL: str
-        LOG_FUNCTION_CALL: bool
-        RUN_ROOT_ONLY: bool
-        RUN_NON_ROOT_ONLY: bool
-        RUN_ALL: bool
-        TAILSCALE_AUTH_KEY: str | None
+        DISABLE_IPC: bool
         LOAD_TEST_PLUGINS: bool
+        LOG_FUNCTION_CALL: bool
+        LOG_LEVEL: str
+        RUN_ALL: bool
+        RUN_NON_ROOT_ONLY: bool
+        RUN_ROOT_ONLY: bool
+        RUN_SCRIPT_ONLY: bool
+        SCRIPTS_USE_SCREEN: bool
+        TAILSCALE_AUTH_KEY: str | None
+        WEBHOOK_URL: str | None
 
 
 class ConfigLoader:
     _defaults: ClassVar[_ConfigT] = {
-        "WEBHOOK_URL": None,
-        "LOG_LEVEL": "INFO",
-        "LOG_FUNCTION_CALL": False,
-        "RUN_ROOT_ONLY": False,
-        "RUN_NON_ROOT_ONLY": False,
-        "RUN_ALL": False,
-        "TAILSCALE_AUTH_KEY": None,
+        "DISABLE_IPC": False,
         "LOAD_TEST_PLUGINS": False,
+        "LOG_FUNCTION_CALL": False,
+        "LOG_LEVEL": "INFO",
+        "RUN_ALL": False,
+        "RUN_NON_ROOT_ONLY": False,
+        "RUN_ROOT_ONLY": False,
+        "RUN_SCRIPT_ONLY": False,
+        "SCRIPTS_USE_SCREEN": False,
+        "TAILSCALE_AUTH_KEY": None,
+        "WEBHOOK_URL": None,
     }
 
     if TYPE_CHECKING:
@@ -79,6 +85,12 @@ class ConfigLoader:
             help="Run only plugins that do not require root privileges",
         )
         parser.add_argument(
+            "--run-script-only",
+            dest="RUN_SCRIPT_ONLY",
+            action="store_true",
+            help="Run only script plugins",
+        )
+        parser.add_argument(
             "--run-all",
             dest="RUN_ALL",
             action="store_true",
@@ -88,6 +100,24 @@ class ConfigLoader:
             "--tailscale-auth-key",
             dest="TAILSCALE_AUTH_KEY",
             help="Tailscale authentication key",
+        )
+        parser.add_argument(
+            "--scripts-use-screen",
+            dest="SCRIPTS_USE_SCREEN",
+            action="store_true",
+            help="Run scripts with screen wrapper",
+        )
+        parser.add_argument(
+            "--load-test-plugins",
+            dest="LOAD_TEST_PLUGINS",
+            action="store_true",
+            help="Load test plugins for development purposes",
+        )
+        parser.add_argument(
+            "--disable-ipc",
+            dest="DISABLE_IPC",
+            action="store_true",
+            help="Disable inter-process communication (IPC)",
         )
 
         args, _ = parser.parse_known_args()
@@ -157,9 +187,24 @@ class ConfigLoader:
         return self._config.get("TAILSCALE_AUTH_KEY")
 
     @property
+    def scripts_use_screen(self) -> bool:
+        """Get the script run with screen setting."""
+        return self._config.get("SCRIPTS_USE_SCREEN", False)
+
+    @property
+    def run_script_only(self) -> bool:
+        """Get the run script only setting."""
+        return self._config.get("RUN_SCRIPT_ONLY", False)
+
+    @property
     def load_test_plugins(self) -> bool:
         """Get the load test plugins setting."""
         return self._config.get("LOAD_TEST_PLUGINS", False)
+
+    @property
+    def disable_ipc(self) -> bool:
+        """Get the disable IPC setting."""
+        return self._config.get("DISABLE_IPC", False)
 
 
 Config = ConfigLoader()
