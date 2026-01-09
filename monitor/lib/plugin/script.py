@@ -80,9 +80,8 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
             return
 
         if self.use_screen:
-            screen_name = f"monitor_script_{self.name}"
-            self.logger.info(f"Terminating screen session {screen_name}")
-            subprocess.run(["screen", "-S", screen_name, "-X", "quit"], check=False)
+            self.logger.info(f"Terminating screen session {self.name}")
+            subprocess.run(["screen", "-S", self.name, "-X", "quit"], check=False)
 
         try:
             self._process.wait(timeout=5)
