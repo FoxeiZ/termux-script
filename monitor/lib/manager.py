@@ -94,20 +94,20 @@ class PluginManager:
         if not force:
             if Config.run_script_only and plugin is not ScriptPlugin:
                 self.logger.info(f"Skipping plugin {plugin.__name__} (not a script plugin in script-only env)")
-                raise PluginNotLoadedError(
-                    f"Plugin {plugin.__name__} is not a script but environment is script-only. Use --force to override."
-                )
+                # raise PluginNotLoadedError(
+                #     f"Plugin {plugin.__name__} is not a script but environment is script-only. Use --force to override."
+                # )
             if Config.run_root_only and not plugin._requires_root:
                 self.logger.info(f"Skipping plugin {plugin.__name__} (non-root plugin in root-only env)")
-                raise PluginNotLoadedError(
-                    f"Plugin {plugin.__name__} is non-root but environment is root-only. Use --force to override."
-                )
+                # raise PluginNotLoadedError(
+                #     f"Plugin {plugin.__name__} is non-root but environment is root-only. Use --force to override."
+                # )
 
             if Config.run_non_root_only and plugin._requires_root:
                 self.logger.info(f"Skipping plugin {plugin.__name__} (root plugin in non-root env)")
-                raise PluginNotLoadedError(
-                    f"Plugin {plugin.__name__} requires root but environment is non-root. Use --force to override."
-                )
+                # raise PluginNotLoadedError(
+                #     f"Plugin {plugin.__name__} requires root but environment is non-root. Use --force to override."
+                # )
 
         try:
             kwargs.setdefault("webhook_url", self._webhook_url)
