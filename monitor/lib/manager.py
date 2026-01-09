@@ -190,6 +190,14 @@ class PluginManager:
                             cwd=str(item.parent),
                             use_screen=Config.scripts_use_screen,
                             force=True,
+                            name=item.stem,
+                        )
+                    else:
+                        self.register_plugin(
+                            ScriptPlugin,
+                            script_path=str(item),
+                            use_screen=Config.scripts_use_screen,
+                            force=True,
                         )
                 except Exception as e:
                     self.logger.error(f"Failed to load script {item.name}: {e}")

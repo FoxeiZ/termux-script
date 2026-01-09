@@ -26,10 +26,12 @@ class ScriptPlugin(Plugin):
         cwd: str | None = None,
         args: list[str] | None = None,
         use_screen: bool = False,
+        name: str = "",
         **kwargs: Any,
     ) -> None:
         path = Path(script_path)
-        name = path.stem
+        if not name:
+            name = path.stem
 
         super().__init__(manager, name=name, **kwargs)
 
