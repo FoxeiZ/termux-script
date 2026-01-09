@@ -70,7 +70,7 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
                 self._terminate_process()
             else:
                 self.logger.warning(f"Script {self.name} self-exited with code {self._process.returncode}")
-                if self._restart_on_failure and self._process.returncode != 0:
+                if self.restart_on_failure and self._process.returncode != 0:
                     raise RuntimeError(f"Script {self.name} exited unexpectedly")
         finally:
             self._process = None
