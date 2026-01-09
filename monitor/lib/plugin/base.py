@@ -1,6 +1,10 @@
+# ruff: noqa: S311
+
 from __future__ import annotations
 
 import io
+import random
+import time
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 
@@ -34,6 +38,7 @@ class Plugin:
         "__http_session",
         "_message_id",
         "_requires_root",
+        "_restart_on_failure",
         "_thread",
         "logger",
         "manager",
@@ -56,17 +61,29 @@ class Plugin:
         self.logger = get_logger(name=self.name)
 
         self._requires_root = False
+        self._restart_on_failure = False
         self._message_id = None
         self._thread = None
 
         self.__http_session = http_session or requests.Session() if self.webhook_url else None
 
-    def __init_subclass__(cls, name: str = "", requires_root: bool = False) -> None:
+    def __init_subclass__(
+        cls,
+        name: str = "",
+        requires_root: bool = False,
+        restart_on_failure: bool = False,
+    ) -> None:
         """Support class-level parameters like ``class CustomPlugin(Plugin, name="...")``"""
         super().__init_subclass__()
         if name:
             cls.name = name
         cls._requires_root = requires_root
+        cls._restart_on_failure = restart_on_failure
+
+    @property
+    def restart_on_failure(self) -> bool:
+        """Return whether the plugin should restart on failure."""
+        return self._restart_on_failure
 
     @property
     def requires_root(self) -> bool:
@@ -211,12 +228,43 @@ class Plugin:
 
         If needed, override this method to fit your plugin's needs.
         """
-        try:
-            self.start()
-        except Exception as e:
-            self.logger.error(f"Plugin {self.name} failed: {e}")
-            self.logger.exception(e)
-            # self.send_error(content=str(e), wait=True)
+        attempts = 0
+        base_delay = max(1, self.manager.retry_delay)
+        max_retries = self.manager.max_retries
+        max_backoff = 300
+
+        while True:
+            try:
+                self.start()
+                attempts = 0
+                return
+
+            except Exception as e:
+                attempts += 1
+                self.logger.error(f"Plugin {self.name} failed: {e}")
+                self.logger.exception(e)
+
+                if not self.restart_on_failure:
+                    break
+
+                if max_retries > 0 and attempts >= max_retries:
+                    self.logger.error("Max retries reached for plugin %s; giving up", self.name)
+                    break
+
+                backoff = min(base_delay * (2 ** (attempts - 1)), max_backoff)
+                jitter = backoff * 0.1
+                delay = backoff + random.uniform(-jitter, jitter)
+                delay = max(0.1, delay)
+
+                self.logger.info(
+                    "Restarting plugin %s in %.1fs (attempt %d/%s)",
+                    self.name,
+                    delay,
+                    attempts,
+                    str(max_retries) if max_retries > 0 else "∞",
+                )
+
+                time.sleep(delay)
 
     @abstractmethod
     def start(self) -> None:

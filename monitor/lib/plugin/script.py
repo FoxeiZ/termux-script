@@ -1,8 +1,11 @@
+# ruff: noqa: S311
+
 from __future__ import annotations
 
 import subprocess
 import threading
 from pathlib import Path
+from random import randint
 from typing import TYPE_CHECKING, Any, override
 
 from lib.plugin.base import Plugin
@@ -32,6 +35,7 @@ class ScriptPlugin(Plugin):
         path = Path(script_path)
         if not name:
             name = path.stem
+        name = f"ScriptPlugin_{name}_{randint(100, 999)}"
 
         super().__init__(manager, name=name, **kwargs)
 
@@ -47,11 +51,10 @@ class ScriptPlugin(Plugin):
         if self.use_screen:
             # -D -m: Start screen in detached mode, but don't fork.
             # -S name: Session name
-            screen_name = f"monitor_script_{self.name}"
-            return ["screen", "-D", "-m", "-S", screen_name, *cmd]
+            return ["screen", "-D", "-m", "-S", self.name, *cmd]
         return cmd
 
-    def _start(self) -> None:
+    def start(self) -> None:
         cmd = self._get_command()
         self.logger.info(f"Starting script with command: {cmd}")
 
@@ -63,11 +66,14 @@ class ScriptPlugin(Plugin):
                 self._stop_event.wait(0.5)
 
             if self._stop_event.is_set():
-                self.logger.info("Stopping script process...")
+                self.logger.info(f"Stopping {self.name} process...")
                 self._terminate_process()
+            else:
+                self.logger.warning(f"Script {self.name} self-exited with code {self._process.returncode}")
 
         except Exception as e:
-            self.logger.error(f"Failed to run script: {e}")
+            self.logger.error(f"Failed to run {self.name} script: {e}")
+            raise
         finally:
             self._process = None
 
