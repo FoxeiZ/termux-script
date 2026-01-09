@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from lib.manager import PluginManager
 
 
-class ScriptPlugin(Plugin):
+class ScriptPlugin(Plugin, restart_on_failure=True):
     if TYPE_CHECKING:
         script_path: str
         args: list[str]
@@ -70,10 +70,6 @@ class ScriptPlugin(Plugin):
                 self._terminate_process()
             else:
                 self.logger.warning(f"Script {self.name} self-exited with code {self._process.returncode}")
-
-        except Exception as e:
-            self.logger.error(f"Failed to run {self.name} script: {e}")
-            raise
         finally:
             self._process = None
 

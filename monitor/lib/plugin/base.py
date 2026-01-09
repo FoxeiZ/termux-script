@@ -52,6 +52,8 @@ class Plugin:
         webhook_url: str = "",
         *,
         name: str = "",
+        requires_root: bool = False,
+        restart_on_failure: bool = False,
         http_session: requests.Session | None = None,
     ) -> None:
         """Initialize plugin."""
@@ -60,8 +62,8 @@ class Plugin:
         self.name = name or getattr(self, "name", self.__class__.__name__) or self.__class__.__name__
         self.logger = get_logger(name=self.name)
 
-        self._requires_root = False
-        self._restart_on_failure = False
+        self._requires_root = requires_root
+        self._restart_on_failure = restart_on_failure
         self._message_id = None
         self._thread = None
 
@@ -270,6 +272,10 @@ class Plugin:
     def start(self) -> None:
         """The main entry point for the plugin.
         This method should be overridden by the plugin implementation.
+
+        If the plugin runs indefinitely, this method should block until the plugin is stopped.
+
+        If the plugin want to retry on failure, it should raise an exception on failure. Don't catch exceptions here.
         """
         raise NotImplementedError
 

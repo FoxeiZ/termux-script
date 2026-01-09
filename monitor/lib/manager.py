@@ -96,7 +96,7 @@ class PluginManager:
                 self.logger.info(f"Skipping plugin {plugin.__name__} (not a script plugin in script-only env)")
                 return
                 # raise PluginNotLoadedError(
-                #     f"Plugin {plugin.__name__} is not a script but environment is script-only. Use --force to override."
+                #     f"Plugin {plugin.__name__} is not a script but environment is script-only. Use --force to override."  # noqa: E501
                 # )
             if Config.run_root_only and not plugin._requires_root:
                 self.logger.info(f"Skipping plugin {plugin.__name__} (non-root plugin in root-only env)")
