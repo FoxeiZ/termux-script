@@ -92,6 +92,11 @@ class PluginManager:
             raise TypeError("Plugin must be a subclass of Plugin")
 
         if not force:
+            if Config.run_script_only and plugin is not ScriptPlugin:
+                self.logger.info(f"Skipping plugin {plugin.__name__} (not a script plugin in script-only env)")
+                raise PluginNotLoadedError(
+                    f"Plugin {plugin.__name__} is not a script but environment is script-only. Use --force to override."
+                )
             if Config.run_root_only and not plugin._requires_root:
                 self.logger.info(f"Skipping plugin {plugin.__name__} (non-root plugin in root-only env)")
                 raise PluginNotLoadedError(
@@ -215,13 +220,8 @@ class PluginManager:
 
         success_count = 0
         try:
-            self.start_ipc()
-
             self._load_scripts()
-            if Config.run_script_only:
-                self.logger.info("RUN_SCRIPT_ONLY is set. Skipping non-script plugins.")
-                return
-
+            self.start_ipc()
             for plugin in self.plugins:
                 self.start_plugin(plugin=plugin)
                 success_count += 1
