@@ -224,7 +224,9 @@ class PluginManager:
         success_count = 0
         try:
             self._load_scripts()
-            self.start_ipc()
+            if not Config.disable_ipc:
+                self.start_ipc()
+
             for plugin in self.plugins:
                 self.start_plugin(plugin=plugin)
                 success_count += 1

@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from lib.manager import PluginManager
 
 
-class SystemServerPlugin(IntervalPlugin):
+class SystemServerPlugin(IntervalPlugin, requires_root=True):
     if TYPE_CHECKING:
         cpu_threshold: int
         threshold_count_max: int
