@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import importlib
 import json
 import os
@@ -13,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from .config import Config
 from .errors import DuplicatePluginError, PluginNotLoadedError
+from .ipc import recv_str, send_json
 from .ipc_types import IPCCommand, IPCRequest, IPCResponse
 from .plugin import Plugin
 from .plugin.script import ScriptPlugin
@@ -67,7 +67,7 @@ class PluginManager:
 
         self.ipc_port: int = ipc_port
         self.ipc_thread: threading.Thread | None = None
-        self._ipc_stop_event: threading.Event | None = None
+        self._ipc_stop_event: threading.Event | None = threading.Event()
 
     @property
     def webhook_url(self) -> str | None:
@@ -98,14 +98,14 @@ class PluginManager:
                 # raise PluginNotLoadedError(
                 #     f"Plugin {plugin.__name__} is not a script but environment is script-only. Use --force to override."  # noqa: E501
                 # )
-            if Config.run_root_only and not plugin._requires_root:
+            if Config.run_root_only and not plugin.requires_root:
                 self.logger.info(f"Skipping plugin {plugin.__name__} (non-root plugin in root-only env)")
                 return
                 # raise PluginNotLoadedError(
                 #     f"Plugin {plugin.__name__} is non-root but environment is root-only. Use --force to override."
                 # )
 
-            if Config.run_non_root_only and plugin._requires_root:
+            if Config.run_non_root_only and plugin.requires_root:
                 self.logger.info(f"Skipping plugin {plugin.__name__} (root plugin in non-root env)")
                 return
                 # raise PluginNotLoadedError(
@@ -161,7 +161,7 @@ class PluginManager:
         if plugin is None:
             raise Exception(f"Plugin {name} not found and could not be imported")
 
-        if plugin._thread and plugin._thread.is_alive():
+        if plugin.thread and plugin.thread.is_alive():
             self.logger.info("Plugin %s already running", plugin.name)
             return
 
@@ -171,7 +171,7 @@ class PluginManager:
             name=f"Plugin-{plugin.name}",
         )
         thread.start()
-        plugin._thread = thread
+        plugin.thread = thread
         self.logger.info("Started plugin %s", plugin.name)
 
     def _load_scripts(self) -> None:
@@ -247,28 +247,24 @@ class PluginManager:
         self.logger.info("Stopping plugin manager...")
 
         for plugin in self.plugins:
-            if not plugin._thread or not plugin._thread.is_alive():
+            if not plugin.thread or not plugin.thread.is_alive():
                 continue
 
-            # Try graceful stop first
             try:
                 plugin.stop()
             except Exception as e:
                 self.logger.error(f"Failed to stop plugin {plugin.name}: {e}")
 
-            # Wait for thread to finish
-            plugin._thread.join(timeout=5.0)
-
-            # If thread is still alive, try force stop
-            if plugin._thread.is_alive():
+            plugin.thread.join(timeout=5.0)
+            if plugin.thread.is_alive():
                 self.logger.warning(f"Plugin {plugin.name} didn't stop gracefully, trying force stop...")
                 try:
                     plugin.force_stop()
-                    plugin._thread.join(timeout=2.0)
+                    plugin.thread.join(timeout=2.0)
                 except Exception as e:
                     self.logger.error(f"Failed to force stop plugin {plugin.name}: {e}")
 
-                if plugin._thread.is_alive():
+                if plugin.thread.is_alive():
                     self.logger.error(f"Plugin {plugin.name} failed to stop completely")
 
         self.stop_ipc()
@@ -281,7 +277,7 @@ class PluginManager:
         if plugin is None:
             raise Exception(f"Plugin {name} not found")
 
-        if not plugin._thread or not plugin._thread.is_alive():
+        if not plugin.thread or not plugin.thread.is_alive():
             self.logger.info("Plugin %s not running", name)
             return
 
@@ -290,17 +286,17 @@ class PluginManager:
         except Exception as e:
             self.logger.error("Failed to stop plugin %s: %s", name, e)
 
-        plugin._thread.join(timeout=timeout)
+        plugin.thread.join(timeout=timeout)
 
-        if plugin._thread.is_alive():
+        if plugin.thread.is_alive():
             self.logger.warning("Plugin %s didn't stop gracefully, trying force stop...", name)
             try:
                 plugin.force_stop()
-                plugin._thread.join(timeout=2.0)
+                plugin.thread.join(timeout=2.0)
             except Exception as e:
                 self.logger.error("Failed to force stop plugin %s: %s", name, e)
 
-        if plugin._thread.is_alive():
+        if plugin.thread.is_alive():
             self.logger.error("Plugin %s failed to stop completely", name)
         else:
             self.logger.info("Stopped plugin %s", name)
@@ -461,7 +457,7 @@ class PluginManager:
             response = {
                 "status": "failed",
                 "message": f"Invalid JSON: {e}",
-                "data": traceback.format_exc(),
+                "data": traceback.format_exc() if Config.debug else None,
             }
             return json.dumps(response)
 
@@ -470,7 +466,7 @@ class PluginManager:
             response = {
                 "status": "failed",
                 "message": str(e),
-                "data": traceback.format_exc(),
+                "data": traceback.format_exc() if Config.debug else None,
             }
             return json.dumps(response)
 
@@ -480,7 +476,7 @@ class PluginManager:
         Args:
             tcp_port: TCP port to listen on (defaults to 8765)
         """
-        stop_event = self._ipc_stop_event or threading.Event()
+        assert self._ipc_stop_event is not None
 
         port = tcp_port or (self.ipc_port or 8765)
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -490,16 +486,16 @@ class PluginManager:
         self.logger.info("IPC TCP server listening on 127.0.0.1:%d", port)
         srv.settimeout(1.0)
         try:
-            while not stop_event.is_set():
+            while not self._ipc_stop_event.is_set():
                 try:
                     conn, _ = srv.accept()
                 except TimeoutError:
                     continue
+
                 with conn:
-                    data = conn.recv(4096).decode("utf-8", errors="ignore")
+                    data = recv_str(conn)
                     response = self._handle_ipc_command(data)
-                    with contextlib.suppress(Exception):
-                        conn.sendall((response + "\n").encode("utf-8"))
+                    send_json(conn, response)
         finally:
             srv.close()
 
@@ -509,7 +505,6 @@ class PluginManager:
             return
 
         self.ipc_port = tcp_port
-        self._ipc_stop_event = threading.Event()
         th = threading.Thread(
             target=self._ipc_worker,
             args=(self.ipc_port,),

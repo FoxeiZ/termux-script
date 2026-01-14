@@ -62,9 +62,13 @@ class Plugin:
         self.name = name or self.__class__.name
         self.logger = get_logger(name=self.name)
 
-        self._requires_root = requires_root if requires_root is not None else self.__class__._requires_root
+        self._requires_root = (
+            requires_root if requires_root is not None else getattr(self.__class__, "_requires_root", False)
+        )
         self._restart_on_failure = (
-            restart_on_failure if restart_on_failure is not None else self.__class__._restart_on_failure
+            restart_on_failure
+            if restart_on_failure is not None
+            else getattr(self.__class__, "_restart_on_failure", False)
         )
         self._message_id = None
         self._thread = None
@@ -96,12 +100,12 @@ class Plugin:
     @property
     def thread(self) -> threading.Thread | None:
         """Return the thread if it exists, otherwise None."""
-        return self._thread
+        return self.thread
 
     @thread.setter
     def thread(self, thread: threading.Thread | None) -> None:
-        """Set the thread for the plugin."""
-        self._thread = thread
+        # TODO: validate thread type
+        self.thread = thread
 
     @property
     def http_session(self) -> requests.Session:
