@@ -100,12 +100,13 @@ class Plugin:
     @property
     def thread(self) -> threading.Thread | None:
         """Return the thread if it exists, otherwise None."""
-        return self.thread
+        return self._thread
 
     @thread.setter
     def thread(self, thread: threading.Thread | None) -> None:
-        # TODO: validate thread type
-        self.thread = thread
+        if thread and thread.is_alive():
+            raise ValueError("Cannot set thread to a running thread.")
+        self._thread = thread
 
     @property
     def http_session(self) -> requests.Session:
@@ -137,10 +138,10 @@ class Plugin:
 
         resp = self.http_session.post(
             self.webhook_url,
+            *args,
             json=payload,
             params={"wait": wait} if wait else None,
             timeout=self.manager.retry_delay,
-            *args,  # noqa: B026
             **kwargs,
         )
         resp.raise_for_status()
