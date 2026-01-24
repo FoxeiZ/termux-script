@@ -9,12 +9,16 @@ import subprocess
 import time
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from lib.manager import Manager
 from lib.plugin import IntervalPlugin
 from lib.utils import log_function_call
 
 if TYPE_CHECKING:
+    from logging import Logger
+
     from lib._types import Embed, EmbedField
     from lib.manager import PluginManager
+    from lib.plugin.metadata import PluginMetadata
 
 
 def default_ifconfig_output():
@@ -83,6 +87,7 @@ wlan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
 
 
 class InterfaceMonitorPlugin(IntervalPlugin):
+    interval = 5
     if TYPE_CHECKING:
         username: str
         avatar_url: str
@@ -93,25 +98,17 @@ class InterfaceMonitorPlugin(IntervalPlugin):
     def __init__(
         self,
         manager: PluginManager,
-        interval: int = 5,
-        webhook_url: str = "",
-        *,
-        reboot: bool = False,
-        hotspot: bool = False,
-        reboot_threshold: int = 1800,
+        metadata: PluginMetadata,
+        logger: Logger,
     ) -> None:
-        super().__init__(
-            manager,
-            interval=interval,
-            webhook_url=webhook_url,
-        )
+        super().__init__(manager, metadata, logger)
 
         self.username = "RN10P"
         self.avatar_url = "https://cdn.discordapp.com/app-assets/1049685078508314696/1249009769075703888.png"
 
-        self.reboot_enabled = reboot
-        self.reboot_threshold = reboot_threshold
-        self.hotspot_enabled = hotspot
+        self.reboot_enabled = bool(metadata.kwargs.get("reboot", False))
+        self.reboot_threshold = int(metadata.kwargs.get("reboot_threshold", 1800))
+        self.hotspot_enabled = bool(metadata.kwargs.get("hotspot", False))
 
         self._previous_state = {}
         self._lost_network_since: datetime.datetime | None = None
@@ -236,9 +233,9 @@ class InterfaceMonitorPlugin(IntervalPlugin):
             self.logger.warning("network has been down for more than 30 minutes, initiating system reboot")
             subprocess.run(["sudo", "reboot"], check=True, shell=False)
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"failed to execute reboot command: {e}")
+            self.logger.error("failed to execute reboot command: %s", e)
         except Exception as e:
-            self.logger.error(f"unexpected error during reboot: {e}")
+            self.logger.error("unexpected error during reboot: %s", e)
 
     @log_function_call
     def start_wifi_hotspot(self):
@@ -270,11 +267,11 @@ class InterfaceMonitorPlugin(IntervalPlugin):
             self.logger.info("wifi hotspot started successfully")
 
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"failed to start WiFi hotspot: {e}")
+            self.logger.error("failed to start WiFi hotspot: %s", e)
             if e.stderr:
-                self.logger.error(f"hotspot error output: {e.stderr}")
+                self.logger.error("hotspot error output: %s", e.stderr)
         except Exception as e:
-            self.logger.error(f"unexpected error starting hotspot: {e}")
+            self.logger.error("unexpected error starting hotspot: %s", e)
 
     @log_function_call
     def stop_wifi_hotspot(self):
@@ -296,11 +293,11 @@ class InterfaceMonitorPlugin(IntervalPlugin):
             self.logger.info("hotspot stopped successfully")
 
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"failed to stop WiFi hotspot: {e}")
+            self.logger.error("failed to stop WiFi hotspot: %s", e)
             if e.stderr:
-                self.logger.error(f"hotspot stop error output: {e.stderr}")
+                self.logger.error("hotspot stop error output: %s", e.stderr)
         except Exception as e:
-            self.logger.error(f"unexpected error stopping hotspot: {e}")
+            self.logger.error("unexpected error stopping hotspot: %s", e)
 
     @log_function_call
     def start(self):
@@ -363,8 +360,6 @@ class InterfaceMonitorPlugin(IntervalPlugin):
 
 
 if __name__ == "__main__":
-    from lib.manager import PluginManager
-
-    manager = PluginManager()
+    manager = Manager()
     manager.register_plugin(InterfaceMonitorPlugin)
     manager.run()

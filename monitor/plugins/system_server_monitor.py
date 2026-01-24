@@ -10,10 +10,14 @@ from lib.plugin import IntervalPlugin
 from lib.utils import log_function_call
 
 if TYPE_CHECKING:
+    from logging import Logger
+
     from lib.manager import PluginManager
+    from lib.plugin.metadata import PluginMetadata
 
 
 class SystemServerPlugin(IntervalPlugin, requires_root=True):
+    interval = 10
     if TYPE_CHECKING:
         cpu_threshold: int
         threshold_count_max: int
@@ -23,20 +27,17 @@ class SystemServerPlugin(IntervalPlugin, requires_root=True):
     def __init__(
         self,
         manager: PluginManager,
-        interval: int = 10,
-        webhook_url: str = "",
-        *,
-        cpu_threshold: int = 100,
-        threshold_count_max: int = 3,
+        metadata: PluginMetadata,
+        logger: Logger,
     ):
         try:
             os.lstat("/proc/stat")
         except PermissionError as e:
             raise PluginError("Permission denied to access /proc/stat. Please run as root.") from e
 
-        super().__init__(manager, interval, webhook_url)
-        self.cpu_threshold = cpu_threshold
-        self.threshold_count_max = threshold_count_max
+        super().__init__(manager, metadata, logger)
+        self.cpu_threshold = int(metadata.kwargs.get("cpu_threshold", 100))
+        self.threshold_count_max = int(metadata.kwargs.get("threshold_count_max", 3))
 
         self._threshold_count = 0
         self._cpu_tracker_proc = None

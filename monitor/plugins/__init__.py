@@ -4,6 +4,8 @@ from .plugin_test.long_process import (
     LongProcessPlugin,
     LongProcessPluginWithError,
     LongProcessPluginWithLongOutput,
+    NativeLongProcessPlugin,
+    NativeLongProcessPluginRoot,
 )
 from .system_monitor import SystemMonitorPlugin
 from .system_server_monitor import SystemServerPlugin
@@ -14,6 +16,8 @@ __all__ = [
     "LongProcessPlugin",
     "LongProcessPluginWithError",
     "LongProcessPluginWithLongOutput",
+    "NativeLongProcessPlugin",
+    "NativeLongProcessPluginRoot",
     "SystemMonitorPlugin",
     "SystemServerPlugin",
     "TailscaledPlugin",

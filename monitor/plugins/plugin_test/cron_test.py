@@ -8,7 +8,7 @@ class TestCronPerMin(CronPlugin, cron_expression="*/1 * * * *", run_on_startup=F
 
     def start(self):
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.logger.info(f"TestCronPerMin job started at {current_time}")
+        self.logger.info(f"test cron per min job started at {current_time}")
 
 
 class TestCron2Min(CronPlugin, cron_expression="*/2 * * * *", run_on_startup=True):
@@ -16,4 +16,4 @@ class TestCron2Min(CronPlugin, cron_expression="*/2 * * * *", run_on_startup=Tru
 
     def start(self):
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.logger.info(f"TestCron2Min job started at {current_time}")
+        self.logger.info(f"test cron 2 min job started at {current_time}")

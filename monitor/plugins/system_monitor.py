@@ -12,10 +12,12 @@ from lib.plugin import IntervalPlugin
 from lib.utils import log_function_call
 
 if TYPE_CHECKING:
+    from logging import Logger
     from typing import TextIO, TypedDict
 
     from lib._types import WebhookPayload
     from lib.manager import PluginManager
+    from lib.plugin.metadata import PluginMetadata
 
     _ReadT = TypeVar("_ReadT", bound=str | int | float)
 
@@ -35,17 +37,18 @@ def sizeof_fmt(num: float, suffix: str = "B"):
 
 class SystemMonitorPlugin(IntervalPlugin, requires_root=True):
     BATT_PATH = "/sys/class/power_supply/battery"
+    interval = 10
     if TYPE_CHECKING:
         _first_run: bool
         _file_cache: dict[str, TextIO]
 
-    def __init__(self, manager: PluginManager, interval: int = 10, webhook_url: str = "", **kwargs: Any):
+    def __init__(self, manager: PluginManager, metadata: PluginMetadata, logger: Logger):
         try:
             os.lstat("/proc/stat")
         except PermissionError:
             raise PluginError("Permission denied to access /proc/stat. Please run as root.") from None
 
-        super().__init__(manager, interval, webhook_url)
+        super().__init__(manager, metadata, logger)
 
         self._first_run = True
         self._file_cache = {}
@@ -191,6 +194,6 @@ class SystemMonitorPlugin(IntervalPlugin, requires_root=True):
             try:
                 file.close()
             except Exception as e:
-                self.logger.error(f"Error closing file: {e}")
+                self.logger.error("error closing file: %s", e)
         self._file_cache.clear()
         return super().on_stop()

@@ -148,62 +148,50 @@ class ConfigLoader:
 
     @property
     def webhook_url(self) -> str | None:
-        """Get the webhook URL."""
         return self._config.get("WEBHOOK_URL")
 
     @property
     def debug(self) -> bool:
-        """Get the debug mode."""
         return self.log_level == "DEBUG"
 
     @property
     def log_level(self) -> str:
-        """Get the logging level."""
         return self._config.get("LOG_LEVEL", "INFO")
 
     @property
     def log_function_call(self) -> bool:
-        """Get the log function call setting."""
         return self._config.get("LOG_FUNCTION_CALL", False)
 
     @property
     def run_root_only(self) -> bool:
-        """Get the run root only setting."""
         return self._config.get("RUN_ROOT_ONLY", False)
 
     @property
     def run_non_root_only(self) -> bool:
-        """Get the run non-root only setting."""
         return self._config.get("RUN_NON_ROOT_ONLY", False)
 
     @property
     def run_all(self) -> bool:
-        """Get the run all setting."""
         return self._config.get("RUN_ALL", False)
 
     @property
     def tailscale_auth_key(self) -> str | None:
-        """Get the Tailscale authentication key."""
         return self._config.get("TAILSCALE_AUTH_KEY")
 
     @property
     def scripts_use_screen(self) -> bool:
-        """Get the script run with screen setting."""
         return self._config.get("SCRIPTS_USE_SCREEN", False)
 
     @property
     def run_script_only(self) -> bool:
-        """Get the run script only setting."""
         return self._config.get("RUN_SCRIPT_ONLY", False)
 
     @property
     def load_test_plugins(self) -> bool:
-        """Get the load test plugins setting."""
         return self._config.get("LOAD_TEST_PLUGINS", False)
 
     @property
     def disable_ipc(self) -> bool:
-        """Get the disable IPC setting."""
         return self._config.get("DISABLE_IPC", False)
 
 

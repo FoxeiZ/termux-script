@@ -1,31 +1,36 @@
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, override
 
 from .base import Plugin
 
 if TYPE_CHECKING:
+    from logging import Logger
+
     from lib.manager import PluginManager
+    from lib.plugin.metadata import PluginMetadata
 
 
 class IntervalPlugin(Plugin):
     if TYPE_CHECKING:
         interval: int
-        # _stop_requested: bool
         _stop_event: threading.Event
 
     def __init__(
         self,
         manager: PluginManager,
-        interval: int,
-        webhook_url: str = "",
-        **kwargs: Any,
+        metadata: PluginMetadata,
+        logger: Logger,
     ) -> None:
-        super().__init__(manager, webhook_url, **kwargs)
-        self.interval = interval
+        super().__init__(manager, metadata, logger)
+        interval_value = metadata.kwargs.get("interval")
+        if interval_value is None and metadata.args:
+            interval_value = metadata.args[0]
+        if interval_value is None:
+            interval_value = getattr(self.__class__, "interval", 0)
+        self.interval = int(interval_value) if interval_value is not None else 0
 
-        # self._stop_requested = False
         self._stop_event = threading.Event()
 
     def wait(self, timeout: int) -> bool:
@@ -48,6 +53,6 @@ class IntervalPlugin(Plugin):
             try:
                 self.start()
             except Exception as e:
-                self.logger.error(f"Plugin {self.name} failed: {e}")
+                self.logger.error("plugin %s failed: %s", self.name, e)
             if self.wait(self.interval):
                 break

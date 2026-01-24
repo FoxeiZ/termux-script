@@ -19,7 +19,7 @@ pythonVersion = "3.12"
 typeCheckingMode = "strict"
 include = ["monitor"]
 exclude = ["**/__pycache__", ".venv"]
-pythonPlatform = "Linux"
+pythonPlatform = "All"
 
 reportUnusedImport = false
 reportUnusedVariable = false

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import multiprocessing
 import shlex
 import subprocess
 from functools import wraps
+from logging.handlers import QueueHandler, QueueListener
 from typing import TYPE_CHECKING, cast
 
 from .config import Config
@@ -19,16 +21,45 @@ if TYPE_CHECKING:
 def get_logger(
     name: str,
     level: str | int = Config.log_level,
-    handler: type[logging.Handler] = logging.StreamHandler,
+    handler: type[logging.Handler] | None = logging.StreamHandler,
     formatter: str = "%(asctime)s - %(levelname)s - %(name)s - %(message)s",
 ) -> logging.Logger:
-    init_handler = handler()
-    init_handler.setFormatter(logging.Formatter(formatter))
-
     logger = logging.getLogger(name)
     logger.setLevel("DEBUG" if Config.debug else level or "INFO")
-    logger.addHandler(init_handler)
+
+    root_logger = logging.getLogger()
+    if handler is not None and not logger.handlers and not root_logger.handlers:
+        init_handler = handler()
+        init_handler.setFormatter(logging.Formatter(formatter))
+        logger.addHandler(init_handler)
+
+    logger.propagate = True
     return logger
+
+
+def setup_logging_queue(
+    level: str | int = Config.log_level,
+    formatter: str = "%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+) -> tuple[multiprocessing.Queue[logging.LogRecord], QueueListener]:
+    log_queue: multiprocessing.Queue[logging.LogRecord] = multiprocessing.Queue()
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(formatter))
+    handler.setLevel("DEBUG" if Config.debug else level or "INFO")
+    listener = QueueListener(log_queue, handler, respect_handler_level=True)
+    listener.start()
+    configure_queue_logging(log_queue, level)
+    return log_queue, listener
+
+
+def configure_queue_logging(
+    log_queue: multiprocessing.Queue[logging.LogRecord],
+    level: str | int = Config.log_level,
+) -> None:
+    root_logger = logging.getLogger()
+    root_logger.setLevel("DEBUG" if Config.debug else level or "INFO")
+    for handler in list(root_logger.handlers):
+        root_logger.removeHandler(handler)
+    root_logger.addHandler(QueueHandler(log_queue))
 
 
 def log_function_call[**P, R](func: Callable[P, R]) -> Callable[P, R]:

@@ -1,17 +1,17 @@
-# ruff: noqa: S311
-
 from __future__ import annotations
 
 import subprocess
 import threading
 from pathlib import Path
-from random import randint
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, override
 
 from lib.plugin.base import Plugin
 
 if TYPE_CHECKING:
+    from logging import Logger
+
     from lib.manager import PluginManager
+    from lib.plugin.metadata import PluginMetadata
 
 
 class ScriptPlugin(Plugin, restart_on_failure=True):
@@ -25,24 +25,20 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
     def __init__(
         self,
         manager: PluginManager,
-        script_path: str,
-        cwd: str | None = None,
-        args: list[str] | None = None,
-        use_screen: bool = False,
-        name: str = "",
-        **kwargs: Any,
+        metadata: PluginMetadata,
+        logger: Logger,
     ) -> None:
-        path = Path(script_path)
-        if not name:
-            name = path.stem
-        name = f"ScriptPlugin_{name}_{randint(100, 999)}"
+        super().__init__(manager, metadata, logger)
 
-        super().__init__(manager, name=name, **kwargs)
+        script_path = metadata.kwargs.get("script_path")
+        if not script_path:
+            raise ValueError("script_path is required")
 
-        self.script_path = script_path
-        self.cwd = cwd or str(path.parent)
-        self.args = args or []
-        self.use_screen = use_screen
+        path = Path(str(script_path))
+        self.script_path = str(script_path)
+        self.cwd = str(metadata.kwargs.get("cwd") or path.parent)
+        self.args = list(metadata.kwargs.get("args") or [])
+        self.use_screen = bool(metadata.kwargs.get("use_screen", False))
         self._process = None
         self._stop_event = threading.Event()
 
@@ -56,7 +52,7 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
 
     def start(self) -> None:
         cmd = self._get_command()
-        self.logger.info(f"Starting script with command: {cmd}")
+        self.logger.info("starting script with command: %s", cmd)
 
         try:
             self._process = subprocess.Popen(cmd, cwd=self.cwd)
@@ -66,12 +62,12 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
                 self._stop_event.wait(0.5)
 
             if self._stop_event.is_set():
-                self.logger.info(f"Stopping {self.name} process...")
+                self.logger.info("stopping %s process", self.name)
                 self._terminate_process()
             else:
-                self.logger.warning(f"Script {self.name} self-exited with code {self._process.returncode}")
+                self.logger.warning("script %s self-exited with code %s", self.name, self._process.returncode)
                 if self.restart_on_failure and self._process.returncode != 0:
-                    raise RuntimeError(f"Script {self.name} exited unexpectedly")
+                    raise RuntimeError(f"script {self.name} exited unexpectedly")
         finally:
             self._process = None
 
@@ -80,18 +76,18 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
             return
 
         if self.use_screen:
-            self.logger.info(f"Terminating screen session {self.name}")
+            self.logger.info("terminating screen session %s", self.name)
             subprocess.run(["screen", "-S", self.name, "-X", "quit"], check=False)
 
         try:
             self._process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            self.logger.warning("Process did not exit, terminating...")
+            self.logger.warning("process did not exit, terminating")
             self._process.terminate()
             try:
                 self._process.wait(timeout=2)
             except subprocess.TimeoutExpired:
-                self.logger.warning("Process did not terminate, killing...")
+                self.logger.warning("process did not terminate, killing")
                 self._process.kill()
 
     @override

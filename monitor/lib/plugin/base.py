@@ -10,8 +10,6 @@ from typing import TYPE_CHECKING
 
 import requests
 
-from lib.utils import get_logger
-
 if TYPE_CHECKING:
     import threading
     from logging import Logger
@@ -19,12 +17,14 @@ if TYPE_CHECKING:
 
     from lib._types import WebhookPayload
     from lib.manager import PluginManager
+    from lib.plugin.metadata import PluginMetadata
 
 
 class Plugin:
     """Base class for plugin implementation."""
 
     if TYPE_CHECKING:
+        metadata: PluginMetadata
         name: str
         manager: PluginManager
         logger: Logger
@@ -42,6 +42,7 @@ class Plugin:
         "_thread",
         "logger",
         "manager",
+        "metadata",
         "name",
         "webhook_url",
     )
@@ -49,27 +50,18 @@ class Plugin:
     def __init__(
         self,
         manager: PluginManager,
-        webhook_url: str = "",
-        *,
-        name: str | None = None,
-        requires_root: bool | None = None,
-        restart_on_failure: bool | None = None,
+        metadata: PluginMetadata,
+        logger: Logger,
         http_session: requests.Session | None = None,
     ) -> None:
-        """Initialize plugin."""
         self.manager = manager
-        self.webhook_url = webhook_url
-        self.name = name or self.__class__.name
-        self.logger = get_logger(name=self.name)
+        self.metadata = metadata
+        self.webhook_url = metadata.webhook_url
+        self.name = metadata.name
+        self.logger = logger
 
-        self._requires_root = (
-            requires_root if requires_root is not None else getattr(self.__class__, "_requires_root", False)
-        )
-        self._restart_on_failure = (
-            restart_on_failure
-            if restart_on_failure is not None
-            else getattr(self.__class__, "_restart_on_failure", False)
-        )
+        self._requires_root = metadata.requires_root
+        self._restart_on_failure = metadata.restart_on_failure
         self._message_id = None
         self._thread = None
 
@@ -81,7 +73,6 @@ class Plugin:
         requires_root: bool = False,
         restart_on_failure: bool = False,
     ) -> None:
-        """Support class-level parameters like ``class CustomPlugin(Plugin, name="...")``"""
         super().__init_subclass__()
         cls.name = name or cls.__name__
         cls._requires_root = requires_root
@@ -249,14 +240,14 @@ class Plugin:
 
             except Exception as e:
                 attempts += 1
-                self.logger.error(f"Plugin {self.name} failed: {e}")
+                self.logger.error("plugin %s failed: %s", self.name, e)
                 self.logger.exception(e)
 
                 if not self.restart_on_failure:
                     break
 
                 if max_retries > 0 and attempts >= max_retries:
-                    self.logger.error("Max retries reached for plugin %s; giving up", self.name)
+                    self.logger.error("max retries reached for plugin %s; giving up", self.name)
                     break
 
                 backoff = min(base_delay * (2 ** (attempts - 1)), max_backoff)
@@ -265,7 +256,7 @@ class Plugin:
                 delay = max(0.1, delay)
 
                 self.logger.info(
-                    "Restarting plugin %s in %.1fs (attempt %d/%s)",
+                    "restarting plugin %s in %.1fs (attempt %d/%s)",
                     self.name,
                     delay,
                     attempts,
@@ -287,6 +278,8 @@ class Plugin:
 
     def stop(self) -> None:
         """Stop the plugin. Default implementation does nothing."""
+        raise NotImplementedError
 
     def force_stop(self) -> None:
         """Force stop the plugin. Default implementation does nothing."""
+        raise NotImplementedError
