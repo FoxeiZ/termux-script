@@ -51,12 +51,11 @@ class PluginManager(multiprocessing.Process):
         self.webhook_url = webhook_url or ""
         self.plugins: dict[str, Plugin] = {}
         self.metadata_by_name: dict[str, PluginMetadata] = {}
-        self.logger: logging.Logger | None = None
+        self.logger: logging.Logger = get_logger(f"plugin_manager.{role}", handler=None)
 
     def run(self) -> None:
-        self._drop_privileges_if_needed()
         configure_queue_logging(self.log_queue)
-        self.logger = get_logger(f"plugin_manager.{self.role}", handler=None)
+        self._drop_privileges_if_needed()
         self.logger.info("starting plugin manager process")
         request_id = ""
         while True:
@@ -70,9 +69,7 @@ class PluginManager(multiprocessing.Process):
                 self.pipe.send(response)
 
                 if request["cmd"] == PipeCommand.SHUTDOWN:
-                    self.logger.info("shutdown requested")
-                    self._stop_all()
-                    self.logger.info("exiting plugin manager process")
+                    self.logger.info("shutdown complete, exiting plugin manager process")
                     return
 
             except EOFError:
@@ -117,19 +114,16 @@ class PluginManager(multiprocessing.Process):
             metadata = request.get("metadata")
             if not metadata:
                 return self._response(request_id, "failed", "metadata is required", None)
-            return self._load_plugin(metadata, request_id)
+            return self._pipe_load_plugin(metadata, request_id)
 
         if cmd == PipeCommand.START:
-            return self._start_plugin(request)
+            return self._pipe_start_plugin(request)
 
         if cmd == PipeCommand.STOP:
-            return self._stop_plugin(request)
+            return self._pipe_stop_plugin(request)
 
         if cmd == PipeCommand.RESTART:
-            stop_result = self._stop_plugin(request)
-            if stop_result["status"] != "ok":
-                return stop_result
-            return self._start_plugin(request)
+            return self._pipe_restart_plugin(request)
 
         if cmd == PipeCommand.LIST:
             return self._response(request_id, "ok", "ok", list(self.metadata_by_name.keys()))
@@ -148,18 +142,23 @@ class PluginManager(multiprocessing.Process):
             "data": data,
         }
 
-    def _load_plugin(self, metadata: PluginMetadata, request_id: str) -> PipeResponse:
+    def load_plugin(self, metadata: PluginMetadata) -> None:
+        """load a plugin from metadata. raises exception on failure."""
         if metadata.name in self.plugins:
-            return self._response(request_id, "ok", "already loaded", None)
+            self.logger.debug("plugin %s already loaded, skipping", metadata.name)
+            return
 
+        self.logger.info("loading plugin %s from %s", metadata.name, metadata.module_path)
         try:
             module = importlib.import_module(metadata.module_path)
         except Exception as exc:
-            return self._response(request_id, "failed", f"import failed: {exc}", traceback.format_exc())
+            self.logger.error("failed to import module %s: %s", metadata.module_path, exc)
+            raise ImportError(f"import failed: {exc}") from exc
 
         plugin_cls = getattr(module, metadata.class_name, None)
         if not plugin_cls or not issubclass(plugin_cls, Plugin):
-            return self._response(request_id, "failed", "invalid plugin class", None)
+            self.logger.error("invalid plugin class %s in module %s", metadata.class_name, metadata.module_path)
+            raise TypeError("invalid plugin class")
 
         metadata = PluginMetadata(
             name=metadata.name,
@@ -176,75 +175,140 @@ class PluginManager(multiprocessing.Process):
         try:
             plugin = plugin_cls(manager=self, metadata=metadata, logger=logger)
         except Exception as exc:
-            return self._response(request_id, "failed", f"init failed: {exc}", traceback.format_exc())
+            self.logger.error("failed to initialize plugin %s: %s", metadata.name, exc)
+            raise RuntimeError(f"init failed: {exc}") from exc
 
         self.plugins[metadata.name] = plugin
         self.metadata_by_name[metadata.name] = metadata
-        return self._response(request_id, "ok", "loaded", None)
+        self.logger.info("plugin %s loaded successfully", metadata.name)
 
-    def _start_plugin(self, request: PipeRequest) -> PipeResponse:
-        request_id = request["id"]
-        plugin_name = request.get("plugin_name")
-        if not plugin_name:
-            return self._response(request_id, "failed", "plugin_name is required", None)
-
+    def start_plugin(self, plugin_name: str, metadata: PluginMetadata | None = None) -> None:
+        """start a plugin by name. raises exception on failure."""
+        self.logger.info("starting plugin %s", plugin_name)
         plugin = self.plugins.get(plugin_name)
-        if plugin is None:
-            metadata = request.get("metadata")
-            if metadata:
-                load_result = self._load_plugin(metadata, request_id)
-                if load_result["status"] != "ok":
-                    return load_result
-                plugin = self.plugins.get(plugin_name)
+        if plugin is None and metadata:
+            self.load_plugin(metadata)
+            plugin = self.plugins.get(plugin_name)
 
         if plugin is None:
-            return self._response(request_id, "failed", "plugin not loaded", None)
+            self.logger.error("plugin %s not loaded", plugin_name)
+            raise ValueError("plugin not loaded")
 
         if plugin.thread and plugin.thread.is_alive():
-            return self._response(request_id, "ok", "already running", None)
+            self.logger.debug("plugin %s already running, skipping", plugin_name)
+            return
 
         thread = threading.Thread(target=plugin._start, daemon=False, name=f"Plugin-{plugin.name}")
-        thread.start()
         plugin.thread = thread
-        return self._response(request_id, "ok", "started", None)
+        thread.start()
+        self.logger.info("plugin %s started", plugin_name)
 
-    def _stop_plugin(self, request: PipeRequest) -> PipeResponse:
-        request_id = request["id"]
-        plugin_name = request.get("plugin_name")
-        if not plugin_name:
-            return self._response(request_id, "failed", "plugin_name is required", None)
-
+    def stop_plugin(self, plugin_name: str) -> None:
+        """stop a plugin by name. raises exception on failure."""
+        self.logger.info("stopping plugin %s", plugin_name)
         plugin = self.plugins.get(plugin_name)
         if not plugin:
-            return self._response(request_id, "failed", "plugin not loaded", None)
+            self.logger.error("plugin %s not loaded", plugin_name)
+            raise ValueError("plugin not loaded")
 
         if not plugin.thread:
-            return self._response(request_id, "ok", "not running", None)
+            self.logger.debug("plugin %s has no thread, nothing to stop", plugin_name)
+            return
 
+        self.logger.debug("sending stop signal to plugin %s", plugin_name)
         plugin.stop()
         plugin.thread.join(timeout=2.0)
         if plugin.thread.is_alive():
+            self.logger.warning("plugin %s did not stop gracefully, forcing stop", plugin_name)
             plugin.force_stop()
             plugin.thread.join(timeout=2.0)
 
         if plugin.thread.is_alive():
-            return self._response(request_id, "failed", "failed to stop", None)
+            self.logger.error("plugin %s failed to stop after force stop", plugin_name)
+            raise RuntimeError("failed to stop")
 
         plugin.thread = None
-        return self._response(request_id, "ok", "stopped", None)
+        self.logger.info("plugin %s stopped", plugin_name)
+
+    def restart_plugin(self, plugin_name: str, metadata: PluginMetadata | None = None) -> None:
+        """restart a plugin by name. raises exception on failure."""
+        self.logger.info("restarting plugin %s", plugin_name)
+        self.stop_plugin(plugin_name)
+        self.start_plugin(plugin_name, metadata)
+        self.logger.info("plugin %s restarted", plugin_name)
+
+    def _pipe_load_plugin(self, metadata: PluginMetadata, request_id: str) -> PipeResponse:
+        """pipe wrapper for load_plugin."""
+        try:
+            self.load_plugin(metadata)
+            return self._response(request_id, "ok", "loaded", None)
+        except Exception as exc:
+            self.logger.error("pipe_load_plugin failed for %s: %s", metadata.name, exc)
+            return self._response(request_id, "failed", str(exc), traceback.format_exc() if Config.debug else None)
+
+    def _pipe_start_plugin(self, request: PipeRequest) -> PipeResponse:
+        """pipe wrapper for start_plugin."""
+        request_id = request["id"]
+        plugin_name = request.get("plugin_name")
+        if not plugin_name:
+            self.logger.error("pipe_start_plugin called without plugin_name")
+            return self._response(request_id, "failed", "plugin_name is required", None)
+
+        try:
+            self.start_plugin(plugin_name, request.get("metadata"))
+            return self._response(request_id, "ok", "started", None)
+        except Exception as exc:
+            self.logger.error("pipe_start_plugin failed for %s: %s", plugin_name, exc)
+            return self._response(request_id, "failed", str(exc), traceback.format_exc() if Config.debug else None)
+
+    def _pipe_stop_plugin(self, request: PipeRequest) -> PipeResponse:
+        """pipe wrapper for stop_plugin."""
+        request_id = request["id"]
+        plugin_name = request.get("plugin_name")
+        if not plugin_name:
+            self.logger.error("pipe_stop_plugin called without plugin_name")
+            return self._response(request_id, "failed", "plugin_name is required", None)
+
+        try:
+            self.stop_plugin(plugin_name)
+            return self._response(request_id, "ok", "stopped", None)
+        except Exception as exc:
+            self.logger.error("pipe_stop_plugin failed for %s: %s", plugin_name, exc)
+            return self._response(request_id, "failed", str(exc), traceback.format_exc() if Config.debug else None)
+
+    def _pipe_restart_plugin(self, request: PipeRequest) -> PipeResponse:
+        """pipe wrapper for restart_plugin."""
+        request_id = request["id"]
+        plugin_name = request.get("plugin_name")
+        if not plugin_name:
+            self.logger.error("pipe_restart_plugin called without plugin_name")
+            return self._response(request_id, "failed", "plugin_name is required", None)
+
+        try:
+            self.restart_plugin(plugin_name, request.get("metadata"))
+            return self._response(request_id, "ok", "restarted", None)
+        except Exception as exc:
+            self.logger.error("pipe_restart_plugin failed for %s: %s", plugin_name, exc)
+            return self._response(request_id, "failed", str(exc), traceback.format_exc() if Config.debug else None)
 
     def _stop_all(self) -> None:
+        """stop all plugins."""
+        failed_plugins: list[str] = []
         for name in list(self.plugins.keys()):
-            request: PipeRequest = {
-                "id": uuid.uuid4().hex,
-                "cmd": PipeCommand.STOP,
-                "plugin_name": name,
-                "metadata": None,
-                "args": [],
-                "kwargs": {},
-                "force": False,
-            }
-            self._stop_plugin(request)
+            try:
+                self.logger.info("stopping plugin %s", name)
+                self.stop_plugin(name)
+            except Exception as exc:
+                if self.logger:
+                    self.logger.warning("failed to stop plugin %s: %s", name, exc)
+                failed_plugins.append(name)
+
+        for name in failed_plugins:
+            plugin = self.plugins.get(name)
+            if plugin and plugin.thread and plugin.thread.is_alive():
+                if self.logger:
+                    self.logger.warning("force marking plugin %s thread as stopped", name)
+                plugin.thread = None
 
 
 class Manager:

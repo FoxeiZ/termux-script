@@ -358,6 +358,7 @@ class TailscaledPlugin(Plugin):
             raise
 
     def stop(self):
+        super().stop()
         self.logger.debug("stopping manager")
         # with contextlib.suppress(Exception):
         #     self.socatd.cleanup()

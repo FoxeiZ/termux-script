@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import io
 import random
-import time
+import threading
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 import requests
 
 if TYPE_CHECKING:
-    import threading
     from logging import Logger
     from typing import Any
 
@@ -39,6 +38,7 @@ class Plugin:
         "_message_id",
         "_requires_root",
         "_restart_on_failure",
+        "_stop_event",
         "_thread",
         "logger",
         "manager",
@@ -63,7 +63,9 @@ class Plugin:
         self._requires_root = metadata.requires_root
         self._restart_on_failure = metadata.restart_on_failure
         self._message_id = None
+
         self._thread = None
+        self._stop_event: threading.Event = threading.Event()
 
         self.__http_session = http_session or requests.Session() if self.webhook_url else None
 
@@ -95,9 +97,10 @@ class Plugin:
 
     @thread.setter
     def thread(self, thread: threading.Thread | None) -> None:
-        if thread and thread.is_alive():
-            raise ValueError("Cannot set thread to a running thread.")
+        if self._thread and self._thread.is_alive():
+            raise ValueError("Cannot set thread to a running plugin thread.")
         self._thread = thread
+        self.logger.info("plugin %s thread set to %s", self.name, thread)
 
     @property
     def http_session(self) -> requests.Session:
@@ -232,7 +235,7 @@ class Plugin:
         max_retries = self.manager.max_retries
         max_backoff = 300
 
-        while True:
+        while not self._stop_event.is_set():
             try:
                 self.start()
                 attempts = 0
@@ -263,7 +266,7 @@ class Plugin:
                     str(max_retries) if max_retries > 0 else "∞",
                 )
 
-                time.sleep(delay)
+                self._stop_event.wait(delay)
 
     @abstractmethod
     def start(self) -> None:
@@ -277,8 +280,10 @@ class Plugin:
         raise NotImplementedError
 
     def stop(self) -> None:
-        """Stop the plugin. Default implementation does nothing."""
-        raise NotImplementedError
+        """Stop the plugin. Default implementation sets the stop event to signal the plugin to stop.
+        Override method should call super().stop() to ensure the stop event is set.
+        """
+        self._stop_event.set()
 
     def force_stop(self) -> None:
         """Force stop the plugin. Default implementation does nothing."""

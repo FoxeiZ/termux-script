@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import threading
 from abc import abstractmethod
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, override
@@ -127,7 +126,6 @@ class CronPlugin(Plugin):
     if TYPE_CHECKING:
         cron_expression: str
         run_on_startup: bool
-        _stop_event: threading.Event
         _cron_parser: CronParser
         _last_run: datetime | None
 
@@ -149,7 +147,6 @@ class CronPlugin(Plugin):
             raise ValueError("cron_expression must be provided either in __init__ or as class attribute")
 
         self._cron_parser = CronParser(self.cron_expression)
-        self._stop_event = threading.Event()
         self._last_run = None
 
     def __init_subclass__(cls, cron_expression: str = "", run_on_startup: bool = False, **kwargs: Any) -> None:
@@ -159,11 +156,6 @@ class CronPlugin(Plugin):
             cls.cron_expression = cron_expression
         if run_on_startup:
             cls.run_on_startup = run_on_startup
-
-    @override
-    def stop(self) -> None:
-        """Stop the cron plugin."""
-        self._stop_event.set()
 
     def is_stopped(self) -> bool:
         """Check if the plugin is stopped."""
@@ -208,12 +200,10 @@ class CronPlugin(Plugin):
             except Exception as e:
                 self.logger.error("plugin %s failed on startup: %s", self.name, e)
 
-        # Main cron loop
         while not self._stop_event.is_set():
             try:
-                # Wait until next scheduled time
                 if self.wait_until_next_run():
-                    break  # Stop requested
+                    break
 
                 if self.should_run_now():
                     self.logger.debug("running scheduled job at %s", datetime.now())

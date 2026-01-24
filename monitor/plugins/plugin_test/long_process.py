@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import threading
 from subprocess import PIPE, Popen, TimeoutExpired
 from time import sleep
 from typing import TYPE_CHECKING
@@ -16,41 +15,37 @@ if TYPE_CHECKING:
 
 
 class NativeLongProcessPlugin(Plugin):
-    def __init__(self, manager: PluginManager, metadata: PluginMetadata, logger: Logger):
-        super().__init__(manager, metadata, logger)
-        self.logger.info("Initialized NativeLongProcessPlugin")
-
-        self._stop_event = threading.Event()
-
     def start(self):
         while not self._stop_event.is_set():
-            self.logger.info("NativeLongProcessPlugin is running...")
+            self.logger.info(
+                "NativeLongProcessPlugin is running..., %s",
+                self._stop_event.is_set(),
+            )
             sleep(1)
 
     def force_stop(self):
-        self._stop_event.set()
+        super().stop()
 
     def stop(self) -> None:
-        self._stop_event.set()
+        self.logger.info("NativeLongProcessPlugin.stop called")
+        super().stop()
 
 
 class NativeLongProcessPluginRoot(Plugin, requires_root=True):
-    def __init__(self, manager: PluginManager, metadata: PluginMetadata, logger: Logger):
-        super().__init__(manager, metadata, logger)
-        self.logger.info("Initialized NativeLongProcessPluginRoot")
-
-        self._stop_event = threading.Event()
-
     def start(self):
         while not self._stop_event.is_set():
-            self.logger.info("NativeLongProcessPlugin is running...")
+            self.logger.info(
+                "NativeLongProcessPluginRoot is running..., %s",
+                self._stop_event.is_set(),
+            )
             sleep(1)
 
     def force_stop(self):
-        self._stop_event.set()
+        super().stop()
 
     def stop(self) -> None:
-        self._stop_event.set()
+        self.logger.info("NativeLongProcessPluginRoot.stop called")
+        super().stop()
 
 
 class LongProcessPlugin(Plugin):
@@ -72,6 +67,7 @@ class LongProcessPlugin(Plugin):
         self.send_success()
 
     def stop(self) -> None:
+        super().stop()
         if not self._process:
             return
         self._process.terminate()
@@ -82,6 +78,7 @@ class LongProcessPlugin(Plugin):
             self._process.wait()
 
     def force_stop(self) -> None:
+        super().stop()
         if not self._process:
             return
         self._process.kill()

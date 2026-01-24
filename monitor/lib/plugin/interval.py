@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import threading
 from typing import TYPE_CHECKING, override
 
 from .base import Plugin
@@ -15,7 +14,6 @@ if TYPE_CHECKING:
 class IntervalPlugin(Plugin):
     if TYPE_CHECKING:
         interval: int
-        _stop_event: threading.Event
 
     def __init__(
         self,
@@ -31,8 +29,6 @@ class IntervalPlugin(Plugin):
             interval_value = getattr(self.__class__, "interval", 0)
         self.interval = int(interval_value) if interval_value is not None else 0
 
-        self._stop_event = threading.Event()
-
     def wait(self, timeout: int) -> bool:
         return self._stop_event.wait(timeout)
 
@@ -45,8 +41,8 @@ class IntervalPlugin(Plugin):
     @override
     def stop(self) -> None:
         """Stop the plugin."""
+        super().stop()
         self.on_stop()
-        self._stop_event.set()
 
     def _start(self) -> None:
         while not self._stop_event.is_set():

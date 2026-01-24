@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import subprocess
-import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING
 
 from lib.plugin.base import Plugin
 
@@ -20,7 +19,6 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
         args: list[str]
         use_screen: bool
         _process: subprocess.Popen[bytes] | None
-        _stop_event: threading.Event
 
     def __init__(
         self,
@@ -40,7 +38,6 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
         self.args = list(metadata.kwargs.get("args") or [])
         self.use_screen = bool(metadata.kwargs.get("use_screen", False))
         self._process = None
-        self._stop_event = threading.Event()
 
     def _get_command(self) -> list[str]:
         cmd = [self.script_path, *self.args]
@@ -89,7 +86,3 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
             except subprocess.TimeoutExpired:
                 self.logger.warning("process did not terminate, killing")
                 self._process.kill()
-
-    @override
-    def stop(self) -> None:
-        self._stop_event.set()
