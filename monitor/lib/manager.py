@@ -29,6 +29,7 @@ IS_WINDOWS = os.name == "nt"
 
 if TYPE_CHECKING:
     import logging
+    from collections.abc import Mapping
     from multiprocessing.connection import PipeConnection
 
 
@@ -100,11 +101,15 @@ class PluginManager(multiprocessing.Process):
         sudo_uid = os.environ.get("SUDO_UID")
         sudo_gid = os.environ.get("SUDO_GID")
         if not sudo_uid or not sudo_gid:
+            self.logger.warning(
+                "SUDO_UID/SUDO_GID not set; non-root worker will run with current privileges"
+            )
             return
         if not hasattr(os, "setgid") or not hasattr(os, "setuid"):
             return
         os.setgid(int(sudo_gid))
         os.setuid(int(sudo_uid))
+        self.logger.info("dropped privileges to uid=%s gid=%s", sudo_uid, sudo_gid)
 
     def _handle_request(self, request: PipeRequest) -> PipeResponse:
         cmd = request["cmd"]
@@ -160,17 +165,6 @@ class PluginManager(multiprocessing.Process):
             self.logger.error("invalid plugin class %s in module %s", metadata.class_name, metadata.module_path)
             raise TypeError("invalid plugin class")
 
-        metadata = PluginMetadata(
-            name=metadata.name,
-            module_path=metadata.module_path,
-            class_name=metadata.class_name,
-            requires_root=metadata.requires_root,
-            restart_on_failure=metadata.restart_on_failure,
-            args=list(metadata.args),
-            kwargs=dict(metadata.kwargs),
-            webhook_url=metadata.webhook_url,
-        )
-
         logger = get_logger(f"plugin.{metadata.name}", handler=None)
         try:
             plugin = plugin_cls(manager=self, metadata=metadata, logger=logger)
@@ -224,7 +218,8 @@ class PluginManager(multiprocessing.Process):
             plugin.thread.join(timeout=2.0)
 
         if plugin.thread.is_alive():
-            self.logger.error("plugin %s failed to stop after force stop", plugin_name)
+            self.logger.error("plugin %s failed to stop after force stop, marking as zombie", plugin_name)
+            plugin._thread = None
             raise RuntimeError("failed to stop")
 
         plugin.thread = None
@@ -299,15 +294,13 @@ class PluginManager(multiprocessing.Process):
                 self.logger.info("stopping plugin %s", name)
                 self.stop_plugin(name)
             except Exception as exc:
-                if self.logger:
-                    self.logger.warning("failed to stop plugin %s: %s", name, exc)
+                self.logger.warning("failed to stop plugin %s: %s", name, exc)
                 failed_plugins.append(name)
 
         for name in failed_plugins:
             plugin = self.plugins.get(name)
             if plugin and plugin.thread and plugin.thread.is_alive():
-                if self.logger:
-                    self.logger.warning("force marking plugin %s thread as stopped", name)
+                self.logger.warning("force marking plugin %s thread as stopped", name)
                 plugin.thread = None
 
 
@@ -697,25 +690,22 @@ class Manager:
             "data": data,
         }
 
-    def _handle_ipc_command(self, raw: str) -> str:
+    def _handle_ipc_command(self, raw: str) -> Mapping[str, Any]:
         try:
             request: IPCRequest = json.loads(raw)
-            response = self._handle_ipc_request(request)
-            return json.dumps(response)
+            return self._handle_ipc_request(request)
         except json.JSONDecodeError as exc:
-            response = {
+            return {
                 "status": "failed",
                 "message": f"invalid JSON: {exc}",
                 "data": traceback.format_exc() if Config.debug else None,
             }
-            return json.dumps(response)
         except Exception as exc:
-            response = {
+            return {
                 "status": "failed",
                 "message": str(exc),
                 "data": traceback.format_exc() if Config.debug else None,
             }
-            return json.dumps(response)
 
     def _ipc_worker(self, tcp_port: int = 8765) -> None:
         assert self._ipc_stop_event is not None
@@ -746,6 +736,9 @@ class Manager:
         if self.ipc_thread and self.ipc_thread.is_alive():
             self.logger.info("ipc already running")
             return
+
+        if self._ipc_stop_event is None:
+            self._ipc_stop_event = threading.Event()
 
         self.ipc_port = tcp_port
         thread = threading.Thread(

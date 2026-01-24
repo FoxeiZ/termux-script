@@ -118,8 +118,12 @@ class CronParser:
         return self.__str__()
 
     def __iter__(self):
-        """Make the parser iterable to get the next execution time."""
-        return self.next()
+        """Make the parser iterable to yield successive execution times."""
+        current = datetime.now()
+        while True:
+            next_time = self.next(current)
+            yield next_time
+            current = next_time
 
 
 class CronPlugin(Plugin):

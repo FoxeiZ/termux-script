@@ -50,5 +50,8 @@ class IntervalPlugin(Plugin):
                 self.start()
             except Exception as e:
                 self.logger.error("plugin %s failed: %s", self.name, e)
+                if not self.restart_on_failure:
+                    self.logger.info("plugin %s will not restart (restart_on_failure=False)", self.name)
+                    break
             if self.wait(self.interval):
                 break

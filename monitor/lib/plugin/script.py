@@ -86,3 +86,9 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
             except subprocess.TimeoutExpired:
                 self.logger.warning("process did not terminate, killing")
                 self._process.kill()
+
+    def force_stop(self) -> None:
+        """Force stop the script by killing the subprocess."""
+        if self._process:
+            self.logger.warning("force killing process %s", self.name)
+            self._process.kill()

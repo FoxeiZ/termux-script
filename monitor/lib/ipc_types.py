@@ -35,7 +35,6 @@ class PipeCommand(StrEnum):
     RESTART = "restart"
     LIST = "list"
     SHUTDOWN = "shutdown"
-    IPC = "ipc"
 
 
 class PipeRequest(TypedDict):
