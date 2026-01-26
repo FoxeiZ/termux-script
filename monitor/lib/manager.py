@@ -628,13 +628,17 @@ class Manager:
     def _stop_log_listener(self) -> None:
         self.logger.info("stopping log listener")
         try:
-            self.log_listener.stop()
+            self.log_listener.enqueue_sentinel()
+            if self.log_listener._thread and self.log_listener._thread.is_alive():
+                self.log_listener._thread.join(timeout=2.0)
+                if self.log_listener._thread.is_alive():
+                    self.logger.debug("log listener thread did not stop in time")
         except Exception as exc:
             self.logger.debug("log listener stop error: %s", exc)
         finally:
             try:
+                self.log_queue.cancel_join_thread()
                 self.log_queue.close()
-                self.log_queue.join_thread()
             except Exception as exc:
                 self.logger.debug("log queue close error: %s", exc)
 
