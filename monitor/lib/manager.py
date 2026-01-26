@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .config import Config
+from .config import DIR, IS_TERMUX, IS_WINDOWS, Config
 from .errors import DuplicatePluginError
 from .ipc import recv_str, send_json
 from .ipc_types import IPCCommand, IPCRequest, IPCResponse, PipeCommand, PipeRequest, PipeResponse
@@ -23,12 +23,6 @@ from .plugin.script import ScriptPlugin
 from .utils import configure_queue_logging, get_logger, log_function_call, setup_logging_queue
 
 __all__ = ["Manager", "PluginManager"]
-
-DIR = Path(__file__).resolve().parent
-IS_WINDOWS = os.name == "nt"
-IS_TERMUX = (
-    "com.termux" in os.environ.get("SHELL", "") or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr"
-)
 
 
 if TYPE_CHECKING:
@@ -409,10 +403,10 @@ class Manager:
         if plugin is ScriptPlugin:
             script_path = kwargs.get("script_path")
             requires_root = bool(kwargs.pop("requires_root", requires_root))
-            if script_path:
-                stem = Path(str(script_path)).stem
+            if script_path and name == plugin.__name__:
+                base_name = kwargs.get("name") or Path(str(script_path)).stem
                 unique = uuid.uuid4().hex[:6]
-                name = f"{plugin.__name__}_{stem}_{unique}"
+                name = f"{plugin.__name__}_{base_name}_{unique}"
 
         return PluginMetadata(
             name=name,
@@ -663,7 +657,8 @@ class Manager:
                     self.register_plugin(
                         ScriptPlugin,
                         script_path="python",
-                        args=[str(item)],
+                        args=[str(item.resolve())],
+                        name=item.stem,
                         cwd=str(item.parent),
                         use_screen=Config.scripts_use_screen,
                         requires_root=requires_root,

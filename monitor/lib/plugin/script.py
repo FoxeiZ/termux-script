@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from lib.config import IS_WINDOWS
 from lib.plugin.base import Plugin
 
 if TYPE_CHECKING:
@@ -13,8 +14,6 @@ if TYPE_CHECKING:
 
     from lib.manager import PluginManager
     from lib.plugin.metadata import PluginMetadata
-
-IS_WINDOWS = os.name == "nt"
 
 
 class ScriptPlugin(Plugin, restart_on_failure=True):
@@ -39,7 +38,7 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
         path = Path(str(script_path))
         self.script_path = str(script_path)
         self.cwd = str(metadata.kwargs.get("cwd") or path.parent)
-        self.args = list(metadata.kwargs.get("args") or [])
+        self.args = list(metadata.kwargs.get("args") or []) + list(metadata.args or [])
         self.use_screen = bool(metadata.kwargs.get("use_screen", False))
         self._process = None
 

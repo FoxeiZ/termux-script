@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
@@ -19,6 +20,13 @@ if TYPE_CHECKING:
         SCRIPTS_USE_SCREEN: bool
         TAILSCALE_AUTH_KEY: str | None
         WEBHOOK_URL: str | None
+
+
+DIR = Path(__file__).resolve().parent
+IS_WINDOWS = os.name == "nt"
+IS_TERMUX = (
+    "com.termux" in os.environ.get("SHELL", "") or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr"
+)
 
 
 class ConfigLoader:

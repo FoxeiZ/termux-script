@@ -63,7 +63,6 @@ class Plugin:
         self._requires_root = metadata.requires_root
         self._restart_on_failure = metadata.restart_on_failure
         self._message_id = None
-
         self._thread = None
         self._stop_event: threading.Event = threading.Event()
 
