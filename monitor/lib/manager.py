@@ -131,6 +131,13 @@ class PluginManager(multiprocessing.Process):
                 if s_line.startswith("userId="):
                     uid_str = s_line.split("=", 1)[1].strip()
                     uid = int(uid_str)
+                    os.setgroups(
+                        [
+                            9997,  # everybody
+                            3003,  # inet
+                            uid,
+                        ]
+                    )
                     os.setgid(uid)
                     os.setuid(uid)
                     self._fix_suroot_env_vars()
