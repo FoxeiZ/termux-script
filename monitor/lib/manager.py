@@ -101,12 +101,12 @@ class PluginManager(multiprocessing.Process):
         try:
             self.pipe.close()
         except Exception as exc:
-            self.logger.debug("failed to close pipe: %s", exc)
+            self.logger.warning("failed to close pipe: %s", exc)
 
         try:
             self.log_queue.cancel_join_thread()
         except Exception as exc:
-            self.logger.debug("failed to cancel log queue join thread: %s", exc)
+            self.logger.warning("failed to cancel log queue join thread: %s", exc)
 
     def _drop_privileges_if_needed(self) -> None:
         if IS_WINDOWS:
@@ -219,7 +219,7 @@ class PluginManager(multiprocessing.Process):
             self.logger.debug("plugin %s already running, skipping", plugin_name)
             return
 
-        thread = threading.Thread(target=plugin._start, daemon=False, name=f"Plugin-{plugin.name}")
+        thread = threading.Thread(target=plugin._start, daemon=True, name=f"Plugin-{plugin.name}")
         plugin.thread = thread
         thread.start()
         self.logger.info("plugin %s started", plugin_name)
@@ -238,11 +238,16 @@ class PluginManager(multiprocessing.Process):
 
         self.logger.debug("sending stop signal to plugin %s", plugin_name)
         plugin.stop()
-        plugin.thread.join(timeout=2.0)
+        deadline = time.time() + 5.0
+        while plugin.thread.is_alive() and time.time() < deadline:
+            plugin.thread.join(timeout=0.1)
+            if not plugin.thread.is_alive():
+                break
+
         if plugin.thread.is_alive():
             self.logger.warning("plugin %s did not stop gracefully, forcing stop", plugin_name)
             plugin.force_stop()
-            plugin.thread.join(timeout=2.0)
+            plugin.thread.join(timeout=1.0)
 
         if plugin.thread.is_alive():
             self.logger.error("plugin %s failed to stop after force stop, marking as zombie", plugin_name)
