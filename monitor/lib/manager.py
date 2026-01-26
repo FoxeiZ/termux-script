@@ -219,7 +219,7 @@ class PluginManager(multiprocessing.Process):
             self.logger.debug("plugin %s already running, skipping", plugin_name)
             return
 
-        thread = threading.Thread(target=plugin._start, daemon=True, name=f"Plugin-{plugin.name}")
+        thread = threading.Thread(target=plugin._start, daemon=False, name=f"Plugin-{plugin.name}")
         plugin.thread = thread
         thread.start()
         self.logger.info("plugin %s started", plugin_name)
