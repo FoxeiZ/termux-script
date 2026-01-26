@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 
@@ -6,8 +7,9 @@ sys.stdout.flush()
 
 try:
     while True:
-        print("Working...")
+        print(f"i am worker with pid:{os.getpid()} uid:{os.getuid()} gid:{os.getgid()}")
         sys.stdout.flush()
         time.sleep(5)
 except KeyboardInterrupt:
     print("Worker stopping")
+    sys.stdout.flush()
