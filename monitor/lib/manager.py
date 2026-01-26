@@ -49,6 +49,8 @@ class PluginManager(multiprocessing.Process):
     ) -> None:
         super().__init__(name=f"PluginManager-{role}")
         self.role = role
+        if role not in ("root", "non-root"):
+            raise ValueError("role must be 'root' or 'non-root'")
         self.pipe = pipe
         self.log_queue = log_queue
         self.max_retries = max_retries
@@ -391,6 +393,7 @@ class Manager:
 
         if plugin is ScriptPlugin:
             script_path = kwargs.get("script_path")
+            requires_root = bool(kwargs.pop("requires_root", requires_root))
             if script_path:
                 stem = Path(str(script_path)).stem
                 unique = uuid.uuid4().hex[:6]
@@ -564,9 +567,9 @@ class Manager:
 
     def start(self) -> None:
         self.logger.info("starting manager")
+        self._load_scripts()
         self._start_workers()
         self._load_metadata_to_workers()
-        self._load_scripts()
         for plugin_name in self.metadata_by_name:
             self.start_plugin(plugin_name)
 
@@ -631,7 +634,7 @@ class Manager:
 
         self.logger.info("scanning for scripts in %s", scripts_dir)
         for item in scripts_dir.iterdir():
-            if not item.is_file():
+            if not item.is_file() or item.name.startswith("."):
                 continue
 
             is_executable = item.suffix in (".py", ".sh") or os.access(item, os.X_OK)
@@ -639,6 +642,7 @@ class Manager:
                 continue
 
             self.logger.info("found script: %s", item.name)
+            requires_root = item.stem.startswith("root")
             try:
                 if item.suffix == ".py":
                     self.register_plugin(
@@ -647,6 +651,7 @@ class Manager:
                         args=[str(item)],
                         cwd=str(item.parent),
                         use_screen=Config.scripts_use_screen,
+                        requires_root=requires_root,
                         force=True,
                     )
                 else:
@@ -655,6 +660,7 @@ class Manager:
                         script_path=str(item),
                         cwd=str(item.parent),
                         use_screen=Config.scripts_use_screen,
+                        requires_root=requires_root,
                         force=True,
                     )
             except Exception as exc:
