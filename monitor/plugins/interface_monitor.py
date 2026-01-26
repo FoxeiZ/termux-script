@@ -86,7 +86,7 @@ wlan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
     """
 
 
-class InterfaceMonitorPlugin(IntervalPlugin):
+class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
     interval = 5
     if TYPE_CHECKING:
         username: str
@@ -231,7 +231,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
     def perform_reboot(self):
         try:
             self.logger.warning("network has been down for more than 30 minutes, initiating system reboot")
-            subprocess.run(["sudo", "reboot"], check=True, shell=False)
+            subprocess.run(["reboot"], check=True, shell=False)
         except subprocess.CalledProcessError as e:
             self.logger.error("failed to execute reboot command: %s", e)
         except Exception as e:
@@ -249,14 +249,14 @@ class InterfaceMonitorPlugin(IntervalPlugin):
 
             with contextlib.suppress(Exception):
                 subprocess.run(
-                    ["sudo", "cmd", "wifi", "stop-softap"],
+                    ["cmd", "wifi", "stop-softap"],
                     check=False,
                     shell=False,
                     capture_output=True,
                 )
 
             subprocess.run(
-                ["sudo", "cmd", "wifi", "start-softap", "qwerty123", "open"],
+                ["cmd", "wifi", "start-softap", "qwerty123", "open"],
                 check=True,
                 shell=False,
                 capture_output=True,
@@ -282,7 +282,7 @@ class InterfaceMonitorPlugin(IntervalPlugin):
             self.logger.info("stopping WiFi hotspot as network is restored")
 
             subprocess.run(
-                ["sudo", "cmd", "wifi", "stop-softap"],
+                ["cmd", "wifi", "stop-softap"],
                 check=True,
                 shell=False,
                 capture_output=True,

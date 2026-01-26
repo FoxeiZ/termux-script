@@ -67,7 +67,6 @@ class Tailscaled(BasePopen):
             state_dir.mkdir()
 
         args = [
-            "sudo",  # run with elevated privileges
             self.tailscaled_bin.as_posix(),
             "--statedir=" + str(self.home_dir / "state"),
             "--socket=" + str(self.home_dir / "tailscaled.sock"),
@@ -169,7 +168,6 @@ class Tailscaled(BasePopen):
         self.logger.debug("bringing up connection")
         sp = subprocess.run(
             [
-                "sudo",  # run with elevated privileges
                 self.tailscale_bin,
                 "up",
                 "--authkey",
@@ -235,7 +233,6 @@ class Tailscaled(BasePopen):
     def _pkill_stop(self):
         self.logger.debug("attempting pkill stop")
         return self.__call_check(
-            "sudo",
             "pkill",
             "-f",
             "tailscaled.*userspace-networking.*",
@@ -243,7 +240,7 @@ class Tailscaled(BasePopen):
 
     def _kill_stop(self):
         self.logger.debug("attempting calling kill")
-        return self.__call_check("sudo", "kill", str(self.pid))
+        return self.__call_check("kill", str(self.pid))
 
     def stop(self, timeout: int = 15):
         if self.stopped:
@@ -323,7 +320,7 @@ class Socatd(BasePopen):
         self.logger.debug("socatd process stopped")
 
 
-class TailscaledPlugin(Plugin):
+class TailscaledPlugin(Plugin, requires_root=True):
     def __init__(
         self,
         manager: PluginManager,
