@@ -133,10 +133,28 @@ class PluginManager(multiprocessing.Process):
                     uid = int(uid_str)
                     os.setgid(uid)
                     os.setuid(uid)
+                    self._fix_suroot_env_vars()
                     self.logger.info("dropped privileges to uid/gid %d", uid)
                     return
         except Exception as exc:
             self.logger.error("failed to drop privileges: %s", exc)
+
+    def _fix_suroot_env_vars(self) -> None:
+        env = os.environ.copy()
+        for key, value in list(env.items()):
+            if ".suroot" not in value:
+                continue
+
+            home_path = Path(value)
+            parts = home_path.parts
+            try:
+                suroot_index = parts.index(".suroot")
+            except ValueError:
+                continue
+            new_home = Path(*parts[:suroot_index], *parts[suroot_index + 1 :])
+            new_value = str(new_home)
+            os.environ[key] = new_value
+            self.logger.debug("fixed env var %s: %s -> %s", key, value, new_value)
 
     def _handle_request(self, request: PipeRequest) -> PipeResponse:
         cmd = request["cmd"]
