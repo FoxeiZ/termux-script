@@ -65,39 +65,54 @@ class PluginManager(multiprocessing.Process):
         self._drop_privileges_if_needed()
         self.logger.info("starting plugin manager process")
         request_id = ""
-        while True:
-            try:
-                if not self.pipe.poll(0.5):
-                    continue
-
-                request = self.pipe.recv()
-                request_id = request["id"]
-                response = self._handle_request(request)
-                self.pipe.send(response)
-
-                if request["cmd"] == PipeCommand.SHUTDOWN:
-                    self.logger.info("shutdown complete, exiting plugin manager process")
-                    return
-
-            except EOFError:
-                self.logger.info("pipe closed")
-                return
-
-            except KeyboardInterrupt:
-                pass
-
-            except Exception as exc:
-                error_response: PipeResponse = {
-                    "id": request_id or uuid.uuid4().hex,
-                    "status": "failed",
-                    "message": str(exc),
-                    "data": traceback.format_exc() if Config.debug else None,
-                }
+        try:
+            while True:
                 try:
-                    self.pipe.send(error_response)
-                except Exception:
-                    self.logger.info("pipe send failed, exiting")
+                    if not self.pipe.poll(0.5):
+                        continue
+
+                    request = self.pipe.recv()
+                    request_id = request["id"]
+                    response = self._handle_request(request)
+                    self.pipe.send(response)
+
+                    if request["cmd"] == PipeCommand.SHUTDOWN:
+                        self.logger.info("shutdown complete, exiting plugin manager process")
+                        return
+
+                except EOFError:
+                    self.logger.info("pipe closed")
                     return
+
+                except KeyboardInterrupt:
+                    pass
+
+                except Exception as exc:
+                    error_response: PipeResponse = {
+                        "id": request_id or uuid.uuid4().hex,
+                        "status": "failed",
+                        "message": str(exc),
+                        "data": traceback.format_exc() if Config.debug else None,
+                    }
+                    try:
+                        self.pipe.send(error_response)
+                    except Exception:
+                        self.logger.info("pipe send failed, exiting")
+                        return
+        finally:
+            self._cleanup()
+
+    def _cleanup(self) -> None:
+        self.logger.debug("cleaning up %s plugin manager resources", self.role)
+        try:
+            self.pipe.close()
+        except Exception as exc:
+            self.logger.debug("failed to close pipe: %s", exc)
+
+        try:
+            self.log_queue.cancel_join_thread()
+        except Exception as exc:
+            self.logger.debug("failed to cancel log queue join thread: %s", exc)
 
     def _drop_privileges_if_needed(self) -> None:
         if IS_WINDOWS:
@@ -613,9 +628,7 @@ class Manager:
     def _stop_log_listener(self) -> None:
         self.logger.info("stopping log listener")
         try:
-            # enqueue sentinel to unblock the listener thread
             self.log_listener.enqueue_sentinel()
-            # wait for monitor thread to finish with timeout
             if hasattr(self.log_listener, "_thread") and self.log_listener._thread:
                 self.log_listener._thread.join(timeout=0.2)
         except Exception as exc:
