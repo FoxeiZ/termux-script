@@ -25,7 +25,7 @@ class IPCRequest(TypedDict):
 class IPCResponse(TypedDict):
     status: str
     message: str
-    data: str | None
+    data: object | None
 
 
 class PipeCommand(StrEnum):

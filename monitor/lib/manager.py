@@ -692,8 +692,7 @@ class Manager:
             return {"status": "failed", "message": "unsupported command", "data": None}
 
         if cmd == IPCCommand.LIST:
-            data = json.dumps(self.list_plugins())
-            return {"status": "ok", "message": "ok", "data": data}
+            return {"status": "ok", "message": "ok", "data": self.list_plugins()}
 
         if not plugin_name:
             return {"status": "failed", "message": "plugin_name is required", "data": None}
@@ -713,8 +712,7 @@ class Manager:
 
         status = str(response.get("status") or "failed")
         message = str(response.get("message") or "")
-        data_value = response.get("data")
-        data = None if data_value is None else json.dumps(data_value)
+        data = response.get("data")
         return {
             "status": status,
             "message": message,
