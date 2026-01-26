@@ -11,6 +11,6 @@ class PluginMetadata:
     class_name: str
     requires_root: bool
     restart_on_failure: bool
-    args: list[Any] = field(default_factory=list)
-    kwargs: dict[str, Any] = field(default_factory=dict)
+    args: list[Any] = field(default_factory=list[Any])
+    kwargs: dict[str, Any] = field(default_factory=dict[str, Any])
     webhook_url: str = ""

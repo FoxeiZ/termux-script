@@ -241,50 +241,42 @@ class PluginManager(multiprocessing.Process):
             self.logger.error("pipe_load_plugin failed for %s: %s", metadata.name, exc)
             return self._response(request_id, "failed", str(exc), traceback.format_exc() if Config.debug else None)
 
-    def _pipe_start_plugin(self, request: PipeRequest) -> PipeResponse:
-        """pipe wrapper for start_plugin."""
+    def _pipe_plugin_action(
+        self,
+        request: PipeRequest,
+        action: str,
+        handler: Any,
+        success_message: str,
+    ) -> PipeResponse:
+        """generic pipe wrapper for plugin actions (start/stop/restart)."""
         request_id = request["id"]
         plugin_name = request.get("plugin_name")
         if not plugin_name:
-            self.logger.error("pipe_start_plugin called without plugin_name")
+            self.logger.error("pipe_%s_plugin called without plugin_name", action)
             return self._response(request_id, "failed", "plugin_name is required", None)
 
         try:
-            self.start_plugin(plugin_name, request.get("metadata"))
-            return self._response(request_id, "ok", "started", None)
+            # pass metadata only for actions that need it (start/restart)
+            if action in ("start", "restart"):
+                handler(plugin_name, request.get("metadata"))
+            else:
+                handler(plugin_name)
+            return self._response(request_id, "ok", success_message, None)
         except Exception as exc:
-            self.logger.error("pipe_start_plugin failed for %s: %s", plugin_name, exc)
+            self.logger.error("pipe_%s_plugin failed for %s: %s", action, plugin_name, exc)
             return self._response(request_id, "failed", str(exc), traceback.format_exc() if Config.debug else None)
+
+    def _pipe_start_plugin(self, request: PipeRequest) -> PipeResponse:
+        """pipe wrapper for start_plugin."""
+        return self._pipe_plugin_action(request, "start", self.start_plugin, "started")
 
     def _pipe_stop_plugin(self, request: PipeRequest) -> PipeResponse:
         """pipe wrapper for stop_plugin."""
-        request_id = request["id"]
-        plugin_name = request.get("plugin_name")
-        if not plugin_name:
-            self.logger.error("pipe_stop_plugin called without plugin_name")
-            return self._response(request_id, "failed", "plugin_name is required", None)
-
-        try:
-            self.stop_plugin(plugin_name)
-            return self._response(request_id, "ok", "stopped", None)
-        except Exception as exc:
-            self.logger.error("pipe_stop_plugin failed for %s: %s", plugin_name, exc)
-            return self._response(request_id, "failed", str(exc), traceback.format_exc() if Config.debug else None)
+        return self._pipe_plugin_action(request, "stop", self.stop_plugin, "stopped")
 
     def _pipe_restart_plugin(self, request: PipeRequest) -> PipeResponse:
         """pipe wrapper for restart_plugin."""
-        request_id = request["id"]
-        plugin_name = request.get("plugin_name")
-        if not plugin_name:
-            self.logger.error("pipe_restart_plugin called without plugin_name")
-            return self._response(request_id, "failed", "plugin_name is required", None)
-
-        try:
-            self.restart_plugin(plugin_name, request.get("metadata"))
-            return self._response(request_id, "ok", "restarted", None)
-        except Exception as exc:
-            self.logger.error("pipe_restart_plugin failed for %s: %s", plugin_name, exc)
-            return self._response(request_id, "failed", str(exc), traceback.format_exc() if Config.debug else None)
+        return self._pipe_plugin_action(request, "restart", self.restart_plugin, "restarted")
 
     def _stop_all(self) -> None:
         """stop all plugins."""
@@ -720,14 +712,19 @@ class Manager:
         try:
             while not self._ipc_stop_event.is_set():
                 try:
-                    conn, _ = server_socket.accept()
+                    conn, addr = server_socket.accept()
                 except TimeoutError:
                     continue
 
                 with conn:
-                    data = recv_str(conn)
-                    response = self._handle_ipc_command(data)
-                    send_json(conn, response)
+                    try:
+                        data = recv_str(conn)
+                        response = self._handle_ipc_command(data)
+                        send_json(conn, response)
+                    except TimeoutError:
+                        self.logger.warning("ipc client %s timed out, closing connection", addr)
+                    except ConnectionError as exc:
+                        self.logger.debug("ipc client %s disconnected: %s", addr, exc)
         finally:
             server_socket.close()
 

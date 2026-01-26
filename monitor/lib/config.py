@@ -125,18 +125,18 @@ class ConfigLoader:
             if value is not None:
                 self._config[key] = value
 
-    def _load_from_env(self):
+    def _load_from_env(self) -> None:
         """Load configuration from environment variables (if not already set by args)."""
         for key, default in self._defaults.items():
-            if key not in self._config:
-                env_value = os.environ.get(key)
-                if env_value is not None:
-                    if isinstance(default, bool):
-                        self._config[key] = env_value.lower() in ("1", "true", "yes")
-                    else:
-                        self._config[key] = env_value
-                elif default is not None:
-                    self._config[key] = default
+            # skip if already set by command line args (value differs from default)
+            if self._config.get(key) != default:
+                continue
+            env_value = os.environ.get(key)
+            if env_value is not None:
+                if isinstance(default, bool):
+                    self._config[key] = env_value.lower() in ("1", "true", "yes")
+                else:
+                    self._config[key] = env_value
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a configuration value by key."""

@@ -114,7 +114,7 @@ class Plugin:
         wait: bool = False,
         *args: Any,
         **kwargs: Any,
-    ) -> None:
+    ) -> dict[str, Any] | None:
         """Send a message to the webhook.
 
         Args:
@@ -122,13 +122,14 @@ class Plugin:
             wait (bool): Whether to wait for a response.
             *args: Refer to requests.post() for more options.
             **kwargs: Refer to requests.post() for more options.
+
+        Returns:
+            Response data if wait=True, otherwise None.
         """
         if not self.webhook_url:
-            return
+            return None
 
         payload.setdefault("username", self.name)
-        # remove None from payload
-        # payload = {k: v for k, v in payload.items() if v is not None}
 
         resp = self.http_session.post(
             self.webhook_url,
@@ -143,6 +144,7 @@ class Plugin:
             data = resp.json()
             self._message_id = data["id"]
             return data
+        return None
 
     def edit_webhook(
         self,
@@ -286,5 +288,7 @@ class Plugin:
         self._stop_event.set()
 
     def force_stop(self) -> None:
-        """Force stop the plugin. Default implementation does nothing."""
-        raise NotImplementedError
+        """Force stop the plugin. Default implementation logs a warning.
+        Override this method to implement custom force stop behavior.
+        """
+        self.logger.warning("force_stop not implemented for plugin %s", self.name)
