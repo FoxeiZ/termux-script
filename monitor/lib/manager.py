@@ -628,11 +628,9 @@ class Manager:
     def _stop_log_listener(self) -> None:
         self.logger.info("stopping log listener")
         try:
-            self.log_listener.enqueue_sentinel()
-            if hasattr(self.log_listener, "_thread") and self.log_listener._thread:
-                self.log_listener._thread.join(timeout=0.2)
+            self.log_listener.stop()
         except Exception as exc:
-            self.logger.debug("log listener stop error (expected on abrupt shutdown): %s", exc)
+            self.logger.debug("log listener stop error: %s", exc)
         finally:
             try:
                 self.log_queue.close()
