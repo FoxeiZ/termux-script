@@ -4,27 +4,26 @@ from __future__ import annotations
 
 import io
 import random
-import time
+import threading
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 import requests
 
-from lib.utils import get_logger
-
 if TYPE_CHECKING:
-    import threading
     from logging import Logger
     from typing import Any
 
     from lib._types import WebhookPayload
     from lib.manager import PluginManager
+    from lib.plugin.metadata import PluginMetadata
 
 
 class Plugin:
     """Base class for plugin implementation."""
 
     if TYPE_CHECKING:
+        metadata: PluginMetadata
         name: str
         manager: PluginManager
         logger: Logger
@@ -39,9 +38,11 @@ class Plugin:
         "_message_id",
         "_requires_root",
         "_restart_on_failure",
+        "_stop_event",
         "_thread",
         "logger",
         "manager",
+        "metadata",
         "name",
         "webhook_url",
     )
@@ -49,25 +50,21 @@ class Plugin:
     def __init__(
         self,
         manager: PluginManager,
-        webhook_url: str = "",
-        *,
-        name: str | None = None,
-        requires_root: bool | None = None,
-        restart_on_failure: bool | None = None,
+        metadata: PluginMetadata,
+        logger: Logger,
         http_session: requests.Session | None = None,
     ) -> None:
-        """Initialize plugin."""
         self.manager = manager
-        self.webhook_url = webhook_url
-        self.name = name or self.__class__.name
-        self.logger = get_logger(name=self.name)
+        self.metadata = metadata
+        self.webhook_url = metadata.webhook_url
+        self.name = metadata.name
+        self.logger = logger
 
-        self._requires_root = requires_root if requires_root is not None else self.__class__._requires_root
-        self._restart_on_failure = (
-            restart_on_failure if restart_on_failure is not None else self.__class__._restart_on_failure
-        )
+        self._requires_root = metadata.requires_root
+        self._restart_on_failure = metadata.restart_on_failure
         self._message_id = None
         self._thread = None
+        self._stop_event: threading.Event = threading.Event()
 
         self.__http_session = http_session or requests.Session() if self.webhook_url else None
 
@@ -77,7 +74,6 @@ class Plugin:
         requires_root: bool = False,
         restart_on_failure: bool = False,
     ) -> None:
-        """Support class-level parameters like ``class CustomPlugin(Plugin, name="...")``"""
         super().__init_subclass__()
         cls.name = name or cls.__name__
         cls._requires_root = requires_root
@@ -100,8 +96,10 @@ class Plugin:
 
     @thread.setter
     def thread(self, thread: threading.Thread | None) -> None:
-        """Set the thread for the plugin."""
+        if self._thread and self._thread.is_alive():
+            raise ValueError("Cannot set thread to a running plugin thread.")
         self._thread = thread
+        self.logger.info("plugin %s thread set to %s", self.name, thread)
 
     @property
     def http_session(self) -> requests.Session:
@@ -115,7 +113,7 @@ class Plugin:
         wait: bool = False,
         *args: Any,
         **kwargs: Any,
-    ) -> None:
+    ) -> dict[str, Any] | None:
         """Send a message to the webhook.
 
         Args:
@@ -123,20 +121,21 @@ class Plugin:
             wait (bool): Whether to wait for a response.
             *args: Refer to requests.post() for more options.
             **kwargs: Refer to requests.post() for more options.
+
+        Returns:
+            Response data if wait=True, otherwise None.
         """
         if not self.webhook_url:
-            return
+            return None
 
         payload.setdefault("username", self.name)
-        # remove None from payload
-        # payload = {k: v for k, v in payload.items() if v is not None}
 
         resp = self.http_session.post(
             self.webhook_url,
+            *args,
             json=payload,
             params={"wait": wait} if wait else None,
             timeout=self.manager.retry_delay,
-            *args,  # noqa: B026
             **kwargs,
         )
         resp.raise_for_status()
@@ -144,6 +143,7 @@ class Plugin:
             data = resp.json()
             self._message_id = data["id"]
             return data
+        return None
 
     def edit_webhook(
         self,
@@ -236,7 +236,7 @@ class Plugin:
         max_retries = self.manager.max_retries
         max_backoff = 300
 
-        while True:
+        while not self._stop_event.is_set():
             try:
                 self.start()
                 attempts = 0
@@ -244,14 +244,14 @@ class Plugin:
 
             except Exception as e:
                 attempts += 1
-                self.logger.error(f"Plugin {self.name} failed: {e}")
+                self.logger.error("plugin %s failed: %s", self.name, e)
                 self.logger.exception(e)
 
                 if not self.restart_on_failure:
                     break
 
                 if max_retries > 0 and attempts >= max_retries:
-                    self.logger.error("Max retries reached for plugin %s; giving up", self.name)
+                    self.logger.error("max retries reached for plugin %s; giving up", self.name)
                     break
 
                 backoff = min(base_delay * (2 ** (attempts - 1)), max_backoff)
@@ -260,14 +260,14 @@ class Plugin:
                 delay = max(0.1, delay)
 
                 self.logger.info(
-                    "Restarting plugin %s in %.1fs (attempt %d/%s)",
+                    "restarting plugin %s in %.1fs (attempt %d/%s)",
                     self.name,
                     delay,
                     attempts,
                     str(max_retries) if max_retries > 0 else "∞",
                 )
 
-                time.sleep(delay)
+                self._stop_event.wait(delay)
 
     @abstractmethod
     def start(self) -> None:
@@ -281,7 +281,13 @@ class Plugin:
         raise NotImplementedError
 
     def stop(self) -> None:
-        """Stop the plugin. Default implementation does nothing."""
+        """Stop the plugin. Default implementation sets the stop event to signal the plugin to stop.
+        Override method should call super().stop() to ensure the stop event is set.
+        """
+        self._stop_event.set()
 
     def force_stop(self) -> None:
-        """Force stop the plugin. Default implementation does nothing."""
+        """Force stop the plugin. Default implementation logs a warning.
+        Override this method to implement custom force stop behavior.
+        """
+        self.logger.warning("force_stop not implemented for plugin %s", self.name)

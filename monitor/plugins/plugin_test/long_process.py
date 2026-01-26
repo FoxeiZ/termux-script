@@ -1,23 +1,59 @@
 from __future__ import annotations
 
 from subprocess import PIPE, Popen, TimeoutExpired
+from time import sleep
 from typing import TYPE_CHECKING
 
 from lib.plugin import Plugin
 
 if TYPE_CHECKING:
+    from logging import Logger
     from typing import Any
 
     from lib.manager import PluginManager
+    from lib.plugin.metadata import PluginMetadata
+
+
+class NativeLongProcessPlugin(Plugin):
+    def start(self):
+        while not self._stop_event.is_set():
+            self.logger.info(
+                "NativeLongProcessPlugin is running..., %s",
+                self._stop_event.is_set(),
+            )
+            sleep(1)
+
+    def force_stop(self):
+        super().stop()
+
+    def stop(self) -> None:
+        self.logger.info("NativeLongProcessPlugin.stop called")
+        super().stop()
+
+
+class NativeLongProcessPluginRoot(Plugin, requires_root=True):
+    def start(self):
+        while not self._stop_event.is_set():
+            self.logger.info(
+                "NativeLongProcessPluginRoot is running..., %s",
+                self._stop_event.is_set(),
+            )
+            sleep(1)
+
+    def force_stop(self):
+        super().stop()
+
+    def stop(self) -> None:
+        self.logger.info("NativeLongProcessPluginRoot.stop called")
+        super().stop()
 
 
 class LongProcessPlugin(Plugin):
     if TYPE_CHECKING:
         _process: Popen[Any] | None
 
-    def __init__(self, manager: PluginManager, webhook_url: str = ""):
-        super().__init__(manager, webhook_url)
-
+    def __init__(self, manager: PluginManager, metadata: PluginMetadata, logger: Logger):
+        super().__init__(manager, metadata, logger)
         self._process = None
 
     def start(self):
@@ -30,10 +66,21 @@ class LongProcessPlugin(Plugin):
         self._process.wait()
         self.send_success()
 
-    def force_stop(self):
+    def stop(self) -> None:
+        super().stop()
         if not self._process:
             return
+        self._process.terminate()
+        try:
+            self._process.wait(timeout=5)
+        except TimeoutExpired:
+            self._process.kill()
+            self._process.wait()
 
+    def force_stop(self) -> None:
+        super().stop()
+        if not self._process:
+            return
         self._process.kill()
         self._process.wait()
 
@@ -63,7 +110,7 @@ class LongProcessPluginWithLongOutput(LongProcessPlugin):
             stdout=PIPE,
             stderr=PIPE,
         )
-        self.logger.warning("Process started")
+        self.logger.warning("process started")
         self.logger.warning(self._process)
         self.logger.warning(self._process.pid)
         stdout, _ = self._process.communicate()

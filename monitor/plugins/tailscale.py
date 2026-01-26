@@ -11,10 +11,12 @@ from typing import TYPE_CHECKING
 
 import requests
 from lib.plugin import Plugin
-from lib.utils import get_logger
 
 if TYPE_CHECKING:
+    from logging import Logger
+
     from lib.manager import PluginManager
+    from lib.plugin.metadata import PluginMetadata
 
 
 class BasePopen(subprocess.Popen[bytes]):
@@ -33,8 +35,8 @@ class BasePopen(subprocess.Popen[bytes]):
 
 
 class Tailscaled(BasePopen):
-    def __init__(self, home_dir: Path | str, auth_key: str = ""):
-        self.logger = get_logger("TailscaledProcess")
+    def __init__(self, logger: Logger, home_dir: Path | str, auth_key: str = ""):
+        self.logger = logger
         self.logger.debug("tailscaled process started")
         self.logger.debug("initializing Tailscaled with home_dir: %s", home_dir)
 
@@ -65,7 +67,6 @@ class Tailscaled(BasePopen):
             state_dir.mkdir()
 
         args = [
-            "sudo",  # run with elevated privileges
             self.tailscaled_bin.as_posix(),
             "--statedir=" + str(self.home_dir / "state"),
             "--socket=" + str(self.home_dir / "tailscaled.sock"),
@@ -167,7 +168,6 @@ class Tailscaled(BasePopen):
         self.logger.debug("bringing up connection")
         sp = subprocess.run(
             [
-                "sudo",  # run with elevated privileges
                 self.tailscale_bin,
                 "up",
                 "--authkey",
@@ -233,7 +233,6 @@ class Tailscaled(BasePopen):
     def _pkill_stop(self):
         self.logger.debug("attempting pkill stop")
         return self.__call_check(
-            "sudo",
             "pkill",
             "-f",
             "tailscaled.*userspace-networking.*",
@@ -241,7 +240,7 @@ class Tailscaled(BasePopen):
 
     def _kill_stop(self):
         self.logger.debug("attempting calling kill")
-        return self.__call_check("sudo", "kill", str(self.pid))
+        return self.__call_check("kill", str(self.pid))
 
     def stop(self, timeout: int = 15):
         if self.stopped:
@@ -280,8 +279,8 @@ class Tailscaled(BasePopen):
 
 
 class Socatd(BasePopen):
-    def __init__(self):
-        self.logger = get_logger("SocatdProcess")
+    def __init__(self, logger: Logger):
+        self.logger = logger
 
         self.logger.debug("initializing Socatd")
         self.started = False
@@ -321,23 +320,25 @@ class Socatd(BasePopen):
         self.logger.debug("socatd process stopped")
 
 
-class TailscaledPlugin(Plugin):
+class TailscaledPlugin(Plugin, requires_root=True):
     def __init__(
         self,
         manager: PluginManager,
-        webhook_url: str = "",
-        home_dir: Path | str = "./tailscale_data",
-        auth_key: str = "",
+        metadata: PluginMetadata,
+        logger: Logger,
     ):
-        super().__init__(manager, webhook_url)
+        super().__init__(manager, metadata, logger)
+
+        home_dir = metadata.kwargs.get("home_dir", "./tailscale_data")
+        auth_key = metadata.kwargs.get("auth_key", "")
 
         self.logger.debug("initializing with home_dir: %s", home_dir)
-        self.tailscaled = Tailscaled(home_dir, auth_key)
-        self.socatd = Socatd()
+        self.tailscaled = Tailscaled(self.logger.getChild("tailscaled"), home_dir, auth_key)
+        self.socatd = Socatd(self.logger.getChild("socatd"))
         self.logger.debug("manager initialized successfully")
 
     def start(self):
-        self.logger.debug("starting Manager")
+        self.logger.debug("starting manager")
         try:
             if not self.tailscaled.wait_for_connection():
                 raise Exception("tailscaled failed to connect")
@@ -349,17 +350,17 @@ class TailscaledPlugin(Plugin):
             # main loop start here
             self.tailscaled.stdout_reader()
         except Exception as e:
-            self.logger.error(f"Failed to start TailscaledPlugin: {e}")
+            self.logger.error("failed to start tailscaled plugin: %s", e)
             self.stop()
             raise
 
     def stop(self):
-        self.logger.debug("stopping Manager")
+        super().stop()
+        self.logger.debug("stopping manager")
         # with contextlib.suppress(Exception):
         #     self.socatd.cleanup()
         # with contextlib.suppress(Exception):
         #     self.tailscaled.cleanup()
         self.socatd.stop()
         self.tailscaled.stop()
-
         self.logger.debug("manager stopped successfully")

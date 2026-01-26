@@ -1,14 +1,11 @@
-#!/usr/bin/env python3
-"""IPC client for PluginManager - sends JSON commands over TCP."""
-
 from __future__ import annotations
 
 import argparse
-import contextlib
-import json
 import socket
 import sys
-from typing import Any
+from typing import Any, cast
+
+from monitor.lib.ipc import recv_json, send_json
 
 
 def parse_kwargs_string(kwargs_strings: list[str] | None) -> dict[str, Any]:
@@ -39,47 +36,33 @@ def parse_kwargs_string(kwargs_strings: list[str] | None) -> dict[str, Any]:
     return kwargs
 
 
-def send_tcp(port: int, request: dict[str, Any]) -> None:
-    """Send JSON request to TCP server and print response.
+def main(request: dict[str, Any], port: int = 8765) -> None:
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+        send_json(s, request)
+        response = recv_json(s)
+        if response is None or not isinstance(response, dict):
+            print("Invalid response from server", file=sys.stderr)
+            sys.exit(3)
 
-    Args:
-        port: TCP port number
-        request: Request dictionary to send as JSON
-    """
-    try:
-        with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
-            json_data = json.dumps(request)
-            s.sendall(json_data.encode("utf-8"))
+        status = cast("str", response.get("status", "unknown"))
+        message = cast("str", response.get("message", ""))
+        data_field = cast("Any", response.get("data"))
 
-            with contextlib.suppress(socket.timeout):
-                data = s.recv(4096)
-                if data:
-                    response_str = data.decode("utf-8", errors="ignore").strip()
-                    try:
-                        response = json.loads(response_str)
-                        status = response.get("status", "unknown")
-                        message = response.get("message", "")
-                        data_field = response.get("data")
-
-                        if status == "ok":
-                            print(f"[OK] {message}")
-                            if data_field:
-                                print(f"  Data: {data_field}")
-                        else:
-                            print(f"[FAILED] {message}", file=sys.stderr)
-                            if data_field:
-                                print(f"  Error details:\\n{data_field}", file=sys.stderr)
-                            sys.exit(1)
-                    except json.JSONDecodeError:
-                        print(f"Response: {response_str}")
-    except (OSError, ConnectionRefusedError) as e:
-        print(f"Connection error: {e}", file=sys.stderr)
-        sys.exit(2)
+        if status == "ok":
+            print(f"[OK] {message}")
+            if data_field:
+                print(f"  Data: {data_field}")
+        else:
+            print(f"[FAILED] {message}", file=sys.stderr)
+            if data_field:
+                print(f"  Error details:\n{data_field}", file=sys.stderr)
+            sys.exit(1)
 
 
-def main() -> None:
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        add_help=True,
         epilog="""
 Examples:
   %(prog)s start MyPlugin
@@ -134,9 +117,4 @@ Examples:
         "kwargs": parsed_kwargs,
         "force": args.force,
     }
-
-    send_tcp(args.port, request)
-
-
-if __name__ == "__main__":
-    main()
+    main(request, port=args.port)

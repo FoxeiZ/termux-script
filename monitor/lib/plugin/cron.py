@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import threading
 from abc import abstractmethod
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, override
@@ -8,7 +7,10 @@ from typing import TYPE_CHECKING, Any, override
 from .base import Plugin
 
 if TYPE_CHECKING:
+    from logging import Logger
+
     from lib.manager import PluginManager
+    from lib.plugin.metadata import PluginMetadata
 
 
 class CronParser:
@@ -116,37 +118,39 @@ class CronParser:
         return self.__str__()
 
     def __iter__(self):
-        """Make the parser iterable to get the next execution time."""
-        return self.next()
+        """Make the parser iterable to yield successive execution times."""
+        current = datetime.now()
+        while True:
+            next_time = self.next(current)
+            yield next_time
+            current = next_time
 
 
 class CronPlugin(Plugin):
     if TYPE_CHECKING:
         cron_expression: str
         run_on_startup: bool
-        _stop_event: threading.Event
         _cron_parser: CronParser
         _last_run: datetime | None
 
     def __init__(
         self,
         manager: PluginManager,
-        webhook_url: str = "",
-        cron_expression: str = "",
-        run_on_startup: bool = False,
-        **kwargs: Any,
+        metadata: PluginMetadata,
+        logger: Logger,
     ) -> None:
-        super().__init__(manager, webhook_url, **kwargs)
+        super().__init__(manager, metadata, logger)
 
-        # Support class-level cron_expression and run_on_startup
+        cron_expression = metadata.kwargs.get("cron_expression")
+        run_on_startup = metadata.kwargs.get("run_on_startup")
+
         self.cron_expression = cron_expression or getattr(self.__class__, "cron_expression", "")
-        self.run_on_startup = run_on_startup or getattr(self.__class__, "run_on_startup", False)
+        self.run_on_startup = bool(run_on_startup) or getattr(self.__class__, "run_on_startup", False)
 
         if not self.cron_expression:
             raise ValueError("cron_expression must be provided either in __init__ or as class attribute")
 
         self._cron_parser = CronParser(self.cron_expression)
-        self._stop_event = threading.Event()
         self._last_run = None
 
     def __init_subclass__(cls, cron_expression: str = "", run_on_startup: bool = False, **kwargs: Any) -> None:
@@ -157,11 +161,6 @@ class CronPlugin(Plugin):
         if run_on_startup:
             cls.run_on_startup = run_on_startup
 
-    @override
-    def stop(self) -> None:
-        """Stop the cron plugin."""
-        self._stop_event.set()
-
     def is_stopped(self) -> bool:
         """Check if the plugin is stopped."""
         return self._stop_event.is_set()
@@ -170,12 +169,10 @@ class CronPlugin(Plugin):
         """Wait until the next scheduled time. Returns True if stopped, False if time to run."""
         next_run = self._cron_parser.next()
         now = datetime.now()
-
-        # Calculate seconds until next run
         wait_seconds = (next_run - now).total_seconds()
 
         if wait_seconds > 0:
-            self.logger.debug(f"Next run scheduled for {next_run} (in {wait_seconds:.1f} seconds)")
+            self.logger.debug("next run scheduled for %s (in %.1f seconds)", next_run, wait_seconds)
             return self._stop_event.wait(wait_seconds)
 
         return False
@@ -197,35 +194,29 @@ class CronPlugin(Plugin):
 
     @override
     def _start(self) -> None:
-        self.logger.info(f"Starting cron plugin with expression: {self.cron_expression}")
+        self.logger.info("starting cron plugin with expression: %s", self.cron_expression)
 
-        # Run immediately on startup if requested
         if self.run_on_startup:
-            self.logger.info("Running on startup as requested")
+            self.logger.info("running on startup as requested")
             try:
                 self.start()
                 self._last_run = datetime.now().replace(second=0, microsecond=0)
             except Exception as e:
-                self.logger.error(f"Plugin {self.name} failed on startup: {e}")
+                self.logger.error("plugin %s failed on startup: %s", self.name, e)
 
-        # Main cron loop
         while not self._stop_event.is_set():
             try:
-                # Wait until next scheduled time
                 if self.wait_until_next_run():
-                    break  # Stop requested
+                    break
 
-                # Double-check if we should run (in case we woke up early)
                 if self.should_run_now():
-                    self.logger.debug(f"Running scheduled job at {datetime.now()}")
+                    self.logger.debug("running scheduled job at %s", datetime.now())
                     self.start()
                     self._last_run = datetime.now().replace(second=0, microsecond=0)
-                # Small sleep to prevent busy waiting
                 elif self._stop_event.wait(1):
                     break
 
             except Exception as e:
-                self.logger.error(f"Plugin {self.name} failed: {e}")
-                # Sleep a bit before retrying to avoid rapid failure loops
+                self.logger.error("plugin %s failed: %s", self.name, e)
                 if self._stop_event.wait(60):
                     break
