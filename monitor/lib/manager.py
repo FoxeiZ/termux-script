@@ -5,6 +5,7 @@ import json
 import multiprocessing
 import os
 import socket
+import subprocess
 import threading
 import time
 import traceback
@@ -25,6 +26,9 @@ __all__ = ["Manager", "PluginManager"]
 
 DIR = Path(__file__).resolve().parent
 IS_WINDOWS = os.name == "nt"
+IS_TERMUX = (
+    "com.termux" in os.environ.get("SHELL", "") or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr"
+)
 
 
 if TYPE_CHECKING:
@@ -96,20 +100,32 @@ class PluginManager(multiprocessing.Process):
     def _drop_privileges_if_needed(self) -> None:
         if IS_WINDOWS:
             return
+
+        if os.getuid() != 0 or os.geteuid() != 0:
+            self.logger.info("not running as root, no need to drop privileges")
+            return
+
         if self.role != "non-root":
             return
-        sudo_uid = os.environ.get("SUDO_UID")
-        sudo_gid = os.environ.get("SUDO_GID")
-        if not sudo_uid or not sudo_gid:
-            self.logger.warning(
-                "SUDO_UID/SUDO_GID not set; non-root worker will run with current privileges"
-            )
+
+        if not IS_TERMUX:
+            self.logger.warning("non-root role requested but not running in Termux, cannot drop privileges")
             return
-        if not hasattr(os, "setgid") or not hasattr(os, "setuid"):
-            return
-        os.setgid(int(sudo_gid))
-        os.setuid(int(sudo_uid))
-        self.logger.info("dropped privileges to uid=%s gid=%s", sudo_uid, sudo_gid)
+
+        self.logger.info("dropping root privileges for non-root role in Termux")
+        try:
+            p = subprocess.run(["dumpsys", "package", "com.termux"], check=True, capture_output=True)
+            for line in p.stdout.decode().splitlines():
+                s_line = line.strip()
+                if s_line.startswith("userId="):
+                    uid_str = s_line.split("=", 1)[1].strip()
+                    uid = int(uid_str)
+                    os.setgid(uid)
+                    os.setuid(uid)
+                    self.logger.info("dropped privileges to uid/gid %d", uid)
+                    return
+        except Exception as exc:
+            self.logger.error("failed to drop privileges: %s", exc)
 
     def _handle_request(self, request: PipeRequest) -> PipeResponse:
         cmd = request["cmd"]

@@ -3,7 +3,7 @@
 import os
 
 from lib.config import Config
-from lib.manager import Manager
+from lib.manager import IS_TERMUX, Manager
 from plugins import (
     InterfaceMonitorPlugin,
     LongProcessPlugin,
@@ -20,9 +20,6 @@ from plugins import (
 
 if __name__ == "__main__":
     manager = Manager(webhook_url=Config.webhook_url)
-    is_termux = (
-        "com.termux" in os.environ.get("SHELL", "") or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr"
-    )
     if Config.load_test_plugins:
         # manager.register_plugin(LongProcessPlugin)
         # manager.register_plugin(LongProcessPluginWithError)
@@ -32,7 +29,7 @@ if __name__ == "__main__":
         manager.register_plugin(NativeLongProcessPlugin)
         manager.register_plugin(NativeLongProcessPluginRoot)
 
-    if is_termux:
+    if IS_TERMUX:
         manager.register_plugin(
             InterfaceMonitorPlugin,
             reboot=True,
