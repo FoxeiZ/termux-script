@@ -607,14 +607,21 @@ class Manager:
             except Exception as exc:
                 self.logger.warning("failed to send shutdown to %s: %s", role, exc)
 
-        for name, worker in self.workers.items():
-            if worker.is_alive():
-                self.logger.debug("waiting for worker %s to exit", name)
-                worker.join(timeout=5.0)
-                if worker.is_alive():
-                    self.logger.debug("worker %s did not exit in time, terminating", name)
-                    worker.terminate()
+        alive_workers = {name: w for name, w in self.workers.items() if w.is_alive()}
+        if alive_workers:
+            self.logger.debug("waiting for workers to exit: %s", list(alive_workers.keys()))
+            deadline = time.time() + 5.0
+            while alive_workers and time.time() < deadline:
+                for name, worker in list(alive_workers.items()):
                     worker.join(timeout=0.1)
+                    if not worker.is_alive():
+                        self.logger.debug("worker %s exited", name)
+                        del alive_workers[name]
+
+            for name, worker in alive_workers.items():
+                self.logger.debug("worker %s did not exit in time, terminating", name)
+                worker.terminate()
+                worker.join(timeout=0.5)
 
         self.stop_ipc()
         self._stop_log_listener()
