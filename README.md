@@ -1,50 +1,57 @@
-### adbd
-Start an ADBD server.
+# Termux Script Collection
 
-### ampv
-A android-mpv wrapper
+A comprehensive collection of utilities, scripts, and modules for Termux and system management.
 
-### gltools
-Start GLTools with the inject license.
+---
 
-### install.sh
-package installer
+## Table of Contents
 
-### litterbox
-Upload files to the litterbox service.
+- [Scripts and Utilities](#scripts-and-utilities)
+- [Modules](#modules)
 
-### mkvenv
-Make a Python virtual environment.
+---
 
-### rcat
-Recursive cat
+## Scripts and Utilities
 
-### reduce
-FFMpeg script that reduces image or video files
+### System & Server
 
-### speedtest
-Speedtest script
+- **adbd** - Start an ADBD server.
+- **iface.py** - Monitor the network interface and post it to Discord webhook.
+- **system_server-monitor.py** - Monitor system server status.
+- **start-tailscaled.py** - Start Tailscale daemon.
 
-### start
-Start the app from Termux.
+### Development & Tools
 
-### start_old
-Old version of the previous one
+- **dev.py** - Development utility script.
+- **install.sh** - Package installer script.
+- **mkvenv** - Make a Python virtual environment.
+- **rcat** - Recursive cat utility.
+- **stopwatch** - A simple stopwatch utility.
 
-### stopwatch
-A simple stopwatch
+### Media & File Management
 
-### termux-startx11
-Start the X11 server with a listening socket for Proot to connect to.
+- **ampv** - Android-mpv wrapper.
+- **litterbox** - Upload files to the litterbox service.
+- **reduce** - FFMpeg script that reduces image or video files.
+- **rclone-mount** - Mount remote storage using rclone.
+- **tag-convert.py** - Parser for Tachiyomi -> Komga conversion.
+- **torrent.py** - Torrent utility script.
+- **ytmusic-downloader.py** - Download music from YouTube Music.
+- **musixmatch_api.py** - Musixmatch API wrapper.
 
-### x11-start
-Start the X11 server with the input program (or the default XFCE desktop).
+### Terminal & GUI
 
-### x11-start-test
-Like the previous one but start with expriment GPU support
+- **gltools** - Start GLTools with the inject license.
+- **start** - Start the app from Termux.
+- **start_old** - Old version of the previous start script.
+- **termux-file-editor** - Text editor for Termux with configuration file (termux-file-editor.conf).
+- **termux-url-opener** - Handle URL opening in Termux.
+- **x11-start** - Start the X11 server with the input program (or the default XFCE desktop).
 
-### iface.py
-Monitor the network interface and post it to discord webhook
+---
 
-### tag-convert.py
-Parser for Tachiyomi -> Komga
+## Modules
+
+### monitor
+
+System monitoring framework with plugin architecture for tracking various system metrics and services.

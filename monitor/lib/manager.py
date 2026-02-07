@@ -101,12 +101,12 @@ class PluginManager(multiprocessing.Process):
         try:
             self.pipe.close()
         except Exception as exc:
-            self.logger.debug("failed to close pipe: %s", exc)
+            self.logger.warning("failed to close pipe: %s", exc)
 
         try:
             self.log_queue.cancel_join_thread()
         except Exception as exc:
-            self.logger.debug("failed to cancel log queue join thread: %s", exc)
+            self.logger.warning("failed to cancel log queue join thread: %s", exc)
 
     def _drop_privileges_if_needed(self) -> None:
         if IS_WINDOWS:
@@ -131,12 +131,37 @@ class PluginManager(multiprocessing.Process):
                 if s_line.startswith("userId="):
                     uid_str = s_line.split("=", 1)[1].strip()
                     uid = int(uid_str)
+                    os.setgroups(
+                        [
+                            9997,  # everybody
+                            3003,  # inet
+                            uid,
+                        ]
+                    )
                     os.setgid(uid)
                     os.setuid(uid)
+                    self._fix_suroot_env_vars()
                     self.logger.info("dropped privileges to uid/gid %d", uid)
                     return
         except Exception as exc:
             self.logger.error("failed to drop privileges: %s", exc)
+
+    def _fix_suroot_env_vars(self) -> None:
+        env = os.environ.copy()
+        for key, value in list(env.items()):
+            if ".suroot" not in value:
+                continue
+
+            home_path = Path(value)
+            parts = home_path.parts
+            try:
+                suroot_index = parts.index(".suroot")
+            except ValueError:
+                continue
+            new_home = Path(*parts[:suroot_index], *parts[suroot_index + 1 :])
+            new_value = str(new_home)
+            os.environ[key] = new_value
+            self.logger.debug("fixed env var %s: %s -> %s", key, value, new_value)
 
     def _handle_request(self, request: PipeRequest) -> PipeResponse:
         cmd = request["cmd"]
@@ -238,11 +263,16 @@ class PluginManager(multiprocessing.Process):
 
         self.logger.debug("sending stop signal to plugin %s", plugin_name)
         plugin.stop()
-        plugin.thread.join(timeout=2.0)
+        deadline = time.time() + 5.0
+        while plugin.thread.is_alive() and time.time() < deadline:
+            plugin.thread.join(timeout=0.1)
+            if not plugin.thread.is_alive():
+                break
+
         if plugin.thread.is_alive():
             self.logger.warning("plugin %s did not stop gracefully, forcing stop", plugin_name)
             plugin.force_stop()
-            plugin.thread.join(timeout=2.0)
+            plugin.thread.join(timeout=1.0)
 
         if plugin.thread.is_alive():
             self.logger.error("plugin %s failed to stop after force stop, marking as zombie", plugin_name)

@@ -225,7 +225,6 @@ class Plugin:
             wait=wait,
         )
 
-    @abstractmethod
     def _start(self) -> None:
         """Start the plugin. This method get called by the manager, don't call it directly.
 
