@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/python
 # ruff: noqa: B019, S105, E501
-# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false
+# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportIndexIssue=information, reportOptionalMemberAccess=false
 from __future__ import annotations
 
 import json
@@ -9,12 +9,13 @@ import re
 import subprocess
 import sys
 import traceback
+import urllib.parse
 from collections import OrderedDict
 from collections.abc import Callable, Generator, Iterator
 from difflib import SequenceMatcher
 from functools import cache, lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NotRequired, TypedDict
 
 import requests
 import yt_dlp
@@ -356,8 +357,17 @@ if TYPE_CHECKING:
     class ShazamSongResult(TypedDict):
         songs: ShazamSong
 
+    class ShazamErrorResult(TypedDict):
+        id: str
+        title: str
+        detail: str
+        status: str
+        code: str
+        source: dict[str, str]
+
     class ShazamSearchResult(TypedDict):
-        results: ShazamSongResult
+        results: NotRequired[ShazamSongResult]
+        errors: NotRequired[list[ShazamErrorResult]]
 
     ShazamPageCreativeWorkLyrics = TypedDict("ShazamPageCreativeWorkLyrics", {"text": str, "@type": str})
 
@@ -415,9 +425,38 @@ class ShazamLyricsPlugin(LyricsPluginBase):
 
         return response
 
-    def _search_for_id(self, query: str, language: str = "GB") -> tuple[str, bool, bool]:
+    def handle_error_responses(
+        self,
+        data: ShazamErrorResult,
+        query: str,
+        language: str,
+        *,
+        short_circuit: bool = False,
+    ) -> Any:
+        if data.get("title", "").lower() == "invalid parameter":
+            source = data.get("source", {})
+            if not source:
+                return
+
+            param = source.get("parameter", "")
+            if not param:
+                return
+
+            query = query.replace(param, "").strip()
+            self.to_screen(f"Retrying without invalid parameter: {param!r}")
+            if short_circuit:
+                raise ValueError(f"Invalid parameter: {param!r}")
+
+            return self._search_for_id(query, language, short_circuit=True)
+
+        details = ", ".join(f"{key}={value!r}" for key, value in data.items())
+        raise ValueError(f"Shazam API error: {details}")
+
+    def _search_for_id(
+        self, query: str, language: str = "GB", *, short_circuit: bool = False
+    ) -> tuple[str, bool, bool]:
         resp = self._make_request(
-            f"https://www.shazam.com/services/amapi/v1/catalog/{language}/search?types=songs&term={query}&limit=3"
+            f"https://www.shazam.com/services/amapi/v1/catalog/{language}/search?types=songs&term={urllib.parse.quote(query)}&limit=3"
         )
         if resp is None:
             raise ValueError("Failed to fetch data")
@@ -426,11 +465,19 @@ class ShazamLyricsPlugin(LyricsPluginBase):
         if not data:
             raise ValueError("No data found")
 
-        for song in data["results"]["songs"]["data"]:
+        for error in data.get("errors", []):
+            return self.handle_error_responses(
+                error,
+                query,
+                language,
+                short_circuit=short_circuit,
+            )
+
+        for song in data.get("results", {}).get("songs", {}).get("data", []):
             sz_name = song["attributes"]["name"]
             sm = SequenceMatcher(
                 lambda x: x in ("-", "_"),
-                self.title.lower(),  # type: ignore | if error, damn mypy
+                self.title.lower(),
                 sz_name.lower(),
             )
             ratio = round(sm.ratio(), 2)
@@ -782,7 +829,7 @@ def fetch_album_info(browse_id: str | None) -> dict[str, Any]:
         "source_address": None,
     }
 
-    with yt_dlp.YoutubeDL(options) as _ydl:  # type: ignore
+    with yt_dlp.YoutubeDL(options) as _ydl:
         album_info = _ydl.extract_info(f"https://music.youtube.com/browse/{browse_id}", download=False)
         if not album_info or not isinstance(album_info, dict) or "entries" not in album_info:
             raise ValueError("Failed to get data from album")
@@ -1010,7 +1057,7 @@ ytdl_opts = {
 if "com.termux" in os.environ.get("SHELL", "") or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr":
     ytdl_opts["cachedir"] = "$HOME/.config/yt-dlp/"
     ytdl_opts["cookiefile"] = "$HOME/.config/yt-dlp/youtube.com_cookies.txt"
-    ytdl_opts["allowed_extractors"] = ["^([yY].*?)([tT]).*e?$"]  # type: ignore
+    ytdl_opts["allowed_extractors"] = ["^([yY].*?)([tT]).*e?$"]
     ytdl_opts["outtmpl"]["default"] = (  # type: ignore
         "/sdcard/Music/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s"
     )
@@ -1039,6 +1086,11 @@ if "com.termux" in os.environ.get("SHELL", "") or os.environ.get("PREFIX", "") =
     )
 elif os.name == "nt":
     ytdl_opts["js_runtimes"] = {"node": {}}
+    ytdl_opts["remote_components"] = {
+        "ejs:github",
+    }
+    ytdl_opts["cookiesfrombrowser"] = ("firefox",)
+    ytdl_opts["extractor_args"]["youtube"]["player_js_variant"] = ("tv",)
 
 
 def download(url: str, extra_options: dict[str, Any] | None = None):
@@ -1046,7 +1098,7 @@ def download(url: str, extra_options: dict[str, Any] | None = None):
     if extra_options:
         options.update(extra_options)
 
-    with yt_dlp.YoutubeDL(options) as ydl:  # type: ignore
+    with yt_dlp.YoutubeDL(options) as ydl:
         ydl.add_post_processor(CustomMetadataPP(), when="pre_process")
         ydl.download([url])
 
