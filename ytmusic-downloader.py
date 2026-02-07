@@ -1030,16 +1030,16 @@ ytdl_opts = {
         },
         {"already_have_thumbnail": False, "key": "EmbedThumbnail"},
         {"key": "FFmpegConcat", "only_multi_video": True, "when": "playlist"},
-        {
-            "exec_cmd": ["echo {}"],
-            "key": "Exec",
-            "when": "after_video",
-        },
-        {
-            "exec_cmd": ["echo {}"],
-            "key": "Exec",
-            "when": "playlist",
-        },
+        # {
+        #     "exec_cmd": ["echo after_move: {}"],
+        #     "key": "Exec",
+        #     "when": "after_move",
+        # },
+        # {
+        #     "exec_cmd": ["echo playlist: {}"],
+        #     "key": "Exec",
+        #     "when": "playlist",
+        # },
     ],
     "extractor_args": {
         "youtube": {
@@ -1067,9 +1067,9 @@ if "com.termux" in os.environ.get("SHELL", "") or os.environ.get("PREFIX", "") =
     ytdl_opts["postprocessors"].extend(  # type: ignore
         [
             {
-                "exec_cmd": ["termux-media-scan -r {}"],
+                "exec_cmd": ["termux-media-scan {}"],
                 "key": "Exec",
-                "when": "playlist",
+                "when": "after_move",
             },
             {
                 "exec_cmd": [
