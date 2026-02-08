@@ -10,12 +10,10 @@ import subprocess
 import sys
 import traceback
 import urllib.parse
-from collections import OrderedDict
-from collections.abc import Callable, Generator, Iterator
 from difflib import SequenceMatcher
 from functools import cache, lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NotRequired, TypedDict
+from typing import TYPE_CHECKING
 
 import requests
 import yt_dlp
@@ -25,7 +23,7 @@ from yt_dlp.postprocessor.metadataparser import MetadataParserPP
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
-    from typing import Any
+    from typing import Any, ClassVar, Literal, NotRequired, TypedDict
 
 ###  _____              __ _
 ### /  __ \            / _(_)
@@ -216,19 +214,17 @@ class YoutubeMusicLyricsPlugin(LyricsPluginBase):
             return None
 
     def extract_lyrics_browse_id(self, data: dict[str, Any]) -> str | None:
-        tabs = (
-            data.get("contents", {})
-            .get("singleColumnMusicWatchNextResultsRenderer", {})
-            .get("tabbedRenderer", {})
-            .get("watchNextTabbedResultsRenderer", {})
-            .get("tabs", [])
-        )
-        for tab in tabs:
-            endpoint = tab.get("tabRenderer", {}).get("endpoint", {}).get("browseEndpoint", {})
-            browse_id = endpoint.get("browseId", "")
-            if browse_id.startswith("MPLY"):
-                return browse_id
-        return None
+        try:
+            tabs: list[dict[str, Any]] = data["contents"]["singleColumnMusicWatchNextResultsRenderer"][
+                "tabbedRenderer"
+            ]["watchNextTabbedResultsRenderer"]["tabs"]
+            for tab in tabs:
+                endpoint: dict[str, Any] = tab["tabRenderer"]["endpoint"]["browseEndpoint"]
+                browse_id: str = endpoint.get("browseId", "")
+                if browse_id.startswith("MPLY"):
+                    return browse_id
+        except (KeyError, IndexError):
+            return None
 
 
 class MusixMatchLyricsPlugin(LyricsPluginBase):
@@ -838,7 +834,7 @@ def fetch_album_info(browse_id: str | None) -> dict[str, Any]:
 
 
 @cache
-def find_album_id(video_id: str) -> str | None:
+def find_album_browse_id(video_id: str) -> str | None:
     data = InnerTubeBase().fetch_next(video_id)
 
     # Recursively find the first MPREb ID (albums/singles)
@@ -862,17 +858,17 @@ def find_album_id(video_id: str) -> str | None:
     return find(data)
 
 
+@cache
 def find_album_info(video_id: str) -> dict[str, Any]:
     """Find album info from the music URL or video ID."""
 
-    album_browse_id = find_album_id(video_id)
+    album_browse_id = find_album_browse_id(video_id)
     if not album_browse_id:
         raise ValueError("Failed to fetch album URL")
 
     return fetch_album_info(album_browse_id)
 
 
-@cache
 def get_track_num_from_album(video_id: str) -> str:
     """Find track number from related album info."""
     album_info = find_album_info(video_id)
@@ -881,6 +877,33 @@ def get_track_num_from_album(video_id: str) -> str:
             return f"{idx:02d}"
 
     raise ValueError("Video ID not found from the album.")
+
+
+def get_release_year_from_album(video_id: str) -> str:
+    """Find release year from related album info."""
+    album_browse_id = find_album_browse_id(video_id)
+    album_details = InnerTubeBase().fetch_browse(album_browse_id)
+    try:
+        year = album_details["contents"]["twoColumnBrowseResultsRenderer"]["tabs"][0]["tabRenderer"]["content"][
+            "sectionListRenderer"
+        ]["contents"][0]["musicResponsiveHeaderRenderer"]["subtitle"]["runs"][-1]["text"]
+        return year
+    except (KeyError, IndexError):
+        raise ValueError("Release year not found from the album.") from None
+
+
+def get_album_artist(video_id: str) -> str:
+    album_browse_id = find_album_browse_id(video_id)
+    album_details = InnerTubeBase().fetch_browse(album_browse_id)
+    try:
+        album_artist = album_details["contents"]["twoColumnBrowseResultsRenderer"]["secondaryContents"][
+            "sectionListRenderer"
+        ]["contents"][-1]["musicCarouselShelfRenderer"]["contents"][1]["musicTwoRowItemRenderer"]["subtitle"]["runs"][
+            -1
+        ]["text"]
+        return album_artist
+    except (KeyError, IndexError):
+        raise ValueError("Album artist not found from the album.") from None
 
 
 @cache
@@ -898,13 +921,17 @@ def is_various_artist(album_browse_id: str) -> bool:
 class CustomMetadataPP(PostProcessor):
     def run(self, information: dict[str, Any]):  # type: ignore[override]
         self.to_screen("Checking metadata...")
+        video_id = information["id"]
+
+        # test
+        # get_album_artist(video_id)
 
         chnl = information.get("channel") or information.get("uploader") or ""
         if chnl.endswith(" - Topic"):
-            # Remove duplicate artist names while preserving order
-            artists = list(
-                OrderedDict.fromkeys(information.get("artists") or information.get("artist", "").split(", "))
-            )
+            raw = information.get("artists") or information.get("artist", "").split(", ")
+            artists = list(dict.fromkeys(filter(None, raw)))
+            if not artists:
+                artists = [chnl.replace(" - Topic", "")]
             information.update(
                 {
                     "artists": artists,
@@ -914,26 +941,33 @@ class CustomMetadataPP(PostProcessor):
                 }
             )
 
-        pl_name: str = information.get("playlist_title") or information.get("playlist") or ""
-        if not (pl_name.startswith(("Album - ", "Single - "))):
+        pl_title = information.get("playlist_title") or information.get("playlist") or ""
+        if not pl_title.lower().startswith(("album", "single")):
             self.to_screen("Not an album, getting metadata for album manually")
             try:
-                information["track_number"] = get_track_num_from_album(information["id"])
+                information["track_number"] = get_track_num_from_album(video_id)
             except ValueError:
                 self.to_screen("Hmm, doesn't look like an album. Skipping...")
-                # information["track_number"] = None
                 return [], information
 
         try:
-            if is_various_artist(find_album_id(information["id"])):
+            if is_various_artist(find_album_browse_id(video_id)):
                 self.to_screen("Album is a Various Artists compilation")
                 information["meta_album_artist"] = "Various Artists"
-                # information.setdefault("album_artist", "Various Artists")
         except ValueError:
             self.to_screen("Hmm, doesn't look like an album. Skipping...")
-            # information["track_number"] = None
 
-        # Custom logic to handle metadata
+        if not information.get("meta_album_artist") or information.get("meta_album_artist") == "NA":
+            self.to_screen("No album artist info found, using track artist instead")
+            information["meta_album_artist"] = information.get("artist") or "Unknown Artist"
+
+        if not information.get("meta_date"):
+            self.to_screen("No release year found, getting info from innertube album data...")
+            try:
+                information["meta_date"] = get_release_year_from_album(video_id)
+            except ValueError:
+                self.to_screen("Release year not found from the album. Too bad...")
+
         return [], information
 
 
