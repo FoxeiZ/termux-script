@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 
 import requests
 import yt_dlp
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from yt_dlp.postprocessor.common import PostProcessor
 from yt_dlp.postprocessor.ffmpeg import FFmpegMetadataPP
 from yt_dlp.postprocessor.metadataparser import MetadataParserPP
@@ -24,6 +26,10 @@ from yt_dlp.postprocessor.metadataparser import MetadataParserPP
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
     from typing import Any, ClassVar, Literal, NotRequired, TypedDict
+
+IS_TERMUX = (
+    "com.termux" in os.environ.get("SHELL", "") or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr"
+)
 
 ###  _____              __ _
 ### /  __ \            / _(_)
@@ -39,75 +45,84 @@ SAVE_LRC = True
 EMBED_LYRICS = False
 PREFER_SYNCED = True
 
+if IS_TERMUX:
 
-def notify(
-    title: str,
-    content: str,
-    *,
-    action: str | None = None,
-    alert_once: bool = False,
-    button1: str | None = None,
-    button1_action: str | None = None,
-    button2: str | None = None,
-    button2_action: str | None = None,
-    button3: str | None = None,
-    button3_action: str | None = None,
-    channel: str | None = None,
-    group: str | None = None,
-    id: str | None = None,
-    on_going: bool = False,
-    priority: Literal["high", "low", "max", "min", "default"] = "default",
-    sound: bool = False,
-    vibrate: bool = False,
-    type: Literal["default", "media"] = "default",
-    timeout: float | None = None,
-):
-    cmd = ["termux-notification", "--title", title, "--content", content]
+    def notify(  # type: ignore
+        title: str,
+        content: str,
+        *,
+        action: str | None = None,
+        alert_once: bool = False,
+        button1: str | None = None,
+        button1_action: str | None = None,
+        button2: str | None = None,
+        button2_action: str | None = None,
+        button3: str | None = None,
+        button3_action: str | None = None,
+        channel: str | None = None,
+        group: str | None = None,
+        id: str | None = None,
+        on_going: bool = False,
+        priority: Literal["high", "low", "max", "min", "default"] = "default",
+        sound: bool = False,
+        vibrate: bool = False,
+        type: Literal["default", "media"] = "default",
+        timeout: float | None = None,
+    ):
+        cmd = ["termux-notification", "--title", title, "--content", content]
 
-    for button, act in [
-        (button1, button1_action),
-        (button2, button2_action),
-        (button3, button3_action),
-    ]:
-        if act and not button:
-            raise ValueError(f"{act} requires the corresponding button to be set")
+        for button, act in [
+            (button1, button1_action),
+            (button2, button2_action),
+            (button3, button3_action),
+        ]:
+            if act and not button:
+                raise ValueError(f"{act} requires the corresponding button to be set")
 
-    options = {
-        "--action": action,
-        "--button1-text": button1,
-        "--button1-action": button1_action,
-        "--button2-text": button2,
-        "--button2-action": button2_action,
-        "--button3-text": button3,
-        "--button3-action": button3_action,
-        "--channel": channel,
-        "--group": group,
-        "--id": id,
-        "--priority": priority,
-        "--type": type,
-    }
-    flags = {
-        "--alert-once": alert_once,
-        "--ongoing": on_going,
-        "--sound": sound,
-        "--vibrate": vibrate,
-    }
+        options = {
+            "--action": action,
+            "--button1-text": button1,
+            "--button1-action": button1_action,
+            "--button2-text": button2,
+            "--button2-action": button2_action,
+            "--button3-text": button3,
+            "--button3-action": button3_action,
+            "--channel": channel,
+            "--group": group,
+            "--id": id,
+            "--priority": priority,
+            "--type": type,
+        }
+        flags = {
+            "--alert-once": alert_once,
+            "--ongoing": on_going,
+            "--sound": sound,
+            "--vibrate": vibrate,
+        }
 
-    cmd.extend([key for key, value in flags.items() if value])
-    cmd.extend([f"{key} {value}" for key, value in options.items() if value])
+        cmd.extend([key for key, value in flags.items() if value])
+        cmd.extend([f"{key} {value}" for key, value in options.items() if value])
 
-    try:
-        subprocess.run(
-            cmd,
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=timeout,
-        )
+        try:
+            subprocess.run(
+                cmd,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+            )
 
-    except Exception as e:
-        print(f"Error sending notification: {e}")
-        return
+        except Exception as e:
+            print(f"Error sending notification: {e}")
+            return
+else:
+
+    def notify(
+        title: str,
+        content: str,
+        **kwargs: Any,
+    ):
+        print(f"{title}: {content}")
 
 
 class InnerTubeBase:
@@ -679,7 +694,7 @@ if TYPE_CHECKING:
 class LrcLibLyricsPlugin(LyricsPluginBase):
     BASE_URL = "https://lrclib.net/api"
     HEADERS: ClassVar = {
-        "User-Agent": "Mozilla/5.0",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
         "Accept": "application/json",
     }
 
@@ -687,6 +702,11 @@ class LrcLibLyricsPlugin(LyricsPluginBase):
         super().__init__(info, to_screen=to_screen)
         self.album = info.get("album") or info.get("playlist_title") or ""
         self._lyrics_data: LrcLibResponse | None = None
+
+        self.session = requests.Session()
+        retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+        self.session.mount("https://", HTTPAdapter(max_retries=retries))
+        self.session.headers.update(self.HEADERS)
 
     def find_lyrics(
         self,
@@ -703,13 +723,12 @@ class LrcLibLyricsPlugin(LyricsPluginBase):
             "album_name": album_name,
         }
         try:
-            response = requests.get(self.BASE_URL + "/search", params=params, headers=self.HEADERS, timeout=10)
+            response = self.session.get(self.BASE_URL + "/search", params=params, timeout=10)
             response.raise_for_status()
             for item in response.json():
                 if item.get("track_name") == track_name and item.get("artist_name") == artist_name:
                     return item
             return None
-
         except (requests.RequestException, ConnectionError) as e:
             self.to_screen(repr(e))
             return
@@ -768,14 +787,15 @@ def get_lyrics(
             save(is_synced, lyrics)
 
     for plugin in plugins if PREFER_SYNCED else []:
-        synced_lyrics = plugin.get_synced()
         to_screen(f"Checking synced lyrics with {plugin.__class__.__name__}...")
+        synced_lyrics = plugin.get_synced()
         if synced_lyrics:
             to_screen("Found synced lyrics.")
             yield from process(True, synced_lyrics)
             return
 
     for plugin in plugins:
+        to_screen(f"Checking unsynced lyrics with {plugin.__class__.__name__}...")
         unsynced_lyrics = plugin.get_unsynced()
         if unsynced_lyrics:
             to_screen("Found unsynced lyrics.")
@@ -869,7 +889,7 @@ def find_album_info(video_id: str) -> dict[str, Any]:
     return fetch_album_info(album_browse_id)
 
 
-def get_track_num_from_album(video_id: str) -> str:
+def get_track_num(video_id: str) -> str:
     """Find track number from related album info."""
     album_info = find_album_info(video_id)
     for idx, entry in enumerate(album_info.get("entries", []), start=1):
@@ -879,9 +899,8 @@ def get_track_num_from_album(video_id: str) -> str:
     raise ValueError("Video ID not found from the album.")
 
 
-def get_release_year_from_album(video_id: str) -> str:
-    """Find release year from related album info."""
-    album_browse_id = find_album_browse_id(video_id)
+@cache
+def _parse_release_year(album_browse_id: str) -> str:
     album_details = InnerTubeBase().fetch_browse(album_browse_id)
     try:
         year = album_details["contents"]["twoColumnBrowseResultsRenderer"]["tabs"][0]["tabRenderer"]["content"][
@@ -892,18 +911,31 @@ def get_release_year_from_album(video_id: str) -> str:
         raise ValueError("Release year not found from the album.") from None
 
 
-def get_album_artist(video_id: str) -> str:
+def get_release_year_from_album(video_id: str) -> str:
     album_browse_id = find_album_browse_id(video_id)
+    return _parse_release_year(album_browse_id)
+
+
+@cache
+def _parse_album_artist(album_browse_id: str) -> str:
     album_details = InnerTubeBase().fetch_browse(album_browse_id)
     try:
-        album_artist = album_details["contents"]["twoColumnBrowseResultsRenderer"]["secondaryContents"][
+        # album_artist = album_details["contents"]["twoColumnBrowseResultsRenderer"]["secondaryContents"][
+        #     "sectionListRenderer"
+        # ]["contents"][-1]["musicCarouselShelfRenderer"]["contents"][1]["musicTwoRowItemRenderer"]["subtitle"]["runs"][
+        #     -1
+        # ]["text"]
+        album_artist = album_details["contents"]["twoColumnBrowseResultsRenderer"]["tabs"][0]["tabRenderer"]["content"][
             "sectionListRenderer"
-        ]["contents"][-1]["musicCarouselShelfRenderer"]["contents"][1]["musicTwoRowItemRenderer"]["subtitle"]["runs"][
-            -1
-        ]["text"]
+        ]["contents"][0]["musicResponsiveHeaderRenderer"]["straplineTextOne"]["runs"][0]["text"]
         return album_artist
     except (KeyError, IndexError):
         raise ValueError("Album artist not found from the album.") from None
+
+
+def get_album_artist(video_id: str) -> str:
+    album_browse_id = find_album_browse_id(video_id)
+    return _parse_album_artist(album_browse_id)
 
 
 @cache
@@ -923,9 +955,6 @@ class CustomMetadataPP(PostProcessor):
         self.to_screen("Checking metadata...")
         video_id = information["id"]
 
-        # test
-        # get_album_artist(video_id)
-
         chnl = information.get("channel") or information.get("uploader") or ""
         if chnl.endswith(" - Topic"):
             raw = information.get("artists") or information.get("artist", "").split(", ")
@@ -941,21 +970,25 @@ class CustomMetadataPP(PostProcessor):
                 }
             )
 
-        pl_title = information.get("playlist_title") or information.get("playlist") or ""
-        if not pl_title.lower().startswith(("album", "single")):
-            self.to_screen("Not an album, getting metadata for album manually")
+        if not information.get("playlist_id", "").startswith("OLAK5uy_"):
+            self.to_screen("Not an album context, getting metadata for album manually")
             try:
-                information["track_number"] = get_track_num_from_album(video_id)
+                information["track_number"] = get_track_num(video_id)
             except ValueError:
                 self.to_screen("Hmm, doesn't look like an album. Skipping...")
                 return [], information
 
         try:
-            if is_various_artist(find_album_browse_id(video_id)):
-                self.to_screen("Album is a Various Artists compilation")
-                information["meta_album_artist"] = "Various Artists"
+            information["meta_album_artist"] = get_album_artist(video_id)
         except ValueError:
-            self.to_screen("Hmm, doesn't look like an album. Skipping...")
+            self.to_screen("No album artist found from innertube data, checking for legacy methods...")
+            try:
+                browse_id = find_album_browse_id(video_id)
+                if browse_id and is_various_artist(browse_id):
+                    self.to_screen("Album is a Various Artists compilation")
+                    information["meta_album_artist"] = "Various Artists"
+            except ValueError:
+                self.to_screen("Hmm, doesn't look like an album. Skipping...")
 
         if not information.get("meta_album_artist") or information.get("meta_album_artist") == "NA":
             self.to_screen("No album artist info found, using track artist instead")
@@ -1079,6 +1112,7 @@ ytdl_opts = {
         "youtube": {
             "lang": ["en"],
             "player_client": ["web"],
+            "formats": "missing_pot",
         },
         "youtubepot-bgutilhttp": {"base_url": ["https://bgutil-ytdlp-pot-vercal.vercel.app"]},
     },
@@ -1088,13 +1122,16 @@ ytdl_opts = {
     "writethumbnail": True,
 }
 
-if "com.termux" in os.environ.get("SHELL", "") or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr":
-    ytdl_opts["cachedir"] = "$HOME/.config/yt-dlp/"
-    ytdl_opts["cookiefile"] = "$HOME/.config/yt-dlp/youtube.com_cookies.txt"
-    ytdl_opts["allowed_extractors"] = ["^([yY].*?)([tT]).*e?$"]
-    ytdl_opts["outtmpl"]["default"] = (  # type: ignore
-        "/sdcard/Music/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s"
-    )
+if IS_TERMUX:
+    termux_opts = {
+        "cachedir": "$HOME/.config/yt-dlp/",
+        "cookiefile": "$HOME/.config/yt-dlp/youtube.com_cookies.txt",
+        "allowed_extractors": ["^([yY].*?)([tT]).*e?$"],
+        "outtmpl": {
+            "default": "/sdcard/Music/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s"
+        },
+    }
+    ytdl_opts.update(termux_opts)
     # ytdl_opts["extractor_args"]["youtube"]["getpot_bgutil_script"] = (
     #     "$HOME/projects/bgutil-ytdlp-pot-provider/server/build/generate_once.js",
     # )
@@ -1119,12 +1156,13 @@ if "com.termux" in os.environ.get("SHELL", "") or os.environ.get("PREFIX", "") =
         ]
     )
 elif os.name == "nt":
-    ytdl_opts["js_runtimes"] = {"node": {}}
-    ytdl_opts["remote_components"] = {
-        "ejs:github",
+    win_opts = {
+        "js_runtimes": {"node": {}},
+        "remote_components": {"ejs:github"},
+        "cookiesfrombrowser": ("firefox",),
+        "extractor_args": {"youtube": {"player_js_variant": ("tv",)}},
     }
-    ytdl_opts["cookiesfrombrowser"] = ("firefox",)
-    ytdl_opts["extractor_args"]["youtube"]["player_js_variant"] = ("tv",)
+    ytdl_opts.update(win_opts)
 
 
 def download(url: str, extra_options: dict[str, Any] | None = None):
