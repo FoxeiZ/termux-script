@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/python
 # ruff: noqa: B019, S105, E501
-# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportIndexIssue=information, reportOptionalMemberAccess=false
+# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportIndexIssue=information, reportOptionalMemberAccess=false, reportIncompatibleMethodOverride=false
 from __future__ import annotations
 
 import json
@@ -8,7 +8,6 @@ import os
 import re
 import subprocess
 import sys
-import traceback
 import urllib.parse
 from difflib import SequenceMatcher
 from functools import cache, lru_cache
@@ -20,11 +19,10 @@ import yt_dlp
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from yt_dlp.postprocessor.common import PostProcessor
-from yt_dlp.postprocessor.ffmpeg import FFmpegMetadataPP
 from yt_dlp.postprocessor.metadataparser import MetadataParserPP
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterator
+    from collections.abc import Callable, Generator, Iterable, Iterator
     from typing import Any, ClassVar, Literal, NotRequired, TypedDict
 
 IS_TERMUX = (
@@ -42,7 +40,7 @@ IS_TERMUX = (
 # Save lyrics as .lrc file
 SAVE_LRC = True
 # Embed lyrics into audio file metadata
-EMBED_LYRICS = False
+EMBED_LYRICS = True
 PREFER_SYNCED = True
 
 if IS_TERMUX:
@@ -242,6 +240,7 @@ class YoutubeMusicLyricsPlugin(LyricsPluginBase):
             return None
 
 
+# TODO: fix auth issues
 class MusixMatchLyricsPlugin(LyricsPluginBase):
     TOKEN = "2203269256ff7abcb649269df00e14c833dbf4ddfb5b36a1aae8b0"
     BASE_URL = "https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get?format=json&namespace=lyrics_richsynched&subtitle_format=mxm&app_id=web-desktop-app-v1.0&"
@@ -803,35 +802,6 @@ def get_lyrics(
             return
 
 
-### Ugly, but works ¯\_(ツ)_/¯ ###
-# apperently this is called monkey patching?
-def patched_get_metadata_opts(
-    self: FFmpegMetadataPP, info: dict[str, Any]
-) -> Generator[
-    tuple[Literal["-write_id3v1"], Literal["1"]] | tuple[Literal["-metadata"], str] | tuple[str, str], Any, None
-]:
-    yield from self.__getattribute__("unpatched_get_metadata_opts")(info)
-
-    # video_id = info.get("id")
-    # if not video_id:
-    #     self.to_screen("No video ID found")
-    #     return
-
-    if not SAVE_LRC and not EMBED_LYRICS:
-        return
-
-    try:
-        yield from get_lyrics(info, to_screen=self.to_screen)
-    except ValueError as e:
-        self.to_screen(f"Error getting lyrics: {e}")
-        traceback.print_exc()
-        return
-
-
-FFmpegMetadataPP.unpatched_get_metadata_opts = FFmpegMetadataPP._get_metadata_opts  # type: ignore
-FFmpegMetadataPP._get_metadata_opts = patched_get_metadata_opts
-
-
 @cache
 def fetch_album_info(browse_id: str | None) -> dict[str, Any]:
     if not browse_id:
@@ -949,9 +919,8 @@ def is_various_artist(album_browse_id: str) -> bool:
     return any(entry.get("channel_id") != first_channel for entry in entries[1:])
 
 
-# my focking god, stub in pylance so annoying
-class CustomMetadataPP(PostProcessor):
-    def run(self, information: dict[str, Any]):  # type: ignore[override]
+class ExtraMetadataPP(PostProcessor):
+    def run(self, information: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
         self.to_screen("Checking metadata...")
         video_id = information["id"]
 
@@ -981,7 +950,7 @@ class CustomMetadataPP(PostProcessor):
         try:
             information["meta_album_artist"] = get_album_artist(video_id)
         except ValueError:
-            self.to_screen("No album artist found from innertube data, checking for legacy methods...")
+            self.to_screen("No album artist found from innertube data, trying legacy methods...")
             try:
                 browse_id = find_album_browse_id(video_id)
                 if browse_id and is_various_artist(browse_id):
@@ -1000,6 +969,61 @@ class CustomMetadataPP(PostProcessor):
                 information["meta_date"] = get_release_year_from_album(video_id)
             except ValueError:
                 self.to_screen("Release year not found from the album. Too bad...")
+
+        return [], information
+
+
+class EmbedLyricsMetadataPP(PostProcessor):
+    def run(self, information: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
+        self.to_screen("Fetching lyrics...")
+
+        plugins: Iterable[LyricsPluginBase] = [
+            ShazamLyricsPlugin(information, to_screen=self.to_screen),
+            LrcLibLyricsPlugin(information, to_screen=self.to_screen),
+            # MusixMatchLyricsPlugin(information, to_screen=self.to_screen),
+            YoutubeMusicLyricsPlugin(information, to_screen=self.to_screen),
+        ]
+
+        lyrics: str | None = None
+        is_synced: bool = False
+
+        if PREFER_SYNCED:
+            for plugin in plugins:
+                self.to_screen(f"Checking synced lyrics with {plugin.__class__.__name__}...")
+                lyrics = plugin.get_synced()
+                if lyrics:
+                    self.to_screen("Found synced lyrics.")
+                    is_synced = True
+                    break
+
+        if not lyrics:
+            for plugin in plugins:
+                self.to_screen(f"Checking unsynced lyrics with {plugin.__class__.__name__}...")
+                lyrics = plugin.get_unsynced()
+                if lyrics:
+                    self.to_screen("Found unsynced lyrics.")
+                    break
+
+        if lyrics:
+            if is_synced:
+                information["_is_synced_lyrics"] = True
+            information["meta_lyrics" if EMBED_LYRICS else "_lyrics"] = lyrics
+
+        return [], information
+
+
+class SaveLyricsToFilePP(PostProcessor):
+    def run(self, information: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
+        if not SAVE_LRC:
+            return [], information
+
+        is_synced = information.get("_is_synced_lyrics", False)
+        lyrics = information.get("meta_lyrics") or information.get("_lyrics")
+        if lyrics:
+            suffix = ".lrc" if is_synced else ".txt"
+            _filename = Path(f"{information['filepath']}").with_suffix(suffix)
+            _filename.write_text(lyrics, encoding="utf-8")
+            self.to_screen(f"Saved lyrics to {_filename}")
 
         return [], information
 
@@ -1171,7 +1195,10 @@ def download(url: str, extra_options: dict[str, Any] | None = None):
         options.update(extra_options)
 
     with yt_dlp.YoutubeDL(options) as ydl:
-        ydl.add_post_processor(CustomMetadataPP(), when="pre_process")
+        ydl.add_post_processor(ExtraMetadataPP(), when="pre_process")
+        ydl.add_post_processor(EmbedLyricsMetadataPP(ydl), when="pre_process")
+        if SAVE_LRC:
+            ydl.add_post_processor(SaveLyricsToFilePP(ydl), when="after_move")
         ydl.download([url])
 
 
