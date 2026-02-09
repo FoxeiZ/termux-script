@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/python
-# ruff: noqa: B019, S105, E501
+# ruff: noqa: B019, E501
 # pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportIndexIssue=information, reportOptionalMemberAccess=false, reportIncompatibleMethodOverride=false
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import subprocess
 import sys
 import urllib.parse
 from difflib import SequenceMatcher
-from functools import cache, lru_cache
+from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -240,69 +240,122 @@ class YoutubeMusicLyricsPlugin(LyricsPluginBase):
             return None
 
 
-# TODO: fix auth issues
 class MusixMatchLyricsPlugin(LyricsPluginBase):
-    TOKEN = "2203269256ff7abcb649269df00e14c833dbf4ddfb5b36a1aae8b0"
-    BASE_URL = "https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get?format=json&namespace=lyrics_richsynched&subtitle_format=mxm&app_id=web-desktop-app-v1.0&"
     HEADERS: ClassVar = {
         "authority": "apic-desktop.musixmatch.com",
         "cookie": "mxm_bab=AB",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
     }
 
-    @lru_cache(maxsize=5)
+    session: ClassVar[requests.Session | None] = None
+    token: ClassVar[str | None] = None
+
+    @classmethod
+    def _ensure_session(cls) -> requests.Session:
+        if cls.session is None:
+            cls.session = requests.Session()
+            cls.session.headers.update(cls.HEADERS)
+        return cls.session
+
+    @classmethod
+    def _get_token(cls, force_refresh: bool = False) -> str | None:
+        cls._ensure_session()
+
+        if not force_refresh and cls.token:
+            return cls.token
+
+        return cls._refresh_token()
+
+    @classmethod
+    def _refresh_token(cls) -> str | None:
+        try:
+            session = cls._ensure_session()
+            response = session.get(
+                "https://apic-desktop.musixmatch.com/ws/1.1/token.get",
+                params={"app_id": "web-desktop-app-v1.0"},
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json()
+            if data["message"]["header"]["status_code"] == 200:
+                cls.token = data["message"]["body"]["user_token"]
+        except Exception as e:
+            print(f"Error fetching MusixMatch token: {e}")
+        return None
+
     def find_lyrics(
         self,
         *,
         album: str = "",
         artist: str = "",
         title: str = "",
-        # duration: str = "",
-        # track_id: str = "",
-        # subtitle_length: str = "",
-    ):
+        renew: bool = False,
+    ) -> dict[str, Any] | None:
+        session = self._ensure_session()
+        token = self._get_token(force_refresh=renew)
+
+        if not token:
+            self.to_screen("Could not obtain MusixMatch token.")
+            return None
+
         params = {
             "q_album": album,
             "q_artist": artist,
             "q_track": title,
-            # "track_spotify_id": track_id,
-            # "q_duration": duration,
-            # "f_subtitle_length": subtitle_length,
-            "usertoken": self.TOKEN,
+            "usertoken": token,
+            "app_id": "web-desktop-app-v1.0",
+            "format": "json",
+            "namespace": "lyrics_richsynched",
+            "subtitle_format": "mxm",
         }
 
         try:
-            response = requests.get(self.BASE_URL, params=params, headers=self.HEADERS, timeout=10)
+            response = session.get(
+                "https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get", params=params, timeout=10
+            )
             response.raise_for_status()
         except (requests.RequestException, ConnectionError) as e:
             self.to_screen(repr(e))
-            return
+            return None
 
         r = response.json()
-        if r["message"]["header"]["status_code"] != 200 and r["message"]["header"].get("hint") == "renew":
-            self.to_screen("Invalid token")
-            return
+        status_code = r["message"]["header"]["status_code"]
+
+        if status_code != 200:
+            if r["message"]["header"].get("hint") == "renew" or status_code == 401:
+                if not renew:
+                    self.to_screen("Token expired, renewing...")
+                    return self.find_lyrics(album=album, artist=artist, title=title, renew=True)
+                else:
+                    self.to_screen("Token rejected after renewal.")
+                    return None
+
+            self.to_screen(f"API Error: {status_code}")
+            return None
 
         body = r["message"]["body"]["macro_calls"]
-        status_code = body["matcher.track.get"]["message"]["header"].get("status_code")
-        if status_code != 200:
-            if status_code == 404:
+        track_status = body["matcher.track.get"]["message"]["header"].get("status_code")
+
+        if track_status != 200:
+            if track_status == 404:
                 self.to_screen("No lyrics/songs found.")
-            elif status_code == 401:
-                self.to_screen("Timed out.")
+            elif track_status == 401:
+                self.to_screen("Timed out or auth error.")
             else:
-                self.to_screen(f"Requested error: {body['matcher.track.get']['message']['header']}")
-            return
-        elif isinstance(body["track.lyrics.get"]["message"].get("body"), dict):
-            if body["track.lyrics.get"]["message"]["body"]["lyrics"]["restricted"]:
-                self.to_screen("Restricted lyrics.")
-                return
+                self.to_screen(f"Matcher error: {body['matcher.track.get']['message']['header']}")
+            return None
+
+        lyrics_msg = body["track.lyrics.get"]["message"]
+        if lyrics_msg.get("header", {}).get("status_code") == 200 and lyrics_msg["body"]["lyrics"]["restricted"]:
+            self.to_screen("Restricted lyrics.")
+            return None
 
         return body
 
     def get_unsynced(self):
         body = self.find_lyrics(artist=self.artist, title=self.title)
         if body is None:
-            raise ValueError("No body found")
+            return None
 
         lyrics_body = body["track.lyrics.get"]["message"].get("body")
         if lyrics_body is None:
@@ -317,12 +370,17 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
     def get_synced(self):
         body = self.find_lyrics(artist=self.artist, title=self.title)
         if body is None:
-            raise ValueError("No body found")
+            return None
 
         subtitle_body = body["track.subtitles.get"]["message"].get("body")
         if subtitle_body is None:
             return None
-        subtitle = subtitle_body["subtitle_list"][0]["subtitle"]
+
+        subtitle_list = subtitle_body.get("subtitle_list", [])
+        if not subtitle_list:
+            return None
+
+        subtitle = subtitle_list[0].get("subtitle")
         if subtitle:
             return "\n".join(
                 [
@@ -418,14 +476,14 @@ class ShazamLyricsPlugin(LyricsPluginBase):
         "Accept": "*/*",
         "Accept-Language": "en-US",
         "Accept-Encoding": "gzip, deflate",
-        "User-Agent": "Mozilla/5.0 (iPad; U; CPU OS 4_3_3 like Mac OS X; en-us) AppleWebKit/533.17.9 (KHTML, like Gecko) Mobile/8J2",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
     }
 
     def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
         super().__init__(info, to_screen=to_screen)
         self._raw_data: tuple[str, bool, bool] | None = None
 
-    def _make_request(self, url: str) -> requests.Response | None:  # use Any to avoid deep nesting
+    def _make_request(self, url: str) -> requests.Response | None:
         try:
             response = requests.get(url, headers=self.HEADERS, allow_redirects=True, timeout=10)
             response.raise_for_status()
@@ -762,7 +820,7 @@ def get_lyrics(
     plugins: list[LyricsPluginBase] = [
         ShazamLyricsPlugin(info, to_screen=to_screen),
         LrcLibLyricsPlugin(info, to_screen=to_screen),
-        # MusixMatchLyricsPlugin(info, to_screen=to_screen),  # TODO: fix unath
+        MusixMatchLyricsPlugin(info, to_screen=to_screen),
         YoutubeMusicLyricsPlugin(info, to_screen=to_screen),
     ]
 
@@ -980,7 +1038,7 @@ class EmbedLyricsMetadataPP(PostProcessor):
         plugins: Iterable[LyricsPluginBase] = [
             ShazamLyricsPlugin(information, to_screen=self.to_screen),
             LrcLibLyricsPlugin(information, to_screen=self.to_screen),
-            # MusixMatchLyricsPlugin(information, to_screen=self.to_screen),
+            MusixMatchLyricsPlugin(information, to_screen=self.to_screen),
             YoutubeMusicLyricsPlugin(information, to_screen=self.to_screen),
         ]
 
