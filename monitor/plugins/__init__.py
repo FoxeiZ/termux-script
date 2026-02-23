@@ -7,6 +7,7 @@ from .plugin_test.long_process import (
     NativeLongProcessPlugin,
     NativeLongProcessPluginRoot,
 )
+from .process_watch_monitor import ProcessWatchMonitorPlugin
 from .system_monitor import SystemMonitorPlugin
 from .system_server_monitor import SystemServerPlugin
 from .tailscale import TailscaledPlugin
@@ -18,6 +19,7 @@ __all__ = [
     "LongProcessPluginWithLongOutput",
     "NativeLongProcessPlugin",
     "NativeLongProcessPluginRoot",
+    "ProcessWatchMonitorPlugin",
     "SystemMonitorPlugin",
     "SystemServerPlugin",
     "TailscaledPlugin",

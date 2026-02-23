@@ -11,6 +11,7 @@ from plugins import (
     LongProcessPluginWithLongOutput,
     NativeLongProcessPlugin,
     NativeLongProcessPluginRoot,
+    ProcessWatchMonitorPlugin,
     SystemMonitorPlugin,
     SystemServerPlugin,
     TailscaledPlugin,
@@ -38,6 +39,11 @@ if __name__ == "__main__":
         )
         manager.register_plugin(SystemServerPlugin)
         manager.register_plugin(SystemMonitorPlugin)
+        manager.register_plugin(
+            ProcessWatchMonitorPlugin,
+            top_n=5,
+            ram_threshold=8.0,
+        )
         manager.register_plugin(TailscaledPlugin, auth_key=Config.tailscale_auth_key)
 
     manager.run()
