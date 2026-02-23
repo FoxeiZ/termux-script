@@ -55,11 +55,26 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
             return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
         return {"start_new_session": True}
 
+    def _cleanup_screen_state(self) -> None:
+        if not self.use_screen or IS_WINDOWS:
+            return
+
+        try:
+            subprocess.run(["screen", "-S", self.name, "-X", "quit"], check=False)
+        except Exception as exc:
+            self.logger.debug("failed to request screen quit for %s: %s", self.name, exc)
+
+        try:
+            subprocess.run(["screen", "-wipe"], check=False)
+        except Exception as exc:
+            self.logger.debug("failed to wipe screen sockets: %s", exc)
+
     def start(self) -> None:
         cmd = self._get_command()
         self.logger.info("starting script with command: %s", cmd)
 
         try:
+            self._cleanup_screen_state()
             popen_kwargs = self._get_popen_kwargs()
             self._process = subprocess.Popen(cmd, cwd=self.cwd, **popen_kwargs)
             while not self._stop_event.is_set():
@@ -75,6 +90,7 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
                 if self.restart_on_failure and self._process.returncode != 0:
                     raise RuntimeError(f"script {self.name} exited unexpectedly")
         finally:
+            self._cleanup_screen_state()
             self._process = None
 
     def _terminate_process(self) -> None:
@@ -83,7 +99,7 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
 
         if self.use_screen:
             self.logger.info("terminating screen session %s", self.name)
-            subprocess.run(["screen", "-S", self.name, "-X", "quit"], check=False)
+            self._cleanup_screen_state()
 
         self._signal_process_group(signal.SIGTERM if not IS_WINDOWS else signal.CTRL_BREAK_EVENT)
         try:
