@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/python
 # ruff: noqa: B019, E501
-# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportIndexIssue=information, reportOptionalMemberAccess=false, reportIncompatibleMethodOverride=false
+# pyright: reportUnknownVariableType=false, reportArgumentType=false, reportIndexIssue=information, reportOptionalMemberAccess=information, reportIncompatibleMethodOverride=false
 from __future__ import annotations
 
 import json
@@ -14,6 +14,7 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pykakasi
 import requests
 import yt_dlp
 from requests.adapters import HTTPAdapter
@@ -39,6 +40,8 @@ IS_TERMUX = (
 ###                          |___/
 # Save lyrics as .lrc file
 SAVE_LRC = True
+# Add Romaji lyrics (Dual line format)
+ADD_ROMAJI = True
 # Embed lyrics into audio file metadata
 EMBED_LYRICS = True
 PREFER_SYNCED = True
@@ -881,7 +884,6 @@ def fetch_album_info(browse_id: str | None) -> dict[str, Any]:
         return album_info
 
 
-@cache
 def find_album_browse_id(video_id: str) -> str | None:
     data = InnerTubeBase().fetch_next(video_id)
 
@@ -1032,7 +1034,54 @@ class ExtraMetadataPP(PostProcessor):
 
 
 class EmbedLyricsMetadataPP(PostProcessor):
+    _kks = pykakasi.kakasi() if ADD_ROMAJI else None
+
     def run(self, information: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
+        if not SAVE_LRC:
+            return [], information
+
+        is_synced, lyrics = self.get_lyrics(information)
+        if lyrics:
+            if ADD_ROMAJI:
+                lyrics = self._add_romaji(lyrics, is_synced)
+
+            if is_synced:
+                information["_is_synced_lyrics"] = True
+            information["meta_lyrics" if EMBED_LYRICS else "_lyrics"] = lyrics
+
+        return [], information
+
+    def _add_romaji(self, lyrics: str, is_synced: bool) -> str:
+        assert self._kks is not None
+        kks = self._kks
+
+        def to_romaji(text: str) -> str:
+            result = kks.convert(text)
+            return " ".join([item["hepburn"].strip() for item in result])
+
+        def has_japanese(text: str) -> bool:
+            return bool(re.search(r"[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]", text))
+
+        lines = lyrics.splitlines()
+        new_lines: list[str] = []
+        timestamp_pat = re.compile(r"^(\[[\d:.]+\])(.*)$")
+
+        for line in lines:
+            new_lines.append(line)
+            if is_synced:
+                match = timestamp_pat.match(line)
+                if match:
+                    timestamp, content = match.groups()
+                    if content and has_japanese(content):
+                        new_lines.append(f"{timestamp} {to_romaji(content)}")
+            elif has_japanese(line):
+                new_lines.append(to_romaji(line))
+
+            new_lines.append("")  # add an empty line for better readability
+
+        return "\n".join(new_lines)
+
+    def get_lyrics(self, information: dict[str, Any]) -> tuple[bool, str | None]:
         self.to_screen("Fetching lyrics...")
 
         plugins: Iterable[LyricsPluginBase] = [
@@ -1062,12 +1111,7 @@ class EmbedLyricsMetadataPP(PostProcessor):
                     self.to_screen("Found unsynced lyrics.")
                     break
 
-        if lyrics:
-            if is_synced:
-                information["_is_synced_lyrics"] = True
-            information["meta_lyrics" if EMBED_LYRICS else "_lyrics"] = lyrics
-
-        return [], information
+        return is_synced, lyrics
 
 
 class SaveLyricsToFilePP(PostProcessor):
@@ -1255,8 +1299,7 @@ def download(url: str, extra_options: dict[str, Any] | None = None):
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.add_post_processor(ExtraMetadataPP(), when="pre_process")
         ydl.add_post_processor(EmbedLyricsMetadataPP(ydl), when="pre_process")
-        if SAVE_LRC:
-            ydl.add_post_processor(SaveLyricsToFilePP(ydl), when="after_move")
+        ydl.add_post_processor(SaveLyricsToFilePP(ydl), when="after_move")
         ydl.download([url])
 
 
