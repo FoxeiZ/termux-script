@@ -3,18 +3,20 @@
 # pyright: reportUnknownVariableType=false, reportArgumentType=false, reportIndexIssue=information, reportOptionalMemberAccess=information, reportIncompatibleMethodOverride=false
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
 import subprocess
 import sys
+import threading
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-import pykakasi
 import requests
 import yt_dlp
 from requests.adapters import HTTPAdapter
@@ -22,8 +24,20 @@ from urllib3.util.retry import Retry
 from yt_dlp.postprocessor.common import PostProcessor
 from yt_dlp.postprocessor.metadataparser import MetadataParserPP
 
+try:
+    import pykakasi
+except ImportError:
+    print("warning: pykakasi not found, Romaji conversion will be disabled.")
+    pykakasi = None
+
+try:
+    from googletrans import Translator
+except ImportError:
+    print("warning: googletrans not found, translation features will be disabled.")
+    Translator = None
+
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterable, Iterator
+    from collections.abc import Callable, Coroutine, Generator, Iterable, Iterator
     from typing import Any, ClassVar, Literal, NotRequired, TypedDict
 
 IS_TERMUX = (
@@ -42,6 +56,8 @@ IS_TERMUX = (
 SAVE_LRC = True
 # Add Romaji lyrics (Dual line format)
 ADD_ROMAJI = True
+# Add English translation via Google Translate (requires googletrans)
+ADD_TRANSLATION = True
 # Embed lyrics into audio file metadata
 EMBED_LYRICS = True
 PREFER_SYNCED = True
@@ -1034,7 +1050,35 @@ class ExtraMetadataPP(PostProcessor):
 
 
 class EmbedLyricsMetadataPP(PostProcessor):
-    _kks = pykakasi.kakasi() if ADD_ROMAJI else None
+    _kks = pykakasi.kakasi() if ADD_ROMAJI and pykakasi else None
+    _translator = Translator() if ADD_TRANSLATION and Translator else None
+    _timestamp_pattern = re.compile(r"^(\[[\d:.]+\])(.*)$")
+    _jp_pattern = re.compile(r"[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]")
+
+    @staticmethod
+    def run_coroutine_sync[T](coroutine: Coroutine[Any, Any, T], timeout: float = 30) -> T:
+        def run_in_new_loop():
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                return new_loop.run_until_complete(coroutine)
+            finally:
+                new_loop.close()
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coroutine)
+
+        if threading.current_thread() is threading.main_thread():
+            if not loop.is_running():
+                return loop.run_until_complete(coroutine)
+            else:
+                with ThreadPoolExecutor() as pool:
+                    future = pool.submit(run_in_new_loop)
+                    return future.result(timeout=timeout)
+        else:
+            return asyncio.run_coroutine_threadsafe(coroutine, loop).result()
 
     def run(self, information: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
         if not SAVE_LRC:
@@ -1043,7 +1087,7 @@ class EmbedLyricsMetadataPP(PostProcessor):
         is_synced, lyrics = self.get_lyrics(information)
         if lyrics:
             if ADD_ROMAJI:
-                lyrics = self._add_romaji(lyrics, is_synced)
+                lyrics = self._process_lyrics(lyrics, is_synced)
 
             if is_synced:
                 information["_is_synced_lyrics"] = True
@@ -1051,33 +1095,64 @@ class EmbedLyricsMetadataPP(PostProcessor):
 
         return [], information
 
-    def _add_romaji(self, lyrics: str, is_synced: bool) -> str:
+    def _to_romaji(self, text: str) -> str:
         assert self._kks is not None
-        kks = self._kks
+        out = ""
+        for item in self._kks.convert(text):
+            word = item["hepburn"]
+            if not word:
+                continue
+            if not out or out[-1].isspace() or word[0].isspace():
+                out += word
+            else:
+                out += " " + word
+        return out
 
-        def to_romaji(text: str) -> str:
-            result = kks.convert(text)
-            return " ".join([item["hepburn"].strip() for item in result])
-
-        def has_japanese(text: str) -> bool:
-            return bool(re.search(r"[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]", text))
-
+    def _process_lyrics(self, lyrics: str, is_synced: bool) -> str:
         lines = lyrics.splitlines()
-        new_lines: list[str] = []
-        timestamp_pat = re.compile(r"^(\[[\d:.]+\])(.*)$")
 
-        for line in lines:
-            new_lines.append(line)
+        japanese_entries: list[tuple[int, str | None, str]] = []
+        cached_matches: dict[int, tuple[str, str]] = {}
+
+        for i, line in enumerate(lines):
             if is_synced:
-                match = timestamp_pat.match(line)
-                if match:
-                    timestamp, content = match.groups()
-                    if content and has_japanese(content):
-                        new_lines.append(f"{timestamp} {to_romaji(content)}")
-            elif has_japanese(line):
-                new_lines.append(to_romaji(line))
+                m = self._timestamp_pattern.match(line)
+                if m:
+                    timestamp, content = m.groups()
+                    cached_matches[i] = (timestamp, content)
+                    if content and self._jp_pattern.search(content):
+                        japanese_entries.append((i, timestamp, content))
+            elif self._jp_pattern.search(line):
+                japanese_entries.append((i, None, line))
 
-            new_lines.append("")  # add an empty line for better readability
+        translations: dict[int, str] = {}
+        if ADD_TRANSLATION and self._translator is not None and japanese_entries:
+            try:
+                self.to_screen(f"translating {len(japanese_entries)} line(s) to English...")
+                texts = [e[2] for e in japanese_entries]
+                results = self.run_coroutine_sync(self._translator.translate(texts, src="ja", dest="en"))
+                if not isinstance(results, list):
+                    results = [results]
+                translations = {e[0]: r.text for e, r in zip(japanese_entries, results, strict=True) if r.text}
+            except Exception as exc:
+                self.to_screen(f"failed to translate: {exc}")
+
+        jp_set = {e[0] for e in japanese_entries}
+        new_lines: list[str] = []
+        for i, line in enumerate(lines):
+            new_lines.append(line)
+            if i in jp_set:
+                if is_synced:
+                    timestamp, content = cached_matches[i]
+                    new_lines.append(f"{timestamp} {self._to_romaji(content)}")
+                    if i in translations:
+                        new_lines.append(f"{timestamp} {translations[i]}")
+                else:
+                    new_lines.append(self._to_romaji(line))
+                    if i in translations:
+                        new_lines.append(translations[i])
+
+            new_lines.append("")
 
         return "\n".join(new_lines)
 
