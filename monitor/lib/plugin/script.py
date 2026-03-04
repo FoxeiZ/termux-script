@@ -58,49 +58,67 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
 
     @property
     def _screen_base_name(self) -> str:
-        """return the stable base name by stripping any trailing _<hex> suffix."""
         return re.sub(r"_[0-9a-f]{6,}$", "", self.name)
 
+    def _is_matching_screen_name(self, name: str) -> bool:
+        prefix = self._screen_base_name
+        return name in (self.name, prefix) or name.startswith(prefix + "_")
+
+    def _get_screen_dir(self) -> Path | None:
+        screendir = os.environ.get("SCREENDIR")
+        if screendir:
+            return Path(screendir)
+        candidate = Path.home() / ".screen"
+        return candidate if candidate.is_dir() else None
+
     def _list_matching_screen_sessions(self) -> list[str]:
-        """return screen session ids (pid.name) whose name starts with _screen_base_name."""
         try:
-            result = subprocess.run(
-                ["screen", "-ls"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            # each session line looks like: "\t<pid>.<name>\t(<state>)"
-            sessions: list[str] = []
-            prefix = self._screen_base_name
-            for line in result.stdout.splitlines():
-                match = re.match(r"^\s+(\d+\.\S+)", line)
-                if match:
-                    session_id = match.group(1)
-                    # match pid.name where name starts with our base prefix
-                    session_name = session_id.split(".", 1)[-1]
-                    if session_name == self.name or session_name.startswith(prefix + "_") or session_name == prefix:
-                        sessions.append(session_id)
-            return sessions
+            result = subprocess.run(["screen", "-ls"], capture_output=True, text=True, check=False)
         except Exception as exc:
             self.logger.debug("failed to list screen sessions: %s", exc)
             return []
+
+        sessions: list[str] = []
+        for line in result.stdout.splitlines():
+            # session lines look like: "\t<pid>.<name>\t(<state>)"
+            m = re.match(r"^\s+(\d+\.(\S+))", line)
+            if m and self._is_matching_screen_name(m.group(2)):
+                sessions.append(m.group(1))
+        return sessions
 
     def _cleanup_screen_state(self) -> None:
         if not self.use_screen or IS_WINDOWS:
             return
 
         for session_id in self._list_matching_screen_sessions():
-            self.logger.debug("sending quit to stale screen session %s", session_id)
+            self.logger.debug("quitting stale screen session %s", session_id)
             try:
-                subprocess.run(["screen", "-S", session_id, "-X", "quit"], check=False)
+                subprocess.run(
+                    ["screen", "-S", session_id, "-X", "quit"],
+                    capture_output=True,
+                    check=False,
+                )
             except Exception as exc:
                 self.logger.debug("failed to quit screen session %s: %s", session_id, exc)
 
+        # wipe dead sockets via screen, then forcibly remove any remaining ones
+        # (screen -wipe cannot remove sockets owned by a different uid)
         try:
-            subprocess.run(["screen", "-wipe"], check=False)
+            subprocess.run(["screen", "-wipe"], capture_output=True, check=False)
         except Exception as exc:
             self.logger.debug("failed to wipe screen sockets: %s", exc)
+
+        screen_dir = self._get_screen_dir()
+        if not screen_dir:
+            return
+        for socket_file in screen_dir.iterdir():
+            pid_name = socket_file.name.split(".", 1)
+            if len(pid_name) == 2 and self._is_matching_screen_name(pid_name[1]):
+                try:
+                    socket_file.unlink()
+                    self.logger.debug("removed stale screen socket: %s", socket_file.name)
+                except OSError as exc:
+                    self.logger.debug("failed to remove screen socket %s: %s", socket_file.name, exc)
 
     def start(self) -> None:
         cmd = self._get_command()
