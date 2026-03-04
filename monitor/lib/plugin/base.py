@@ -10,6 +10,10 @@ from typing import TYPE_CHECKING
 
 import requests
 
+_RETRYABLE_HTTP_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+_WEBHOOK_MAX_RETRIES: int = 3
+_WEBHOOK_MAX_BACKOFF: float = 60.0
+
 if TYPE_CHECKING:
     from logging import Logger
     from typing import Any
@@ -107,6 +111,104 @@ class Plugin:
             self.__http_session = requests.Session()
         return self.__http_session
 
+    def request(
+        self,
+        method: str,
+        url: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> requests.Response:
+        """
+        Args:
+            method (str): HTTP method (e.g. "GET", "POST", "PATCH").
+            url (str): The URL to send the request to.
+            *args: Passed through to requests.Session.request().
+            **kwargs: Passed through to requests.Session.request(). If
+                'timeout' is not provided, defaults to
+                self.manager.retry_delay.
+
+        Returns:
+            requests.Response on success.
+
+        Raises:
+            requests.exceptions.RequestException: After all retry attempts
+                are exhausted or on a non-retryable error.
+        """
+        kwargs.setdefault("timeout", self.manager.retry_delay)
+        base_delay = max(1.0, float(self.manager.retry_delay))
+
+        for attempt in range(1, _WEBHOOK_MAX_RETRIES + 1):
+            try:
+                resp = self.http_session.request(method, url, *args, **kwargs)
+                resp.raise_for_status()
+                return resp
+
+            except requests.exceptions.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                if status not in _RETRYABLE_HTTP_CODES or attempt >= _WEBHOOK_MAX_RETRIES:
+                    self.logger.error(
+                        "http %s %s failed for plugin %s (attempt %d/%d, status %s): %s",
+                        method,
+                        url,
+                        self.name,
+                        attempt,
+                        _WEBHOOK_MAX_RETRIES,
+                        status,
+                        exc,
+                    )
+                    raise
+
+                if status == 429 and exc.response is not None:
+                    retry_after = exc.response.headers.get("Retry-After")
+                    delay = float(retry_after) if retry_after else base_delay
+                else:
+                    backoff = min(base_delay * (2 ** (attempt - 1)), _WEBHOOK_MAX_BACKOFF)
+                    jitter = backoff * 0.1
+                    delay = max(0.1, backoff + random.uniform(-jitter, jitter))
+
+                self.logger.warning(
+                    "http %s %s failed for plugin %s (attempt %d/%d, status %s): %s; retrying in %.1fs",
+                    method,
+                    url,
+                    self.name,
+                    attempt,
+                    _WEBHOOK_MAX_RETRIES,
+                    status,
+                    exc,
+                    delay,
+                )
+                self._stop_event.wait(delay)
+
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+                if attempt >= _WEBHOOK_MAX_RETRIES:
+                    self.logger.error(
+                        "http %s %s failed for plugin %s after %d attempts: %s",
+                        method,
+                        url,
+                        self.name,
+                        _WEBHOOK_MAX_RETRIES,
+                        exc,
+                    )
+                    raise
+
+                backoff = min(base_delay * (2 ** (attempt - 1)), _WEBHOOK_MAX_BACKOFF)
+                jitter = backoff * 0.1
+                delay = max(0.1, backoff + random.uniform(-jitter, jitter))
+
+                self.logger.warning(
+                    "http %s %s failed for plugin %s (attempt %d/%d): %s; retrying in %.1fs",
+                    method,
+                    url,
+                    self.name,
+                    attempt,
+                    _WEBHOOK_MAX_RETRIES,
+                    exc,
+                    delay,
+                )
+                self._stop_event.wait(delay)
+
+        raise RuntimeError("request loop exited without returning or raising")
+
     def send_webhook(
         self,
         payload: WebhookPayload,
@@ -119,8 +221,8 @@ class Plugin:
         Args:
             payload (WebhookPayload): The payload to send.
             wait (bool): Whether to wait for a response.
-            *args: Refer to requests.post() for more options.
-            **kwargs: Refer to requests.post() for more options.
+            *args: Refer to requests.Session.request() for more options.
+            **kwargs: Refer to requests.Session.request() for more options.
 
         Returns:
             Response data if wait=True, otherwise None.
@@ -129,18 +231,16 @@ class Plugin:
             return None
 
         payload.setdefault("username", self.name)
-
-        resp = self.http_session.post(
+        resp = self.request(
+            "POST",
             self.webhook_url,
             *args,
             json=payload,
             params={"wait": wait} if wait else None,
-            timeout=self.manager.retry_delay,
             **kwargs,
         )
-        resp.raise_for_status()
         if wait:
-            data = resp.json()
+            data: dict[str, Any] = resp.json()
             self._message_id = data["id"]
             return data
         return None
@@ -150,12 +250,12 @@ class Plugin:
         payload: WebhookPayload,
         msg_id: str | None = None,
     ) -> None:
-        """Edit the webhook URL."""
+        """Edit a previously sent webhook message."""
         if not msg_id:
             msg_id = self._message_id
 
         url = f"{self.webhook_url}/messages/{msg_id}"
-        self.http_session.patch(url, json=payload, timeout=self.manager.retry_delay)
+        self.request("PATCH", url, json=payload)
 
     def send_message(self, title: str, description: str, color: int, content: str | None, wait: bool):
         files = None
