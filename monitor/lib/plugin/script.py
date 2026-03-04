@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 import subprocess
 from pathlib import Path
@@ -55,14 +56,46 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
             return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
         return {"start_new_session": True}
 
+    @property
+    def _screen_base_name(self) -> str:
+        """return the stable base name by stripping any trailing _<hex> suffix."""
+        return re.sub(r"_[0-9a-f]{6,}$", "", self.name)
+
+    def _list_matching_screen_sessions(self) -> list[str]:
+        """return screen session ids (pid.name) whose name starts with _screen_base_name."""
+        try:
+            result = subprocess.run(
+                ["screen", "-ls"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            # each session line looks like: "\t<pid>.<name>\t(<state>)"
+            sessions: list[str] = []
+            prefix = self._screen_base_name
+            for line in result.stdout.splitlines():
+                match = re.match(r"^\s+(\d+\.\S+)", line)
+                if match:
+                    session_id = match.group(1)
+                    # match pid.name where name starts with our base prefix
+                    session_name = session_id.split(".", 1)[-1]
+                    if session_name == self.name or session_name.startswith(prefix + "_") or session_name == prefix:
+                        sessions.append(session_id)
+            return sessions
+        except Exception as exc:
+            self.logger.debug("failed to list screen sessions: %s", exc)
+            return []
+
     def _cleanup_screen_state(self) -> None:
         if not self.use_screen or IS_WINDOWS:
             return
 
-        try:
-            subprocess.run(["screen", "-S", self.name, "-X", "quit"], check=False)
-        except Exception as exc:
-            self.logger.debug("failed to request screen quit for %s: %s", self.name, exc)
+        for session_id in self._list_matching_screen_sessions():
+            self.logger.debug("sending quit to stale screen session %s", session_id)
+            try:
+                subprocess.run(["screen", "-S", session_id, "-X", "quit"], check=False)
+            except Exception as exc:
+                self.logger.debug("failed to quit screen session %s: %s", session_id, exc)
 
         try:
             subprocess.run(["screen", "-wipe"], check=False)
