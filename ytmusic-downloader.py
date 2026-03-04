@@ -54,10 +54,15 @@ IS_TERMUX = (
 ###                          |___/
 # Save lyrics as .lrc file
 SAVE_LRC = True
-# Add Romaji lyrics (Dual line format)
+# Add Romaji lyrics (requires pykakasi)
 ADD_ROMAJI = True
 # Add English translation via Google Translate (requires googletrans)
 ADD_TRANSLATION = True
+# Translation target language code (used for both API and filename suffix)
+TRANSLATION_LANG = "en"
+# Split lyrics into separate files (original, romaji, translation)
+# If False, all lyrics are combined into a single file
+SPLIT_LYRICS = True
 # Embed lyrics into audio file metadata
 EMBED_LYRICS = True
 PREFER_SYNCED = True
@@ -1080,6 +1085,17 @@ class EmbedLyricsMetadataPP(PostProcessor):
         else:
             return asyncio.run_coroutine_threadsafe(coroutine, loop).result()
 
+    @property
+    def kks(self):
+        if not pykakasi:
+            raise ImportError("pykakasi is required for romaji conversion")
+        if not self._kks:
+            if ADD_ROMAJI:
+                raise ValueError("Kakasi instance not initialized")
+            else:
+                raise ValueError("Kakasi instance not available because ADD_ROMAJI is False. This should never happen.")
+        return self._kks
+
     def run(self, information: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
         if not SAVE_LRC:
             return [], information
@@ -1087,7 +1103,14 @@ class EmbedLyricsMetadataPP(PostProcessor):
         is_synced, lyrics = self.get_lyrics(information)
         if lyrics:
             if ADD_ROMAJI:
-                lyrics = self._process_lyrics(lyrics, is_synced)
+                result = self._process_lyrics(lyrics, is_synced)
+                if SPLIT_LYRICS:
+                    information["_lyrics_original"] = result["original"]
+                    information["_lyrics_romaji"] = result["romaji"]
+                    information["_lyrics_translation"] = result["translation"]
+                    lyrics = result["original"]
+                else:
+                    lyrics = result["combined"]
 
             if is_synced:
                 information["_is_synced_lyrics"] = True
@@ -1096,9 +1119,8 @@ class EmbedLyricsMetadataPP(PostProcessor):
         return [], information
 
     def _to_romaji(self, text: str) -> str:
-        assert self._kks is not None
         out = ""
-        for item in self._kks.convert(text):
+        for item in self.kks.convert(text):
             word = item["hepburn"]
             if not word:
                 continue
@@ -1108,7 +1130,15 @@ class EmbedLyricsMetadataPP(PostProcessor):
                 out += " " + word
         return out
 
-    def _process_lyrics(self, lyrics: str, is_synced: bool) -> str:
+    if TYPE_CHECKING:
+
+        class TranslationResult(TypedDict):
+            combined: str
+            original: str
+            romaji: str | None
+            translation: str | None
+
+    def _process_lyrics(self, lyrics: str, is_synced: bool) -> TranslationResult:
         lines = lyrics.splitlines()
 
         japanese_entries: list[tuple[int, str | None, str]] = []
@@ -1128,9 +1158,9 @@ class EmbedLyricsMetadataPP(PostProcessor):
         translations: dict[int, str] = {}
         if ADD_TRANSLATION and self._translator is not None and japanese_entries:
             try:
-                self.to_screen(f"translating {len(japanese_entries)} line(s) to English...")
+                self.to_screen(f"translating {len(japanese_entries)} line(s) to {TRANSLATION_LANG}...")
                 texts = [e[2] for e in japanese_entries]
-                results = self.run_coroutine_sync(self._translator.translate(texts, src="ja", dest="en"))
+                results = self.run_coroutine_sync(self._translator.translate(texts, src="ja", dest=TRANSLATION_LANG))
                 if not isinstance(results, list):
                     results = [results]
                 translations = {e[0]: r.text for e, r in zip(japanese_entries, results, strict=True) if r.text}
@@ -1138,23 +1168,44 @@ class EmbedLyricsMetadataPP(PostProcessor):
                 self.to_screen(f"failed to translate: {exc}")
 
         jp_set = {e[0] for e in japanese_entries}
-        new_lines: list[str] = []
+
+        combined_lines: list[str] = []
+        romaji_lines: list[str] = []
+        translation_lines: list[str] = []
+
         for i, line in enumerate(lines):
-            new_lines.append(line)
+            combined_lines.append(line)
             if i in jp_set:
                 if is_synced:
                     timestamp, content = cached_matches[i]
-                    new_lines.append(f"{timestamp} {self._to_romaji(content)}")
+                    romaji_text = self._to_romaji(content)
+                    combined_lines.append(f"{timestamp} {romaji_text}")
+                    romaji_lines.append(f"{timestamp} {romaji_text}")
                     if i in translations:
-                        new_lines.append(f"{timestamp} {translations[i]}")
+                        combined_lines.append(f"{timestamp} {translations[i]}")
+                        translation_lines.append(f"{timestamp} {translations[i]}")
+                    else:
+                        translation_lines.append(f"{timestamp}")
                 else:
-                    new_lines.append(self._to_romaji(line))
+                    romaji_text = self._to_romaji(line)
+                    combined_lines.append(romaji_text)
+                    romaji_lines.append(romaji_text)
                     if i in translations:
-                        new_lines.append(translations[i])
+                        combined_lines.append(translations[i])
+                        translation_lines.append(translations[i])
+            else:
+                # non-japanese lines go into romaji/translation as-is
+                romaji_lines.append(line)
+                translation_lines.append(line)
 
-            new_lines.append("")
+            combined_lines.append("")
 
-        return "\n".join(new_lines)
+        return {
+            "combined": "\n".join(combined_lines),
+            "original": lyrics,
+            "romaji": "\n".join(romaji_lines) if romaji_lines else None,
+            "translation": "\n".join(translation_lines) if translations else None,
+        }
 
     def get_lyrics(self, information: dict[str, Any]) -> tuple[bool, str | None]:
         self.to_screen("Fetching lyrics...")
@@ -1195,14 +1246,43 @@ class SaveLyricsToFilePP(PostProcessor):
             return [], information
 
         is_synced = information.get("_is_synced_lyrics", False)
-        lyrics = information.get("meta_lyrics") or information.get("_lyrics")
-        if lyrics:
-            suffix = ".lrc" if is_synced else ".txt"
-            _filename = Path(f"{information['filepath']}").with_suffix(suffix)
-            _filename.write_text(lyrics, encoding="utf-8")
-            self.to_screen(f"Saved lyrics to {_filename}")
+        suffix = ".lrc" if is_synced else ".txt"
+        base = Path(f"{information['filepath']}")
+
+        if SPLIT_LYRICS:
+            self._save_split(base, suffix, information)
+        else:
+            lyrics = information.get("meta_lyrics") or information.get("_lyrics")
+            if lyrics:
+                _filename = base.with_suffix(suffix)
+                _filename.write_text(lyrics, encoding="utf-8")
+                self.to_screen(f"Saved lyrics to {_filename}")
 
         return [], information
+
+    def _save_split(
+        self,
+        base: Path,
+        suffix: str,
+        information: dict[str, Any],
+    ) -> None:
+        original = information.get("_lyrics_original") or information.get("meta_lyrics") or information.get("_lyrics")
+        if original:
+            path = base.with_suffix(suffix)
+            path.write_text(original, encoding="utf-8")
+            self.to_screen(f"Saved original lyrics to {path}")
+
+        romaji = information.get("_lyrics_romaji")
+        if romaji:
+            path = base.with_suffix(f".romaji{suffix}")
+            path.write_text(romaji, encoding="utf-8")
+            self.to_screen(f"Saved romaji lyrics to {path}")
+
+        translation = information.get("_lyrics_translation")
+        if translation:
+            path = base.with_suffix(f".{TRANSLATION_LANG}{suffix}")
+            path.write_text(translation, encoding="utf-8")
+            self.to_screen(f"Saved translated lyrics to {path}")
 
 
 ytdl_opts = {
@@ -1214,6 +1294,7 @@ ytdl_opts = {
         "default": "Album/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s",
         "pl_thumbnail": "",
     },
+    "allowed_extractors": [r"^[yY].*[tT].*e?$"],
     "postprocessors": [
         {
             "actions": [
@@ -1361,7 +1442,9 @@ elif os.name == "nt":
         "js_runtimes": {"node": {}},
         "remote_components": {"ejs:github"},
         "cookiesfrombrowser": ("firefox",),
-        "extractor_args": {"youtube": {"player_js_variant": ("tv",)}},
+        "extractor_args": {
+            "youtube": {"player_js_variant": ("tv",)},
+        },
     }
     ytdl_opts.update(win_opts)
 
