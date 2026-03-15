@@ -1,5 +1,6 @@
 # ruff: noqa: F401
 
+import asyncio
 import os
 
 from lib.config import Config
@@ -22,9 +23,9 @@ from plugins import (
 if __name__ == "__main__":
     manager = Manager(webhook_url=Config.webhook_url)
     if Config.load_test_plugins:
-        # manager.register_plugin(LongProcessPlugin)
-        # manager.register_plugin(LongProcessPluginWithError)
-        # manager.register_plugin(LongProcessPluginWithLongOutput)
+        manager.register_plugin(LongProcessPlugin)
+        manager.register_plugin(LongProcessPluginWithError)
+        manager.register_plugin(LongProcessPluginWithLongOutput)
         manager.register_plugin(TestCronPerMin)
         manager.register_plugin(TestCron2Min)
         manager.register_plugin(NativeLongProcessPlugin)
@@ -44,6 +45,10 @@ if __name__ == "__main__":
             top_n=5,
             ram_threshold=8.0,
         )
-        manager.register_plugin(TailscaledPlugin, auth_key=Config.tailscale_auth_key)
+        manager.register_plugin(
+            TailscaledPlugin,
+            auth_key=Config.tailscale_auth_key,
+            upgrade_check=Config.tailscale_upgrade_check,
+        )
 
-    manager.run()
+    asyncio.run(manager.run())

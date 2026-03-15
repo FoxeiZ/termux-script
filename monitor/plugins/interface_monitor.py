@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import datetime
 import re
-import subprocess
 import time
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -16,12 +16,11 @@ from lib.utils import log_function_call
 if TYPE_CHECKING:
     from logging import Logger
 
-    from lib._types import Embed, EmbedField
-    from lib.manager import PluginManager
-    from lib.plugin.metadata import PluginMetadata
+    from lib.types import Embed, EmbedField, PluginMetadata
+    from lib.worker import PluginManager
 
 
-def default_ifconfig_output():
+def default_ifconfig_output() -> str:
     return """
 dummy0: flags=195<UP,BROADCAST,RUNNING,NOARP>  mtu 1500
         inet6 fe80::3c17:e9ff:fe59:5f1  prefixlen 64  scopeid 0x20<link>
@@ -135,14 +134,24 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
         return False
 
     @log_function_call
-    def get_ifconfig_output(self):
+    async def get_ifconfig_output(self) -> str:
         try:
-            result = subprocess.run(["ifconfig"], check=False, capture_output=True, text=True)
-            if result.returncode == 0:
-                return result.stdout
+            proc = await asyncio.create_subprocess_exec(
+                "ifconfig",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            if proc.returncode == 0:
+                return stdout.decode(errors="ignore")
 
-            result = subprocess.run(["/sbin/ifconfig"], check=False, capture_output=True, text=True)
-            return result.stdout
+            proc = await asyncio.create_subprocess_exec(
+                "/sbin/ifconfig",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            return stdout.decode(errors="ignore")
 
         except FileNotFoundError:
             return default_ifconfig_output()
@@ -228,17 +237,16 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
         return embeds_list
 
     @log_function_call
-    def perform_reboot(self):
+    async def perform_reboot(self) -> None:
         try:
             self.logger.warning("network has been down for more than 30 minutes, initiating system reboot")
-            subprocess.run(["reboot"], check=True, shell=False)
-        except subprocess.CalledProcessError as e:
-            self.logger.error("failed to execute reboot command: %s", e)
+            await asyncio.create_subprocess_exec("reboot")
+            # no need to wait, the phone just died at this point
         except Exception as e:
             self.logger.error("unexpected error during reboot: %s", e)
 
     @log_function_call
-    def start_wifi_hotspot(self):
+    async def start_wifi_hotspot(self) -> None:
         """Start WiFi hotspot when network connection is lost."""
         if self._hotspot_started:
             self.logger.info("hotspot already started, skipping")
@@ -248,61 +256,73 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
             self.logger.info("starting WiFi hotspot due to network loss")
 
             with contextlib.suppress(Exception):
-                subprocess.run(
-                    ["cmd", "wifi", "stop-softap"],
-                    check=False,
-                    shell=False,
-                    capture_output=True,
+                proc_stop = await asyncio.create_subprocess_exec(
+                    "cmd",
+                    "wifi",
+                    "stop-softap",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
                 )
+                await proc_stop.communicate()
 
-            subprocess.run(
-                ["cmd", "wifi", "start-softap", "qwerty123", "open"],
-                check=True,
-                shell=False,
-                capture_output=True,
-                text=True,
+            proc_start = await asyncio.create_subprocess_exec(
+                "cmd",
+                "wifi",
+                "start-softap",
+                "qwerty123",
+                "open",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+            _, stderr = await proc_start.communicate()
 
-            self._hotspot_started = True
-            self.logger.info("wifi hotspot started successfully")
+            if proc_start.returncode != 0:
+                self.logger.error(
+                    "failed to start WiFi hotspot: code %s, stderr: %s",
+                    proc_start.returncode,
+                    stderr.decode(errors="ignore"),
+                )
+            else:
+                self._hotspot_started = True
+                self.logger.info("wifi hotspot started successfully")
 
-        except subprocess.CalledProcessError as e:
-            self.logger.error("failed to start WiFi hotspot: %s", e)
-            if e.stderr:
-                self.logger.error("hotspot error output: %s", e.stderr)
         except Exception as e:
             self.logger.error("unexpected error starting hotspot: %s", e)
 
     @log_function_call
-    def stop_wifi_hotspot(self):
+    async def stop_wifi_hotspot(self) -> None:
         if not self._hotspot_started:
             return
 
         try:
             self.logger.info("stopping WiFi hotspot as network is restored")
 
-            subprocess.run(
-                ["cmd", "wifi", "stop-softap"],
-                check=True,
-                shell=False,
-                capture_output=True,
-                text=True,
+            proc = await asyncio.create_subprocess_exec(
+                "cmd",
+                "wifi",
+                "stop-softap",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+            _, stderr = await proc.communicate()
 
-            self._hotspot_started = False
-            self.logger.info("hotspot stopped successfully")
+            if proc.returncode != 0:
+                self.logger.error(
+                    "failed to stop WiFi hotspot: code %s, stderr: %s", proc.returncode, stderr.decode(errors="ignore")
+                )
+            else:
+                self._hotspot_started = False
+                self.logger.info("hotspot stopped successfully")
 
-        except subprocess.CalledProcessError as e:
-            self.logger.error("failed to stop WiFi hotspot: %s", e)
-            if e.stderr:
-                self.logger.error("hotspot stop error output: %s", e.stderr)
         except Exception as e:
             self.logger.error("unexpected error stopping hotspot: %s", e)
 
     @log_function_call
-    def start(self):
-        current_state = self.parse_network_interfaces(self.get_ifconfig_output())
+    async def start(self) -> None:
+        raw_output = await self.get_ifconfig_output()
+        current_state = self.parse_network_interfaces(raw_output)
         changes = self.compare_states(self._previous_state, current_state)
+
         if changes:
             if "wlan0" not in current_state:
                 self.logger.warning("network interface wlan0 not found, assuming no network")
@@ -310,56 +330,58 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
                 if not self._lost_network_since:
                     self._lost_network_since = datetime.datetime.now(datetime.UTC)
                     if self.hotspot_enabled:
-                        self.start_wifi_hotspot()
+                        await self.start_wifi_hotspot()
 
                 self._previous_state = current_state
                 return
 
             if self._lost_network_since:
-                self.send_webhook(
+                if self.notifier is not None:
+                    await self.notifier.send_webhook(
+                        {
+                            "username": self.name,
+                            "avatar_url": self.avatar_url,
+                            "embeds": [
+                                {
+                                    "title": "Network connection restored",
+                                    "color": 2302945,
+                                    "fields": [
+                                        {
+                                            "name": "Network connection restored",
+                                            "value": f"Network connection restored after {datetime.datetime.now(datetime.UTC) - self._lost_network_since}.",
+                                            "inline": False,
+                                        }
+                                    ],
+                                    "footer": {
+                                        "text": f"Lost network since {self._lost_network_since.strftime('%Y-%m-%d %H:%M:%S')}",
+                                    },
+                                }
+                            ],
+                        }
+                    )
+                self._lost_network_since = None
+                if self.hotspot_enabled:
+                    await self.stop_wifi_hotspot()
+
+            embeds = self.build_embeds(current_state)
+            if self.notifier is not None:
+                await self.notifier.send_webhook(
                     {
                         "username": self.name,
                         "avatar_url": self.avatar_url,
-                        "embeds": [
-                            {
-                                "title": "Network connection restored",
-                                "color": 2302945,
-                                "fields": [
-                                    {
-                                        "name": "Network connection restored",
-                                        "value": f"Network connection restored after {datetime.datetime.now(datetime.UTC) - self._lost_network_since}.",
-                                        "inline": False,
-                                    }
-                                ],
-                                "footer": {
-                                    "text": f"Lost network since {self._lost_network_since.strftime('%Y-%m-%d %H:%M:%S')}",
-                                },
-                            }
-                        ],
+                        "content": "## Network interface information",
+                        "embeds": embeds,
                     }
                 )
-                self._lost_network_since = None
-                if self.hotspot_enabled:
-                    self.stop_wifi_hotspot()
-
-            embeds = self.build_embeds(current_state)
-            self.send_webhook(
-                {
-                    "username": self.name,
-                    "avatar_url": self.avatar_url,
-                    "content": "## Network interface information",
-                    "embeds": embeds,
-                }
-            )
             self.logger.info("network change detected, sent update to Discord")
             self._previous_state = current_state
         elif self._lost_network_since and self.reboot_enabled:
             time_since_lost = datetime.datetime.now(datetime.UTC) - self._lost_network_since
             if time_since_lost.total_seconds() > self.reboot_threshold:
-                self.perform_reboot()
+                await self.perform_reboot()
 
 
 if __name__ == "__main__":
     manager = Manager()
     manager.register_plugin(InterfaceMonitorPlugin)
-    manager.run()
+    asyncio.run(manager.run())

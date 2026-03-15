@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import datetime
 import os
@@ -15,16 +16,15 @@ if TYPE_CHECKING:
     from logging import Logger
     from typing import TextIO, TypedDict
 
-    from lib._types import WebhookPayload
-    from lib.manager import PluginManager
-    from lib.plugin.metadata import PluginMetadata
+    from lib.types import PluginMetadata, WebhookPayload
+    from lib.worker import PluginManager
 
     _ReadT = TypeVar("_ReadT", bound=str | int | float)
 
     class _ProcessT(TypedDict):
         pid: int
         name: str
-        cpu_percent: float
+        cpu_percent: float | None
 
 
 def sizeof_fmt(num: float, suffix: str = "B"):
@@ -38,6 +38,7 @@ def sizeof_fmt(num: float, suffix: str = "B"):
 class SystemMonitorPlugin(IntervalPlugin, requires_root=True):
     BATT_PATH = "/sys/class/power_supply/battery"
     interval = 10
+
     if TYPE_CHECKING:
         _first_run: bool
         _file_cache: dict[str, TextIO]
@@ -53,7 +54,6 @@ class SystemMonitorPlugin(IntervalPlugin, requires_root=True):
         self._first_run = True
         self._file_cache = {}
 
-    @log_function_call
     def get_uptime(self) -> str:
         return str(
             datetime.timedelta(
@@ -61,16 +61,14 @@ class SystemMonitorPlugin(IntervalPlugin, requires_root=True):
             )
         )
 
-    @log_function_call
     def get_top_processes(self) -> list[_ProcessT]:
         processes: list[_ProcessT] = []
         for p in psutil.process_iter(["pid", "name", "cpu_percent"]):
-            with contextlib.suppress(psutil.NoSuchProcess):
+            with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
                 processes.append(p.info)  # type: ignore
-        processes.sort(key=lambda x: x["cpu_percent"], reverse=True)
+        processes.sort(key=lambda x: x.get("cpu_percent") or 0.0, reverse=True)
         return processes[:5]
 
-    @log_function_call
     def __read_file(self, file_name: str, _type: type[_ReadT] = str) -> _ReadT | None:
         try:
             if file_name not in self._file_cache:
@@ -84,16 +82,13 @@ class SystemMonitorPlugin(IntervalPlugin, requires_root=True):
 
         except FileNotFoundError:
             pass
-
         except PermissionError:
             self.logger.warning(f"Permission denied to read {file_name} in {self.BATT_PATH}")
-
         except Exception as e:
             self.logger.error(f"Error reading {file_name} in {self.BATT_PATH}: {e}")
 
         return None
 
-    @log_function_call
     def __to_unit(
         self,
         c: int,
@@ -107,7 +102,6 @@ class SystemMonitorPlugin(IntervalPlugin, requires_root=True):
             return "Unknown"
         return f"{float(r) / c:.{decimal}f}"
 
-    @log_function_call
     def get_battery_info(self) -> dict[str, Any]:
         if not Path(self.BATT_PATH).exists():
             return {}
@@ -121,13 +115,26 @@ class SystemMonitorPlugin(IntervalPlugin, requires_root=True):
             "Voltage": self.__to_unit(1000000, "voltage_now", int, decimal=2),
         }
 
+    def _collect_stats(self) -> dict[str, Any]:
+        """Synchronous wrapper to collect all blocking psutil and file I/O stats."""
+        return {
+            "cpu_percent": psutil.cpu_percent(),
+            "memory": psutil.virtual_memory(),
+            "swap": psutil.swap_memory(),
+            "disk": psutil.disk_usage("/mnt/installer/0/emulated"),
+            "top_processes": self.get_top_processes(),
+            "battery_info": self.get_battery_info(),
+            "uptime": self.get_uptime(),
+        }
+
     @log_function_call
-    def start(self):
-        cpu_percent = psutil.cpu_percent()
-        memory = psutil.virtual_memory()
-        swap = psutil.swap_memory()
-        disk = psutil.disk_usage("/mnt/installer/0/emulated")
-        top_processes = self.get_top_processes()
+    async def start(self) -> None:
+        # Execute all blocking OS reads in the executor
+        stats = await asyncio.to_thread(self._collect_stats)
+
+        memory = stats["memory"]
+        swap = stats["swap"]
+        disk = stats["disk"]
 
         payload: WebhookPayload = {
             "embeds": [
@@ -136,7 +143,7 @@ class SystemMonitorPlugin(IntervalPlugin, requires_root=True):
                     "fields": [
                         {
                             "name": "CPU Usage",
-                            "value": f"{cpu_percent}%",
+                            "value": f"{stats['cpu_percent']}%",
                             "inline": True,
                         },
                         {
@@ -156,16 +163,15 @@ class SystemMonitorPlugin(IntervalPlugin, requires_root=True):
                         },
                         {
                             "name": "Top Processes",
-                            "value": "\n".join(f"{p['name']} ({p['pid']}): {p['cpu_percent']}%" for p in top_processes),
+                            "value": "\n".join(
+                                f"{p['name']} ({p['pid']}): {p['cpu_percent'] or 0.0}%" for p in stats["top_processes"]
+                            ),
                             "inline": False,
                         },
                     ],
                     "footer": {
-                        "text": f"Uptime: {self.get_uptime()}",
+                        "text": f"Uptime: {stats['uptime']}",
                     },
-                    # "timestamp": datetime.datetime.now(datetime.UTC).strftime(
-                    #     r"%Y-%m-%dT%H:%M:%SZ"
-                    # ),
                 },
                 {
                     "title": "Battery Info",
@@ -175,18 +181,21 @@ class SystemMonitorPlugin(IntervalPlugin, requires_root=True):
                             "value": str(v),
                             "inline": True,
                         }
-                        for k, v in self.get_battery_info().items()
+                        for k, v in stats["battery_info"].items()
                     ],
                 },
             ],
         }
 
+        if self.notifier is None:
+            return
+
         if self._first_run:
-            self.send_webhook(payload=payload, wait=True)
+            await self.notifier.send_webhook(payload=payload, wait=True)
             self._first_run = False
             return
 
-        self.edit_webhook(payload=payload)
+        await self.notifier.edit_webhook(payload=payload)
 
     @log_function_call
     def on_stop(self) -> None:

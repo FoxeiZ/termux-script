@@ -1,93 +1,106 @@
-import json
-import socket
-import struct
-from io import BytesIO
+from __future__ import annotations
 
-DEFAULT_RECV_TIMEOUT = 30.0
+import asyncio
+import contextlib
+import json
+import struct
+from typing import Any
+
 MAX_FRAME_SIZE = 8 * 1024 * 1024
 
 
-def recv_len(conn: socket.socket, timeout: float | None = DEFAULT_RECV_TIMEOUT) -> int:
-    original_timeout = conn.gettimeout()
-    if timeout is not None:
-        conn.settimeout(timeout)
-    try:
-        header = b""
-        while len(header) < 4:
-            chunk = conn.recv(4 - len(header))
-            if not chunk:
-                raise ConnectionError("Connection closed while reading length prefix")
-            header += chunk
-        return struct.unpack("!I", header)[0]
-    finally:
-        conn.settimeout(original_timeout)
+def _validate_frame_size(length: int) -> None:
+    if length > MAX_FRAME_SIZE:
+        raise ConnectionError(f"Payload too large: {length} bytes (max {MAX_FRAME_SIZE})")
 
 
-def recv_with_len(
-    conn: socket.socket,
-    length: int,
-    chunk_size: int = 4096,
-    timeout: float | None = DEFAULT_RECV_TIMEOUT,
-) -> bytes:
-    original_timeout = conn.gettimeout()
-    if timeout is not None:
-        conn.settimeout(timeout)
-    try:
-        io_buf = BytesIO()
-        remaining = length
-        while remaining > 0:
-            chunk = conn.recv(min(chunk_size, remaining))
-            if not chunk:
-                raise ConnectionError("Connection closed while reading data")
-            io_buf.write(chunk)
-            remaining -= len(chunk)
-        return io_buf.getvalue()
-    finally:
-        conn.settimeout(original_timeout)
+async def recv(reader: asyncio.StreamReader) -> bytes:
+    header = await reader.readexactly(4)
+    length = struct.unpack("!I", header)[0]
+    _validate_frame_size(length)
+    return await reader.readexactly(length)
 
 
-def recv(conn: socket.socket, timeout: float | None = DEFAULT_RECV_TIMEOUT) -> bytes:
-    len_prefix = recv_len(conn, timeout)
-    if len_prefix > MAX_FRAME_SIZE:
-        raise ConnectionError(f"Payload too large: {len_prefix} bytes (max {MAX_FRAME_SIZE})")
-    data = recv_with_len(conn, len_prefix, timeout=timeout)
-    if len(data) != len_prefix:
-        raise ConnectionError("Received data length does not match length prefix")
-    return data
+async def recv_str(reader: asyncio.StreamReader) -> str:
+    data = await recv(reader)
+    return data.decode("utf-8")
 
 
-def recv_str(conn: socket.socket, timeout: float | None = DEFAULT_RECV_TIMEOUT) -> str:
-    data_bytes = recv(conn, timeout)
-    return data_bytes.decode("utf-8")
+async def recv_json(reader: asyncio.StreamReader) -> object:
+    payload = await recv_str(reader)
+    return json.loads(payload)
 
 
-def recv_json(conn: socket.socket, timeout: float | None = DEFAULT_RECV_TIMEOUT) -> object:
-    json_str = recv_str(conn, timeout)
-    return json.loads(json_str)
+async def send(writer: asyncio.StreamWriter, data: bytes) -> None:
+    writer.write(struct.pack("!I", len(data)))
+    writer.write(data)
+    await writer.drain()
 
 
-def send_len(conn: socket.socket, data_len: int) -> None:
-    header = struct.pack("!I", data_len)
-    conn.sendall(header)
+async def send_json(writer: asyncio.StreamWriter, obj: object) -> None:
+    payload = json.dumps(obj).encode("utf-8")
+    await send(writer, payload)
 
 
-def send(conn: socket.socket, data: bytes, chunk_size: int = 4096) -> None:
-    io_buf = BytesIO(data)
-    remaining = len(data)
-    send_len(conn, remaining)
-    while remaining > 0:
-        chunk = io_buf.read(min(chunk_size, remaining))
-        if not chunk:
-            break
-        conn.sendall(chunk)
-        remaining -= len(chunk)
+class IPCServer:
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        on_message_received: Any,
+        logger: Any,
+    ) -> None:
+        self.host = host
+        self.port = port
+        self._on_message_received = on_message_received
+        self._logger = logger
+        self._server: asyncio.base_events.Server | None = None
 
+    async def start(self) -> None:
+        if self._server is not None:
+            self._logger.info("ipc server already running")
+            return
 
-def send_str(conn: socket.socket, data: str) -> None:
-    data_bytes = data.encode("utf-8")
-    send(conn, data_bytes)
+        self._server = await asyncio.start_server(self._handle_client, self.host, self.port)
+        self._logger.info("ipc tcp server listening on %s:%d", self.host, self.port)
 
+    async def stop(self) -> None:
+        if self._server is None:
+            return
 
-def send_json(conn: socket.socket, obj: object) -> None:
-    json_str = json.dumps(obj)
-    send_str(conn, json_str)
+        self._server.close()
+        await self._server.wait_closed()
+        self._server = None
+        self._logger.info("ipc tcp server stopped")
+
+    async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        peer = writer.get_extra_info("peername")
+        try:
+            raw = await asyncio.wait_for(recv_str(reader), timeout=30.0)
+            response = self._on_message_received(raw)
+            if asyncio.iscoroutine(response):
+                response = await response
+
+            await send_json(writer, response)
+
+        except TimeoutError:
+            self._logger.debug("ipc client %s timed out", peer)
+        except asyncio.IncompleteReadError:
+            self._logger.debug("ipc client %s disconnected during read", peer)
+        except ConnectionError as exc:
+            self._logger.debug("ipc client %s disconnected: %s", peer, exc)
+        except Exception as exc:
+            self._logger.warning("ipc client %s request failed: %s", peer, exc)
+            with contextlib.suppress(ConnectionError):
+                await send_json(
+                    writer,
+                    {
+                        "status": "failed",
+                        "message": str(exc),
+                        "data": None,
+                    },
+                )
+        finally:
+            writer.close()
+            with contextlib.suppress(ConnectionError):
+                await writer.wait_closed()

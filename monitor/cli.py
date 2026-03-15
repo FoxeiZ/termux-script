@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import socket
+import asyncio
 import sys
 from typing import Any, cast
 
@@ -36,27 +36,33 @@ def parse_kwargs_string(kwargs_strings: list[str] | None) -> dict[str, Any]:
     return kwargs
 
 
-def main(request: dict[str, Any], port: int = 8765) -> None:
-    with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
-        send_json(s, request)
-        response = recv_json(s)
-        if response is None or not isinstance(response, dict):
-            print("Invalid response from server", file=sys.stderr)
-            sys.exit(3)
+async def main(request: dict[str, Any], port: int = 8765) -> None:
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        await send_json(writer, request)
+        response = await recv_json(reader)
+    finally:
+        writer.close()
+        await writer.wait_closed()
 
-        status = cast("str", response.get("status", "unknown"))
-        message = cast("str", response.get("message", ""))
-        data_field = cast("Any", response.get("data"))
+    if response is None or not isinstance(response, dict):
+        print("Invalid response from server", file=sys.stderr)
+        sys.exit(3)
 
-        if status == "ok":
-            print(f"[OK] {message}")
-            if data_field:
-                print(f"  Data: {data_field}")
-        else:
-            print(f"[FAILED] {message}", file=sys.stderr)
-            if data_field:
-                print(f"  Error details:\n{data_field}", file=sys.stderr)
-            sys.exit(1)
+    status = cast("str", response.get("status", "unknown"))
+    message = cast("str", response.get("message", ""))
+    data_field = cast("Any", response.get("data"))
+
+    if status == "ok":
+        print(f"[OK] {message}")
+        if data_field:
+            print(f"  Data: {data_field}")
+        return
+
+    print(f"[FAILED] {message}", file=sys.stderr)
+    if data_field:
+        print(f"  Error details:\n{data_field}", file=sys.stderr)
+    sys.exit(1)
 
 
 if __name__ == "__main__":
@@ -117,4 +123,4 @@ Examples:
         "kwargs": parsed_kwargs,
         "force": args.force,
     }
-    main(request, port=args.port)
+    asyncio.run(main(request, port=args.port))

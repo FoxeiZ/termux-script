@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         RUN_SCRIPT_ONLY: bool
         SCRIPTS_USE_SCREEN: bool
         TAILSCALE_AUTH_KEY: str | None
+        TAILSCALE_UPGRADE_CHECK: bool
         WEBHOOK_URL: str | None
 
 
@@ -41,6 +42,7 @@ class ConfigLoader:
         "RUN_SCRIPT_ONLY": False,
         "SCRIPTS_USE_SCREEN": False,
         "TAILSCALE_AUTH_KEY": None,
+        "TAILSCALE_UPGRADE_CHECK": False,
         "WEBHOOK_URL": None,
     }
 
@@ -108,6 +110,12 @@ class ConfigLoader:
             "--tailscale-auth-key",
             dest="TAILSCALE_AUTH_KEY",
             help="Tailscale authentication key",
+        )
+        parser.add_argument(
+            "--tailscale-upgrade-check",
+            dest="TAILSCALE_UPGRADE_CHECK",
+            action="store_true",
+            help="Check for a newer tailscale version and auto-upgrade local binaries",
         )
         parser.add_argument(
             "--scripts-use-screen",
@@ -185,6 +193,10 @@ class ConfigLoader:
     @property
     def tailscale_auth_key(self) -> str | None:
         return self._config.get("TAILSCALE_AUTH_KEY")
+
+    @property
+    def tailscale_upgrade_check(self) -> bool:
+        return self._config.get("TAILSCALE_UPGRADE_CHECK", False)
 
     @property
     def scripts_use_screen(self) -> bool:
