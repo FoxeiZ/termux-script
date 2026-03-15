@@ -106,6 +106,6 @@ def run_as_root(command: str | list[str], **kwargs: Any) -> subprocess.Completed
             **kwargs,
         )
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Command '{' '.join(command)}' failed with error: {e.stderr.strip()}") from e
+        raise RuntimeError(f"Command '{' '.join(command_list)}' failed with error: {e.stderr.strip()}") from e
     except FileNotFoundError as e:
-        raise RuntimeError(f"Command '{' '.join(command)}' not found. Please install sudo.") from e
+        raise RuntimeError(f"Command '{' '.join(command_list)}' not found. Please install sudo.") from e
