@@ -227,6 +227,9 @@ class Tailscaled:
 
                     if "bootstrap dial succeeded" in line_str:
                         self.connected_event.set()
+            except asyncio.CancelledError:
+                self.logger.debug("output reader task cancelled")
+                break
             except Exception:
                 break
 
@@ -411,8 +414,11 @@ class TailscaledPlugin(Plugin, requires_root=True):
             await self.socatd.start()
             self.logger.debug("manager started successfully")
 
-            if reader_task:
-                await reader_task
+            stop_task = asyncio.create_task(self._stop_event.wait())
+            _, pending = await asyncio.wait([reader_task, stop_task], return_when=asyncio.FIRST_COMPLETED)
+
+            for task in pending:
+                task.cancel()
 
         except asyncio.CancelledError:
             self.logger.info("tailscaled plugin task cancelled")
@@ -424,9 +430,6 @@ class TailscaledPlugin(Plugin, requires_root=True):
             self.logger.debug("executing teardown sequence")
             if reader_task and not reader_task.done():
                 reader_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await reader_task
-
             await self.socatd.stop()
             await self.tailscaled.stop()
             self.logger.debug("manager stopped successfully")
