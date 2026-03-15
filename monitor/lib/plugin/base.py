@@ -6,6 +6,8 @@ import io
 import random
 import threading
 from abc import abstractmethod
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING
 
 import requests
@@ -13,6 +15,29 @@ import requests
 _RETRYABLE_HTTP_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 _WEBHOOK_MAX_RETRIES: int = 3
 _WEBHOOK_MAX_BACKOFF: float = 60.0
+_EMBED_FIELD_MAX_LENGTH: int = 1024
+
+
+def _parse_retry_after_seconds(retry_after: str | None) -> float | None:
+    if not retry_after:
+        return None
+
+    try:
+        return max(0.0, float(retry_after))
+    except ValueError:
+        pass
+
+    try:
+        retry_after_dt = parsedate_to_datetime(retry_after)
+    except (TypeError, ValueError):
+        return None
+
+    if retry_after_dt.tzinfo is None:
+        retry_after_dt = retry_after_dt.replace(tzinfo=UTC)
+
+    seconds = (retry_after_dt - datetime.now(UTC)).total_seconds()
+    return max(0.0, seconds)
+
 
 if TYPE_CHECKING:
     from logging import Logger
@@ -160,7 +185,8 @@ class Plugin:
 
                 if status == 429 and exc.response is not None:
                     retry_after = exc.response.headers.get("Retry-After")
-                    delay = float(retry_after) if retry_after else base_delay
+                    parsed_delay = _parse_retry_after_seconds(retry_after)
+                    delay = parsed_delay if parsed_delay is not None else base_delay
                 else:
                     backoff = min(base_delay * (2 ** (attempt - 1)), _WEBHOOK_MAX_BACKOFF)
                     jitter = backoff * 0.1
@@ -259,7 +285,7 @@ class Plugin:
 
     def send_message(self, title: str, description: str, color: int, content: str | None, wait: bool):
         files = None
-        if content and len(content) > 2000:
+        if content and len(content) > _EMBED_FIELD_MAX_LENGTH:
             files = {
                 "filetag": (
                     "filename",
@@ -267,7 +293,7 @@ class Plugin:
                     "text/plain",
                 )
             }
-            content = "Content too large, see attachment."
+            content = f"Output too large ({len(content)} chars), see attachment."
 
         payload: WebhookPayload = {
             "embeds": [
