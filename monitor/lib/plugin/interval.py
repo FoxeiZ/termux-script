@@ -49,7 +49,7 @@ class IntervalPlugin(Plugin):
             try:
                 self.start()
             except Exception as e:
-                self.logger.error("plugin %s failed: %s", self.name, e)
+                self.logger.error("plugin %s failed: %s", self.name, e, stack_info=True)
                 if not self.restart_on_failure:
                     self.logger.info("plugin %s will not restart (restart_on_failure=False)", self.name)
                     break
