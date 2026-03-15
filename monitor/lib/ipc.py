@@ -4,6 +4,7 @@ import struct
 from io import BytesIO
 
 DEFAULT_RECV_TIMEOUT = 30.0
+MAX_FRAME_SIZE = 8 * 1024 * 1024
 
 
 def recv_len(conn: socket.socket, timeout: float | None = DEFAULT_RECV_TIMEOUT) -> int:
@@ -47,6 +48,8 @@ def recv_with_len(
 
 def recv(conn: socket.socket, timeout: float | None = DEFAULT_RECV_TIMEOUT) -> bytes:
     len_prefix = recv_len(conn, timeout)
+    if len_prefix > MAX_FRAME_SIZE:
+        raise ConnectionError(f"Payload too large: {len_prefix} bytes (max {MAX_FRAME_SIZE})")
     data = recv_with_len(conn, len_prefix, timeout=timeout)
     if len(data) != len_prefix:
         raise ConnectionError("Received data length does not match length prefix")
