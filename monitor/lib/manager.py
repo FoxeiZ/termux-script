@@ -376,6 +376,8 @@ class Manager:
         self.role_by_name: dict[str, str] = {}
         self.workers: dict[str, PluginManager] = {}
         self.pipes: dict[str, PipeConnection] = {}
+        self._pipe_locks: dict[str, threading.Lock] = {}
+        self._pending_pipe_responses: dict[str, dict[str, PipeResponse]] = {}
         self.mp_context = multiprocessing.get_context("spawn")
 
     @property
@@ -478,6 +480,8 @@ class Manager:
 
         self.workers = {"root": root_worker, "non-root": non_root_worker}
         self.pipes = {"root": root_parent, "non-root": non_root_parent}
+        self._pipe_locks = {"root": threading.Lock(), "non-root": threading.Lock()}
+        self._pending_pipe_responses = {"root": {}, "non-root": {}}
 
     def _load_metadata_to_workers(self) -> None:
         for metadata in self.metadata_by_name.values():
@@ -491,7 +495,14 @@ class Manager:
                 "kwargs": {},
                 "force": False,
             }
-            self._send_pipe_request(role, request)
+            response = self._send_pipe_request(role, request)
+            if response["status"] != "ok":
+                self.logger.warning(
+                    "failed to load plugin %s in %s worker: %s",
+                    metadata.name,
+                    role,
+                    response.get("message", "unknown error"),
+                )
 
     def _send_pipe_request(
         self,
@@ -501,36 +512,49 @@ class Manager:
         check_worker_alive: bool = False,
     ) -> PipeResponse:
         pipe = self.pipes[role]
+        lock = self._pipe_locks.setdefault(role, threading.Lock())
+        pending_responses = self._pending_pipe_responses.setdefault(role, {})
         worker = self.workers.get(role) if check_worker_alive else None
-        try:
-            pipe.send(request)
-            start_time = time.time()
-            while time.time() - start_time < timeout:
-                # early exit if worker died
-                if worker and not worker.is_alive():
-                    return {
-                        "id": request["id"],
-                        "status": "failed",
-                        "message": "worker died",
-                        "data": None,
-                    }
-                if pipe.poll(0.05):
-                    response = pipe.recv()
-                    if response["id"] == request["id"]:
-                        return response
-        except (ValueError, OSError, EOFError, BrokenPipeError) as exc:
+        with lock:
+            try:
+                cached_response = pending_responses.pop(request["id"], None)
+                if cached_response is not None:
+                    return cached_response
+
+                pipe.send(request)
+                start_time = time.time()
+                while time.time() - start_time < timeout:
+                    if worker and not worker.is_alive():
+                        return {
+                            "id": request["id"],
+                            "status": "failed",
+                            "message": "worker died",
+                            "data": None,
+                        }
+
+                    if pipe.poll(0.05):
+                        response = pipe.recv()
+                        response_id = response.get("id")
+                        if response_id == request["id"]:
+                            return response
+                        if isinstance(response_id, str):
+                            pending_responses[response_id] = response
+                        else:
+                            self.logger.debug("dropping malformed pipe response without id: %s", response)
+            except (ValueError, OSError, EOFError, BrokenPipeError) as exc:
+                return {
+                    "id": request["id"],
+                    "status": "failed",
+                    "message": f"pipe communication failed: {exc}",
+                    "data": None,
+                }
+
             return {
                 "id": request["id"],
                 "status": "failed",
-                "message": f"pipe communication failed: {exc}",
+                "message": "timeout",
                 "data": None,
             }
-        return {
-            "id": request["id"],
-            "status": "failed",
-            "message": "timeout",
-            "data": None,
-        }
 
     def start_plugin(self, plugin_name: str) -> PipeResponse:
         self.logger.info("starting plugin %s", plugin_name)
@@ -610,7 +634,13 @@ class Manager:
         self._start_workers()
         self._load_metadata_to_workers()
         for plugin_name in self.metadata_by_name:
-            self.start_plugin(plugin_name)
+            response = self.start_plugin(plugin_name)
+            if response["status"] != "ok":
+                self.logger.warning(
+                    "failed to start plugin %s: %s",
+                    plugin_name,
+                    response.get("message", "unknown error"),
+                )
 
         if not Config.disable_ipc:
             self.start_ipc(self.ipc_port)
