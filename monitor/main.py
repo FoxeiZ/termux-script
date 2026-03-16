@@ -18,6 +18,7 @@ from plugins import (
     TailscaledPlugin,
     TestCron2Min,
     TestCronPerMin,
+    TestRebootAfter,
 )
 
 if __name__ == "__main__":
@@ -30,6 +31,7 @@ if __name__ == "__main__":
         manager.register_plugin(TestCron2Min)
         manager.register_plugin(NativeLongProcessPlugin)
         manager.register_plugin(NativeLongProcessPluginRoot)
+        manager.register_plugin(TestRebootAfter)
 
     if IS_TERMUX:
         manager.register_plugin(

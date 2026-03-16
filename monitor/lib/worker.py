@@ -26,6 +26,21 @@ if TYPE_CHECKING:
 
 
 class PluginManager(multiprocessing.Process):
+    if TYPE_CHECKING:
+        role: str
+        pipe: PipeConnection[Any, Any]
+        log_queue: Queue[LogRecord]
+        max_retries: int
+        retry_delay: int
+        webhook_url: str
+        _ipc_port: int
+        _ipc_password: str
+
+        plugins: dict[str, Plugin]
+        metadata_by_name: dict[str, PluginMetadata]
+        plugin_tasks: dict[str, asyncio.Task[None]]
+        logger: logging.Logger
+
     def __init__(
         self,
         role: str,
@@ -34,20 +49,34 @@ class PluginManager(multiprocessing.Process):
         max_retries: int,
         retry_delay: int,
         webhook_url: str | None,
+        ipc_port: int,
+        ipc_password: str,
     ) -> None:
         super().__init__(name=f"PluginManager-{role}")
         self.role: str = role
         if role not in ("root", "non-root"):
             raise ValueError("role must be 'root' or 'non-root'")
-        self.pipe: PipeConnection[Any, Any] = pipe
-        self.log_queue: Queue[LogRecord] = log_queue
-        self.max_retries: int = max_retries
-        self.retry_delay: int = retry_delay
-        self.webhook_url: str = webhook_url or ""
-        self.plugins: dict[str, Plugin] = {}
-        self.metadata_by_name: dict[str, PluginMetadata] = {}
-        self.plugin_tasks: dict[str, asyncio.Task[None]] = {}
-        self.logger: logging.Logger = get_logger(f"plugin_manager.{role}", handler=None)
+
+        self.pipe = pipe
+        self.log_queue = log_queue
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.webhook_url = webhook_url or ""
+        self._ipc_port = ipc_port
+        self._ipc_password = ipc_password
+
+        self.plugins = {}
+        self.metadata_by_name = {}
+        self.plugin_tasks = {}
+        self.logger = get_logger(f"plugin_manager.{role}", handler=None)
+
+    @property
+    def ipc_port(self) -> int:
+        return self._ipc_port
+
+    @property
+    def ipc_password(self) -> str:
+        return self._ipc_password
 
     def run(self) -> None:
         configure_queue_logging(self.log_queue)
@@ -257,6 +286,7 @@ class PluginManager(multiprocessing.Process):
         plugin = self.plugins[plugin_name]
         try:
             await plugin._start()
+            self.logger.info("plugin %s task completed", plugin_name)
         except asyncio.CancelledError:
             self.logger.info("plugin %s task was cancelled", plugin_name)
         except Exception as exc:
@@ -382,3 +412,22 @@ class PluginManager(multiprocessing.Process):
                 self.logger.warning("force cancelling rogue plugin %s task", name)
                 task.cancel()
                 plugin.task = None
+
+    @contextlib.asynccontextmanager
+    async def internal_ipc(self):
+        reader, writer = None, None
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", self.ipc_port)
+            yield reader, writer
+
+        except Exception as e:
+            self.logger.error("internal ipc request failed: %s", e)
+        finally:
+            if writer:
+                writer.close()
+                with contextlib.suppress(ConnectionError):
+                    await writer.wait_closed()
+            if reader:
+                reader.feed_eof()
+                await reader.read()
+                self.logger.debug("drain reader")

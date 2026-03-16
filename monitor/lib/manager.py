@@ -5,6 +5,7 @@ import contextlib
 import json
 import multiprocessing
 import os
+import secrets
 import signal
 import traceback
 import uuid
@@ -16,7 +17,7 @@ from .errors import DuplicatePluginError
 from .ipc import IPCServer
 from .plugin import Plugin
 from .plugin.script import ScriptPlugin
-from .types import IPCCommand, IPCRequest, IPCResponse, PipeCommand, PipeRequest, PipeResponse, PluginMetadata
+from .types import IPCCommand, IPCCommandInternal, PipeCommand, PluginMetadata
 from .utils import get_logger, log_function_call, setup_logging_queue
 from .worker import PluginManager
 
@@ -26,8 +27,12 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from multiprocessing.connection import PipeConnection
 
+    from .types import IPCRequest, IPCRequestInternal, IPCRequestManager, IPCResponse, PipeRequest, PipeResponse
+
 
 class Manager:
+    __password__: str = secrets.token_hex(16)
+
     def __init__(
         self,
         max_retries: int = 3,
@@ -41,6 +46,7 @@ class Manager:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self._webhook_url = webhook_url
+        self._stopped = False
 
         self.ipc_port = ipc_port
         self.ipc_server: IPCServer | None = None
@@ -51,6 +57,8 @@ class Manager:
         self.pipes: dict[str, PipeConnection] = {}
         self._pipe_locks: dict[str, asyncio.Lock] = {}
         self._pending_pipe_responses: dict[str, dict[str, PipeResponse]] = {}
+        self._shutdown_event = asyncio.Event()
+
         self.mp_context = multiprocessing.get_context("spawn")
 
     @property
@@ -138,6 +146,8 @@ class Manager:
             max_retries=self.max_retries,
             retry_delay=self.retry_delay,
             webhook_url=self._webhook_url,
+            ipc_password=self.__password__,
+            ipc_port=self.ipc_port,
         )
         non_root_worker = PluginManager(
             role="non-root",
@@ -146,6 +156,8 @@ class Manager:
             max_retries=self.max_retries,
             retry_delay=self.retry_delay,
             webhook_url=self._webhook_url,
+            ipc_password=self.__password__,
+            ipc_port=self.ipc_port,
         )
 
         root_worker.start()
@@ -319,7 +331,6 @@ class Manager:
         self._start_workers()
         await self._load_metadata_to_workers()
 
-        # Start all plugins concurrently
         start_tasks = [self.start_plugin(name) for name in self.metadata_by_name]
         responses = await asyncio.gather(*start_tasks)
 
@@ -331,10 +342,13 @@ class Manager:
                     response.get("message", "unknown error"),
                 )
 
-        if not Config.disable_ipc:
-            await self.start_ipc(self.ipc_port)
+        await self.start_ipc(self.ipc_port)
 
     async def stop(self) -> None:
+        if self._stopped:
+            return
+
+        self._stopped = True
         self.logger.info("stopping manager")
         for role in list(self.pipes.keys()):
             worker = self.workers.get(role)
@@ -373,7 +387,6 @@ class Manager:
                 await asyncio.to_thread(worker.join, 0.5)
 
         await self.stop_ipc()
-        self._stop_log_listener()
 
     def _stop_log_listener(self) -> None:
         self.logger.info("stopping log listener")
@@ -432,7 +445,7 @@ class Manager:
             except Exception as exc:
                 self.logger.error("failed to register script %s: %s", item.name, exc)
 
-    async def _handle_ipc_request(self, request: IPCRequest) -> IPCResponse:
+    async def _handle_ipc_request(self, request: IPCRequestManager) -> IPCResponse:
         cmd_value = request.get("cmd", "")
         plugin_name = request.get("plugin_name", "")
         try:
@@ -468,16 +481,51 @@ class Manager:
             "data": data,
         }
 
+    async def _handle_internal_ipc_command(self, request: IPCRequestInternal) -> IPCResponse:
+        internal_cmd = request.get("internal_cmd", "")
+        try:
+            cmd = IPCCommandInternal(internal_cmd)
+        except ValueError:
+            return {"status": "failed", "message": "unsupported command", "data": None}
+
+        match cmd:
+            case IPCCommandInternal.REBOOT:
+                is_test = "test" in request.get("args", [])
+
+                async def _stop():
+                    await self.stop()
+                    self._shutdown_event.set()
+
+                def shutdown(*args: Any) -> None:
+                    import subprocess  # noqa: PLC0415
+
+                    if IS_TERMUX and not is_test:
+                        subprocess.run(["sudo", "reboot"], check=False)
+                    else:
+                        print("reboot command received")
+
+                asyncio.create_task(_stop()).add_done_callback(shutdown)
+                return {"status": "ok", "message": "shutting down", "data": None}
+            case _:
+                return {"status": "failed", "message": "unsupported internal command", "data": None}
+
     async def _handle_ipc_command(self, raw: str) -> Mapping[str, Any]:
         try:
             request: IPCRequest = json.loads(raw)
-            return await self._handle_ipc_request(request)
+            if request.get("cmd") == IPCCommand.INTERNAL.value:
+                return await self._handle_internal_ipc_command(request)  # type: ignore
+            elif request.get("plugin_name"):
+                return await self._handle_ipc_request(request)  # type: ignore
+            else:
+                return {"status": "failed", "message": "invalid request format", "data": None}
+
         except json.JSONDecodeError as exc:
             return {
                 "status": "failed",
                 "message": f"invalid JSON: {exc}",
                 "data": traceback.format_exc() if Config.debug else None,
             }
+
         except Exception as exc:
             return {
                 "status": "failed",
@@ -512,12 +560,11 @@ class Manager:
         self.logger.info("starting run loop")
         await self.start()
 
-        shutdown_event = asyncio.Event()
         loop = asyncio.get_running_loop()
 
         def _signal_handler() -> None:
             self.logger.info("shutdown signal received")
-            shutdown_event.set()
+            self._shutdown_event.set()
 
         for sig in (signal.SIGINT, signal.SIGTERM):
             with contextlib.suppress(NotImplementedError):
@@ -529,7 +576,7 @@ class Manager:
             #         with contextlib.suppress(TimeoutError):
             #             await asyncio.wait_for(shutdown_event.wait(), timeout=1.0)
             # else:
-            await shutdown_event.wait()
+            await self._shutdown_event.wait()
         except asyncio.CancelledError:
             self.logger.info("manager run task cancelled")
         except Exception as exc:
@@ -537,3 +584,4 @@ class Manager:
         finally:
             self.logger.info("stopping run loop")
             await self.stop()
+            self._stop_log_listener()

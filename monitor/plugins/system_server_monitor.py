@@ -6,7 +6,9 @@ from typing import TYPE_CHECKING
 
 import psutil
 from lib.errors import PluginError
+from lib.ipc import send_json
 from lib.plugin import IntervalPlugin
+from lib.types import IPCCommand, IPCCommandInternal, IPCRequestInternal
 from lib.utils import log_function_call
 
 if TYPE_CHECKING:
@@ -118,8 +120,12 @@ class SystemServerPlugin(IntervalPlugin, requires_root=True):
             if self.notifier is not None:
                 await self.notifier.send_webhook({"embeds": [{"title": "System Server Monitor", "description": msg}]})
 
-            try:
-                proc = await asyncio.create_subprocess_exec("reboot")
-                await proc.wait()
-            except Exception as e:
-                self.logger.error("failed to execute reboot: %s", e)
+            async with self.manager.internal_ipc() as (_, writer):
+                request: IPCRequestInternal = {
+                    "cmd": IPCCommand.INTERNAL,
+                    "internal_cmd": IPCCommandInternal.REBOOT,
+                    "kwargs": {},
+                    "args": [],
+                    "password": self.manager.ipc_password,
+                }
+                await send_json(writer, request)

@@ -4,7 +4,12 @@ import asyncio
 import contextlib
 import json
 import struct
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Coroutine, Mapping
+    from logging import Logger
+
 
 MAX_FRAME_SIZE = 8 * 1024 * 1024
 
@@ -47,13 +52,13 @@ class IPCServer:
         self,
         host: str,
         port: int,
-        on_message_received: Any,
-        logger: Any,
+        on_message_received: Callable[[str], Coroutine[Any, Any, Mapping[str, Any]] | Mapping[str, Any]],
+        logger: Logger,
     ) -> None:
         self.host = host
         self.port = port
         self._on_message_received = on_message_received
-        self._logger = logger
+        self._logger = logger.getChild("IPCServer")
         self._server: asyncio.base_events.Server | None = None
 
     async def start(self) -> None:

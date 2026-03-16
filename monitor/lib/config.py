@@ -9,7 +9,6 @@ if TYPE_CHECKING:
     from typing import Any, TypedDict
 
     class _ConfigT(TypedDict):
-        DISABLE_IPC: bool
         LOAD_TEST_PLUGINS: bool
         LOG_FUNCTION_CALL: bool
         LOG_LEVEL: str
@@ -32,7 +31,6 @@ IS_TERMUX = (
 
 class ConfigLoader:
     _defaults: ClassVar[_ConfigT] = {
-        "DISABLE_IPC": False,
         "LOAD_TEST_PLUGINS": False,
         "LOG_FUNCTION_CALL": False,
         "LOG_LEVEL": "INFO",
@@ -129,12 +127,6 @@ class ConfigLoader:
             action="store_true",
             help="Load test plugins for development purposes",
         )
-        parser.add_argument(
-            "--disable-ipc",
-            dest="DISABLE_IPC",
-            action="store_true",
-            help="Disable inter-process communication (IPC)",
-        )
 
         args, _ = parser.parse_known_args()
         for key, value in vars(args).items():
@@ -209,10 +201,6 @@ class ConfigLoader:
     @property
     def load_test_plugins(self) -> bool:
         return self._config.get("LOAD_TEST_PLUGINS", False)
-
-    @property
-    def disable_ipc(self) -> bool:
-        return self._config.get("DISABLE_IPC", False)
 
 
 Config = ConfigLoader()

@@ -9,8 +9,10 @@ import re
 import time
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from lib.ipc import send_json
 from lib.manager import Manager
 from lib.plugin import IntervalPlugin
+from lib.types import IPCCommand, IPCCommandInternal, IPCRequestInternal
 from lib.utils import log_function_call
 
 if TYPE_CHECKING:
@@ -238,12 +240,15 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
 
     @log_function_call
     async def perform_reboot(self) -> None:
-        try:
-            self.logger.warning("network has been down for more than 30 minutes, initiating system reboot")
-            await asyncio.create_subprocess_exec("reboot")
-            # no need to wait, the phone just died at this point
-        except Exception as e:
-            self.logger.error("unexpected error during reboot: %s", e)
+        async with self.manager.internal_ipc() as (_, writer):
+            request: IPCRequestInternal = {
+                "cmd": IPCCommand.INTERNAL,
+                "internal_cmd": IPCCommandInternal.REBOOT,
+                "kwargs": {},
+                "args": [],
+                "password": self.manager.ipc_password,
+            }
+            await send_json(writer, request)
 
     @log_function_call
     async def start_wifi_hotspot(self) -> None:
