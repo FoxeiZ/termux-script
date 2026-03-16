@@ -1,197 +1,128 @@
 #!/data/data/com.termux/files/usr/bin/env /data/data/com.termux/files/usr/bin/python
-import sqlite3
+
+from __future__ import annotations
+
+import argparse
+import logging
 import subprocess
-import re
 import sys
-from typing import Iterator
-import io
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
-DATABASE_BIN = b""
-DATABASE_IO  = io.BytesIO(DATABASE_BIN)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
+LOGGER = logging.getLogger(__name__)
 
 
-class NotFound(Exception):
-    pass
+def parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Find and launch an Android package via monkey.")
+    parser.add_argument("name", help="package name filter")
+    return parser.parse_args(argv)
 
 
-class AppContainer:
-    def __init__(self, app: tuple):
-        self.id = app[0]
-        self.name = app[1]
+def list_matching_packages(name_filter: str) -> list[str]:
+    LOGGER.info("querying installed packages")
+    try:
+        result = subprocess.run(
+            ["pm", "list", "packages", "-f", name_filter],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as error:
+        LOGGER.error("failed to list packages: %s", error)
+        return []
 
-    def __repr__(self):
-        return f"{self.name} | {self.id[:40]}{'...' if len(self.id) > 40 else ''}"
+    packages: list[str] = []
+    for raw_line in result.stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if "=" not in line:
+            LOGGER.debug("skipping unexpected line: %s", line)
+            continue
+        _, package_name = line.rsplit("=", maxsplit=1)
+        if package_name:
+            packages.append(package_name)
+
+    LOGGER.info("found %d matching package(s)", len(packages))
+    return packages
 
 
-def run_as_root(cmd: list, *args, **kwargs):
-    return subprocess.run(["su", "-c"] + cmd, *args, **kwargs)
+def choose_package(packages: list[str]) -> str | None:
+    if not packages:
+        LOGGER.warning("no matching package found")
+        return None
+
+    if len(packages) == 1:
+        return packages[0]
+
+    print("multiple packages found:")
+    for index, app in enumerate(packages):
+        print(f"{index}: {app}")
+
+    while True:
+        choice_raw = input("select package index: ").strip()
+        if not choice_raw.isdigit():
+            LOGGER.warning("invalid selection: expected an integer index")
+            continue
+        choice = int(choice_raw)
+        if 0 <= choice < len(packages):
+            return packages[choice]
+        LOGGER.warning("index out of range; choose 0..%d", len(packages) - 1)
 
 
-class DatabaseClass:
-    def __init__(self, db_file):
-        self.force = False
-        self.conn = sqlite3.connect(db_file)
-        self.cursor = self.conn.cursor()
-
-        self.create()
-
-    def insert_data(self, id, name):
-        try:
-            self.cursor.execute(
-                "INSERT INTO package_name(id, name) VALUES (?, ?);", (id, name)
+def run_as_root(command: Sequence[str], suppress_output: bool = False) -> int:
+    full_command = ["su", "-c", *command]
+    LOGGER.debug("running command: %s", full_command)
+    try:
+        if suppress_output:
+            completed = subprocess.run(
+                full_command,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
             )
-        except sqlite3.OperationalError:
-            self.create()
-            self.insert_data(id, name)
+        else:
+            completed = subprocess.run(full_command, check=False)
+    except OSError as error:
+        LOGGER.error("failed to execute command: %s", error)
+        return 1
 
-    def create(self):
-        self.cursor.execute("CREATE VIRTUAL TABLE IF NOT EXISTS package_name USING FTS5(id, name)")
-        self.conn.commit()
+    if completed.returncode != 0:
+        LOGGER.warning("command exited with code %d", completed.returncode)
+    return completed.returncode
 
-    def fetch(self) -> Iterator[AppContainer]:
-        search_operator = self.cursor.execute(
-            f"SELECT id, name FROM package_name"
-        )
-        for item in search_operator:
-            yield AppContainer(item)
 
-    def findbyName(self, search) -> Iterator[AppContainer]:
-        search_operator = self.cursor.execute(
-            f"SELECT id, name FROM package_name WHERE name MATCH '{search}*'"
-        )
-        for item in search_operator:
-            yield AppContainer(item)
+def start_package(package_name: str) -> int:
+    LOGGER.info("starting package %s", package_name)
+    return run_as_root(["monkey", "-p", package_name, "1"], suppress_output=True)
 
-    def findbyID(self, search: str) -> Iterator[str]:
-        search_operator = self.cursor.execute(
-            f"SELECT name FROM package_name WHERE id == '{search}'"
-        )
-        for item in search_operator:
-            for name in item:
-                yield name
 
-    @staticmethod
-    def __clean_up_data(data: bytes) -> str:
-        """Basically this remove 'package:' from data"""
-        with memoryview(data) as mv:
-            return mv[8:].tobytes().decode("utf-8")
+def disable_auto_rotate() -> int:
+    LOGGER.info("disabling auto-rotate")
+    return run_as_root(["settings", "put", "system", "accelerometer_rotation", "0"])
 
-    def _check_dup(self, pkg_id) -> bool:
-        data = list(self.findbyID(pkg_id))
-        return True if data else False
 
-    def _get_path(self, pkg_id: str) -> str:
-        try:
-            paths = run_as_root(["pm", "path", pkg_id], capture_output=True).stdout
-        except subprocess.CalledProcessError:
-            raise NotFound
+def main(argv: Sequence[str] | None = None) -> int:
+    LOGGER.info("start script execution")
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    packages = list_matching_packages(args.name)
+    package_name = choose_package(packages)
+    if package_name is None:
+        return 1
 
-        paths = paths.split(b"\n")
-        for path in paths:
-            if path[-8:] == "base.apk":
-                return self.__clean_up_data(path)
-
-        return self.__clean_up_data(paths[0])
-
-    def _get_package_name(self, pkg_id: str) -> str:
-        path = self._get_path(pkg_id)
-
-        data = run_as_root(
-            ["aapt", "d", "badging", path], capture_output=True
-        ).stdout
-        print(path)
-
-        if not data:
-            print("no base path")
-            raise NotFound
-
-        with memoryview(data) as string:
-            regex = re.search(rb"(?<=application: label=').*(?=' icon)", string)
-            pkg_name = regex.group(0).decode("utf-8")
-
-        if not pkg_name:
-            return pkg_id
-
-        return pkg_name
-
-    def buildDb(self):
-        pkg_id_list = run_as_root(
-            ["pm", "list", "packages"],
-            capture_output=True
-        ).stdout.split(b"\n")
-        for id in pkg_id_list:
-            pkg_id = self.__clean_up_data(id)
-
-            if self._check_dup(pkg_id) and not self.force:
-                print(f"Skipped {pkg_id}")
-                continue
-
-            try:
-                pkg_name = self._get_package_name(pkg_id)
-            except NotFound:
-                continue
-
-            print(f"Added {pkg_id}: {pkg_name}")
-            self.insert_data(pkg_id, pkg_name)
-
-        self.conn.commit()
+    start_result = start_package(package_name)
+    rotate_result = disable_auto_rotate()
+    final_code = 0 if (start_result == 0 and rotate_result == 0) else 1
+    LOGGER.info("script execution finished with code %d", final_code)
+    return final_code
 
 
 if __name__ == "__main__":
-
-    def print_help():
-        print(
-            f"""{args[0]} [--alias <package_id> <alias_name>] [--build [--force-update]] SEARCH_QUERY
-
-    --alias \t\t Set an alias for your application. Setting this up mean the program gonna search from alias first, then the normal one after
-        package_id \t The id of the app (ex: com.termux)
-        alias_name \t The custom name you want to set for package_id
-
-    --build \t\t Build app database(run this if this is the first time you start this script)
-    --force-update \t Don't check for duplicate app (affect --build)"""
-        )
-
-    args = sys.argv
-    db = DatabaseClass("/data/data/com.termux/files/home/scripts/mydatabase.db")
-
-    if len(args) == 1:
-        print_help()
-        exit(1)
-
-    if args[1] == "--build":
-        if len(args) >= 3 and args[2] == "--force-update":
-            db.force = True
-        db.buildDb()
-
-    elif args[1] in ("help", "-h", "--help"):
-        print_help()
-
-    elif args[1] == "--list":
-        results = list(db.fetch())
-        for app in results:
-            print(app)
-
-    else:
-        results = list(db.findbyName(" ".join(args[1:])))
-        if len(results) > 1:
-            for idx, app in enumerate(results):
-                print(idx, app)
-            choice = int(input())
-            to_be_started = results[choice]
-        elif not results:
-            print("cant find any")
-            exit(2)
-        else:
-            to_be_started = results[0]
-
-        print(f"Starting {to_be_started.name}...")
-        subprocess.call(
-            ["su", "-c", "monkey", "-p", to_be_started.id, "1"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.STDOUT,
-        )
-        # Turn off auto-rotate
-        subprocess.call(
-            ["su", "-c", "settings", "put", "system", "accelerometer_rotation", "0"]
-        )
+    raise SystemExit(main())
