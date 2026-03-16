@@ -21,11 +21,20 @@ name_filter="$1"
 packages=()
 
 log_info "querying installed packages"
-while IFS='=' read -r _ package_name; do
+while IFS= read -r line; do
+    case "$line" in
+        package:*)
+            package_name="${line#package:}"
+            ;;
+        *)
+            continue
+            ;;
+    esac
+
     if [ -n "$package_name" ]; then
         packages+=("$package_name")
     fi
-done < <(pm list packages -f "$name_filter" 2>/dev/null)
+done < <(cmd package list packages 2>/dev/null | grep -F -i -- "$name_filter")
 
 count="${#packages[@]}"
 log_info "found ${count} matching package(s)"
