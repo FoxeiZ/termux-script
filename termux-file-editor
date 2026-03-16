@@ -14,6 +14,32 @@ SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 CONFIG_FILE="$SCRIPT_DIR/termux-file-editor.conf"
 SAVE_CONFIG="1"
 
+export DIALOG_OK=0
+export DIALOG_CANCEL=10
+export DIALOG_ESC=10
+export DIALOG_ERROR=12
+export DIALOG_TTY=1
+
+DIALOG_STATUS=0
+DIALOG_RESULT=""
+
+run_dialog_capture() {
+    DIALOG_RESULT=$(dialog "$@" 2>&1 >/dev/tty)
+    DIALOG_STATUS=$?
+}
+
+is_dialog_back() {
+    [ "$DIALOG_STATUS" -eq "$DIALOG_CANCEL" ]
+}
+
+is_dialog_error() {
+    [ "$DIALOG_STATUS" -eq "$DIALOG_ERROR" ]
+}
+
+get_form_field() {
+    echo "$1" | sed -n "${2}p"
+}
+
 if [ "$(uname -o)" = "Cygwin" ]; then
     termux-share() { cygstart "${@: -1}"; }
 fi
@@ -54,21 +80,30 @@ compress_and_share() {
     DEFAULT_COMPRESSION_LEVEL="${COMPRESS_COMPRESSION_LEVEL:-5}"
     DEFAULT_PASSWORD="${COMPRESS_PASSWORD:-}"
 
-    if ! FORM_DATA=$(dialog --clear --backtitle "Compress and Share" \
-        --title "Compression Options" \
-    --form "Configure compression settings:" 17 70 4 \
-    "Filename template:" 1 1 "$DEFAULT_FILENAME_TEMPLATE" 1 20 40 0 \
-    "Compression method:" 2 1 "$DEFAULT_COMPRESSION_METHOD" 2 20 10 0 \
-    "Compression level (0-9):" 3 1 "$DEFAULT_COMPRESSION_LEVEL" 3 25 5 0 \
-    "Password (optional):" 4 1 "$DEFAULT_PASSWORD" 4 20 30 0 \
-        2>&1 >/dev/tty); then
-        return
-    fi
+    while true; do
+        run_dialog_capture --clear --backtitle "Compress and Share" \
+            --title "Compression Options" \
+            --form "Configure compression settings:" 17 70 4 \
+            "Filename template:" 1 1 "$DEFAULT_FILENAME_TEMPLATE" 1 20 40 0 \
+            "Compression method:" 2 1 "$DEFAULT_COMPRESSION_METHOD" 2 20 10 0 \
+            "Compression level (0-9):" 3 1 "$DEFAULT_COMPRESSION_LEVEL" 3 25 5 0 \
+            "Password (optional):" 4 1 "$DEFAULT_PASSWORD" 4 20 30 0
 
-    FILENAME_TEMPLATE=$(echo "$FORM_DATA" | sed -n '1p')
-    COMPRESSION_METHOD=$(echo "$FORM_DATA" | sed -n '2p')
-    COMPRESSION_LEVEL=$(echo "$FORM_DATA" | sed -n '3p')
-    PASSWORD=$(echo "$FORM_DATA" | sed -n '4p')
+        if is_dialog_back; then
+            return
+        fi
+        if is_dialog_error; then
+            dialog --msgbox "Error: Failed to open compression options dialog." 8 60
+            return
+        fi
+        FORM_DATA="$DIALOG_RESULT"
+        break
+    done
+
+    FILENAME_TEMPLATE=$(get_form_field "$FORM_DATA" 1)
+    COMPRESSION_METHOD=$(get_form_field "$FORM_DATA" 2)
+    COMPRESSION_LEVEL=$(get_form_field "$FORM_DATA" 3)
+    PASSWORD=$(get_form_field "$FORM_DATA" 4)
 
     if [ "$SAVE_CONFIG" = "1" ]; then
         save_config "COMPRESS" "COMPRESS_FILENAME_TEMPLATE=\"$FILENAME_TEMPLATE\"
@@ -164,31 +199,40 @@ reduce_video_and_share() {
     DEFAULT_START_TIME="${VIDEO_START_TIME:-}"
     DEFAULT_CUSTOM_FFMPEG_ARGS="${VIDEO_CUSTOM_FFMPEG_ARGS:-}"
 
-    if ! FORM_DATA=$(dialog --clear --backtitle "Reduce Video and Share" \
-        --title "FFmpeg Video Reduction Options" \
-    --form "Configure video reduction settings:\nOriginal size: $ORIGINAL_SIZE\nOriginal resolution: $ORIGINAL_RESOLUTION" 32 80 9 \
-    "Max resolution (e.g., 1280x720):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 \
-    "Target file size (MB, 0=auto):" 2 1 "$DEFAULT_TARGET_SIZE" 2 35 10 0 \
-    "Max FPS (0=keep original):" 3 1 "$DEFAULT_MAX_FPS" 3 35 10 0 \
-    "Audio bitrate (0=no audio):" 4 1 "$DEFAULT_AUDIO_BITRATE" 4 35 10 0 \
-    "Video codec:" 5 1 "$DEFAULT_VIDEO_CODEC" 5 35 15 0 \
-    "CRF quality (18-32, lower=better):" 6 1 "$DEFAULT_CRF_QUALITY" 6 35 10 0 \
-    "Output filename:" 7 1 "$DEFAULT_OUTPUT_TEMPLATE" 7 35 30 0 \
-    "Start time (HH:MM:SS, optional):" 8 1 "$DEFAULT_START_TIME" 8 35 15 0 \
-    "Custom FFmpeg args:" 9 1 "$DEFAULT_CUSTOM_FFMPEG_ARGS" 21 20 80 0 \
-        2>&1 >/dev/tty); then
-        return
-    fi
+    while true; do
+        run_dialog_capture --clear --backtitle "Reduce Video and Share" \
+            --title "FFmpeg Video Reduction Options" \
+            --form "Configure video reduction settings:\nOriginal size: $ORIGINAL_SIZE\nOriginal resolution: $ORIGINAL_RESOLUTION" 32 80 9 \
+            "Max resolution (e.g., 1280x720):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 \
+            "Target file size (MB, 0=auto):" 2 1 "$DEFAULT_TARGET_SIZE" 2 35 10 0 \
+            "Max FPS (0=keep original):" 3 1 "$DEFAULT_MAX_FPS" 3 35 10 0 \
+            "Audio bitrate (0=no audio):" 4 1 "$DEFAULT_AUDIO_BITRATE" 4 35 10 0 \
+            "Video codec:" 5 1 "$DEFAULT_VIDEO_CODEC" 5 35 15 0 \
+            "CRF quality (18-32, lower=better):" 6 1 "$DEFAULT_CRF_QUALITY" 6 35 10 0 \
+            "Output filename:" 7 1 "$DEFAULT_OUTPUT_TEMPLATE" 7 35 30 0 \
+            "Start time (HH:MM:SS, optional):" 8 1 "$DEFAULT_START_TIME" 8 35 15 0 \
+            "Custom FFmpeg args:" 9 1 "$DEFAULT_CUSTOM_FFMPEG_ARGS" 21 20 80 0
 
-    MAX_RESOLUTION=$(echo "$FORM_DATA" | sed -n '1p')
-    TARGET_SIZE=$(echo "$FORM_DATA" | sed -n '2p')
-    MAX_FPS=$(echo "$FORM_DATA" | sed -n '3p')
-    AUDIO_BITRATE=$(echo "$FORM_DATA" | sed -n '4p')
-    VIDEO_CODEC=$(echo "$FORM_DATA" | sed -n '5p')
-    CRF_QUALITY=$(echo "$FORM_DATA" | sed -n '6p')
-    OUTPUT_TEMPLATE=$(echo "$FORM_DATA" | sed -n '7p')
-    START_TIME=$(echo "$FORM_DATA" | sed -n '8p')
-    CUSTOM_FFMPEG_ARGS=$(echo "$FORM_DATA" | sed -n '9p')
+        if is_dialog_back; then
+            return
+        fi
+        if is_dialog_error; then
+            dialog --msgbox "Error: Failed to open video options dialog." 8 60
+            return
+        fi
+        FORM_DATA="$DIALOG_RESULT"
+        break
+    done
+
+    MAX_RESOLUTION=$(get_form_field "$FORM_DATA" 1)
+    TARGET_SIZE=$(get_form_field "$FORM_DATA" 2)
+    MAX_FPS=$(get_form_field "$FORM_DATA" 3)
+    AUDIO_BITRATE=$(get_form_field "$FORM_DATA" 4)
+    VIDEO_CODEC=$(get_form_field "$FORM_DATA" 5)
+    CRF_QUALITY=$(get_form_field "$FORM_DATA" 6)
+    OUTPUT_TEMPLATE=$(get_form_field "$FORM_DATA" 7)
+    START_TIME=$(get_form_field "$FORM_DATA" 8)
+    CUSTOM_FFMPEG_ARGS=$(get_form_field "$FORM_DATA" 9)
 
     if [ "$SAVE_CONFIG" = "1" ]; then
         save_config "VIDEO" "VIDEO_MAX_RESOLUTION=\"$MAX_RESOLUTION\"
@@ -207,139 +251,336 @@ VIDEO_CUSTOM_FFMPEG_ARGS=\"$CUSTOM_FFMPEG_ARGS\""
     OUTPUT_NAME="${OUTPUT_NAME//%ext/$EXT}"
     OUTPUT_FILE="$CURRENT_DIR/$OUTPUT_NAME"
 
-    FFMPEG_CMD="ffmpeg -y"
-    
+    FFMPEG_ARGS=(-y)
+
     if [ -n "$START_TIME" ]; then
-        FFMPEG_CMD="$FFMPEG_CMD -ss $START_TIME"
+        FFMPEG_ARGS+=("-ss" "$START_TIME")
     fi
-    
-    FFMPEG_CMD="$FFMPEG_CMD -i \"$INPUT_FILE\" -c:v $VIDEO_CODEC"
+
+    FFMPEG_ARGS+=("-i" "$INPUT_FILE" "-c:v" "$VIDEO_CODEC")
 
     if [ "$MAX_RESOLUTION" != "0" ] && [ -n "$MAX_RESOLUTION" ]; then
-        FFMPEG_CMD="$FFMPEG_CMD -vf scale=$MAX_RESOLUTION:force_original_aspect_ratio=decrease"
+        FFMPEG_ARGS+=("-vf" "scale=$MAX_RESOLUTION:force_original_aspect_ratio=decrease")
     fi
 
     if [ "$MAX_FPS" != "0" ] && [ -n "$MAX_FPS" ]; then
-        FFMPEG_CMD="$FFMPEG_CMD -r $MAX_FPS"
+        FFMPEG_ARGS+=("-r" "$MAX_FPS")
     fi
 
     if [ "$AUDIO_BITRATE" = "0" ]; then
-        FFMPEG_CMD="$FFMPEG_CMD -an"
+        FFMPEG_ARGS+=("-an")
     else
-        FFMPEG_CMD="$FFMPEG_CMD -c:a aac -b:a ${AUDIO_BITRATE}k"
+        FFMPEG_ARGS+=("-c:a" "aac" "-b:a" "${AUDIO_BITRATE}k")
     fi
 
     if [ "$TARGET_SIZE" != "0" ] && [ -n "$TARGET_SIZE" ] && [ -n "$DURATION" ]; then
         # Calculate target bitrate based on file size
         TARGET_BITRATE=$(echo "scale=0; ($TARGET_SIZE * 8192) / $DURATION" | bc 2>/dev/null)
         if [ -n "$TARGET_BITRATE" ] && [ "$TARGET_BITRATE" -gt 0 ]; then
-            FFMPEG_CMD="$FFMPEG_CMD -b:v ${TARGET_BITRATE}k -maxrate ${TARGET_BITRATE}k -bufsize $((TARGET_BITRATE * 2))k"
+            FFMPEG_ARGS+=("-b:v" "${TARGET_BITRATE}k" "-maxrate" "${TARGET_BITRATE}k" "-bufsize" "$((TARGET_BITRATE * 2))k")
         else
-            FFMPEG_CMD="$FFMPEG_CMD -crf $CRF_QUALITY"
+            FFMPEG_ARGS+=("-crf" "$CRF_QUALITY")
         fi
     else
-        FFMPEG_CMD="$FFMPEG_CMD -crf $CRF_QUALITY"
+        FFMPEG_ARGS+=("-crf" "$CRF_QUALITY")
     fi
 
     if [ -n "$CUSTOM_FFMPEG_ARGS" ]; then
-        FFMPEG_CMD="$FFMPEG_CMD $CUSTOM_FFMPEG_ARGS"
+        # shell-style splitting without eval
+        read -r -a CUSTOM_FFMPEG_ARGS_ARRAY <<< "$CUSTOM_FFMPEG_ARGS"
+        FFMPEG_ARGS+=("${CUSTOM_FFMPEG_ARGS_ARRAY[@]}")
     fi
 
-    FFMPEG_CMD="$FFMPEG_CMD \"$OUTPUT_FILE\""
+    FFMPEG_ARGS+=("$OUTPUT_FILE")
 
-    { eval "$FFMPEG_CMD" 2>&1 ; } | dialog --progressbox 30 100
+    { ffmpeg "${FFMPEG_ARGS[@]}" 2>&1 ; } | dialog --progressbox 30 100
 
     if [ -f "$OUTPUT_FILE" ]; then
         NEW_SIZE=$(du -h "$OUTPUT_FILE" | cut -f1)
         termux-share -a send "$OUTPUT_FILE"
         dialog --msgbox "Video reduced and shared successfully!\nOriginal: $ORIGINAL_SIZE -> New: $NEW_SIZE\nOutput: $OUTPUT_NAME" 10 60
     else
-        dialog --msgbox "Error: Video conversion failed!\nCommand: $FFMPEG_CMD\nLog: $FFMPEG_LOG" 80 80
+        dialog --msgbox "Error: Video conversion failed!" 10 50
     fi
 }
 
+configure_image_options_jpeg() {
+    while true; do
+        run_dialog_capture --clear --backtitle "Reduce Image and Share" \
+            --title "Image Options (JPEG)" \
+            --form "Original size: $ORIGINAL_SIZE\nResolution: $IMAGE_INFO" 20 95 6 \
+            "Max resolution (0=keep):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 34 20 0 \
+            "Resize mode (fit/fill/stretch):" 2 1 "$DEFAULT_RESIZE_MODE" 2 34 20 0 \
+            "Scale flags (lanczos/bicubic):" 3 1 "$DEFAULT_SCALE_FLAGS" 3 34 20 0 \
+            "JPEG quality q:v (2-31):" 4 1 "$DEFAULT_JPEG_QUALITY" 4 34 10 0 \
+            "JPEG subsampling (420/422/444):" 5 1 "$DEFAULT_JPEG_SUBSAMPLING" 5 34 8 0 \
+            "Output filename:" 6 1 "$DEFAULT_OUTPUT_TEMPLATE" 6 34 40 0
+
+        if is_dialog_back; then
+            return 10
+        fi
+        if is_dialog_error; then
+            dialog --msgbox "Error: Failed to open JPEG options dialog." 8 60
+            return 1
+        fi
+
+        FORM_DATA="$DIALOG_RESULT"
+        MAX_RESOLUTION=$(echo "$FORM_DATA" | sed -n '1p')
+        RESIZE_MODE=$(echo "$FORM_DATA" | sed -n '2p')
+        SCALE_FLAGS=$(echo "$FORM_DATA" | sed -n '3p')
+        JPEG_QUALITY=$(echo "$FORM_DATA" | sed -n '4p')
+        JPEG_SUBSAMPLING=$(echo "$FORM_DATA" | sed -n '5p')
+        OUTPUT_TEMPLATE=$(echo "$FORM_DATA" | sed -n '6p')
+
+        [ "$DEFAULT_STRIP_METADATA" = "1" ] && JPEG_STRIP_STATE="on" || JPEG_STRIP_STATE="off"
+        [ "$DEFAULT_JPEG_PROGRESSIVE" = "1" ] && JPEG_PROGRESSIVE_STATE="on" || JPEG_PROGRESSIVE_STATE="off"
+        [ "$DEFAULT_JPEG_OPTIMIZE" = "1" ] && JPEG_OPTIMIZE_STATE="on" || JPEG_OPTIMIZE_STATE="off"
+
+        run_dialog_capture --clear --backtitle "Reduce Image and Share" \
+            --title "JPEG Toggles" \
+            --checklist "Enable or disable options:" 12 70 3 \
+            "strip_metadata" "Strip metadata" "$JPEG_STRIP_STATE" \
+            "jpeg_progressive" "Progressive JPEG" "$JPEG_PROGRESSIVE_STATE" \
+            "jpeg_optimize" "Optimize Huffman tables" "$JPEG_OPTIMIZE_STATE"
+
+        if is_dialog_back; then
+            continue
+        fi
+        if is_dialog_error; then
+            dialog --msgbox "Error: Failed to open JPEG toggles dialog." 8 60
+            return 1
+        fi
+
+        JPEG_FLAGS="$DIALOG_RESULT"
+        STRIP_METADATA="0"
+        JPEG_PROGRESSIVE="0"
+        JPEG_OPTIMIZE="0"
+
+        case "$JPEG_FLAGS" in *"\"strip_metadata\""*) STRIP_METADATA="1" ;; esac
+        case "$JPEG_FLAGS" in *"\"jpeg_progressive\""*) JPEG_PROGRESSIVE="1" ;; esac
+        case "$JPEG_FLAGS" in *"\"jpeg_optimize\""*) JPEG_OPTIMIZE="1" ;; esac
+        return 0
+    done
+}
+
+configure_image_options_png() {
+    while true; do
+        run_dialog_capture --clear --backtitle "Reduce Image and Share" \
+            --title "Image Options (PNG)" \
+            --form "Original size: $ORIGINAL_SIZE\nResolution: $IMAGE_INFO" 20 95 6 \
+            "Max resolution (0=keep):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 34 20 0 \
+            "Resize mode (fit/fill/stretch):" 2 1 "$DEFAULT_RESIZE_MODE" 2 34 20 0 \
+            "Scale flags (lanczos/bicubic):" 3 1 "$DEFAULT_SCALE_FLAGS" 3 34 20 0 \
+            "PNG compression (0-9):" 4 1 "$DEFAULT_PNG_COMPRESSION" 4 34 10 0 \
+            "PNG pred (none/sub/up/avg/paeth/mixed):" 5 1 "$DEFAULT_PNG_PRED" 5 34 20 0 \
+            "Output filename:" 6 1 "$DEFAULT_OUTPUT_TEMPLATE" 6 34 40 0
+
+        if is_dialog_back; then
+            return 10
+        fi
+        if is_dialog_error; then
+            dialog --msgbox "Error: Failed to open PNG options dialog." 8 60
+            return 1
+        fi
+
+        FORM_DATA="$DIALOG_RESULT"
+        MAX_RESOLUTION=$(echo "$FORM_DATA" | sed -n '1p')
+        RESIZE_MODE=$(echo "$FORM_DATA" | sed -n '2p')
+        SCALE_FLAGS=$(echo "$FORM_DATA" | sed -n '3p')
+        PNG_COMPRESSION=$(echo "$FORM_DATA" | sed -n '4p')
+        PNG_PRED=$(echo "$FORM_DATA" | sed -n '5p')
+        OUTPUT_TEMPLATE=$(echo "$FORM_DATA" | sed -n '6p')
+
+        [ "$DEFAULT_STRIP_METADATA" = "1" ] && PNG_STRIP_STATE="on" || PNG_STRIP_STATE="off"
+        [ "$DEFAULT_PNG_PALETTE_MODE" = "1" ] && PNG_PALETTE_STATE="on" || PNG_PALETTE_STATE="off"
+
+        run_dialog_capture --clear --backtitle "Reduce Image and Share" \
+            --title "PNG Toggles" \
+            --checklist "Enable or disable options:" 11 70 2 \
+            "strip_metadata" "Strip metadata" "$PNG_STRIP_STATE" \
+            "png_palette" "Palette mode (pal8)" "$PNG_PALETTE_STATE"
+
+        if is_dialog_back; then
+            continue
+        fi
+        if is_dialog_error; then
+            dialog --msgbox "Error: Failed to open PNG toggles dialog." 8 60
+            return 1
+        fi
+
+        PNG_FLAGS="$DIALOG_RESULT"
+        STRIP_METADATA="0"
+        PNG_PALETTE_MODE="0"
+
+        case "$PNG_FLAGS" in *"\"strip_metadata\""*) STRIP_METADATA="1" ;; esac
+        case "$PNG_FLAGS" in *"\"png_palette\""*) PNG_PALETTE_MODE="1" ;; esac
+        return 0
+    done
+}
+
+configure_image_options_webp() {
+    while true; do
+        run_dialog_capture --clear --backtitle "Reduce Image and Share" \
+            --title "Image Options (WebP)" \
+            --form "Original size: $ORIGINAL_SIZE\nResolution: $IMAGE_INFO" 22 95 9 \
+            "Max resolution (0=keep):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 34 20 0 \
+            "Resize mode (fit/fill/stretch):" 2 1 "$DEFAULT_RESIZE_MODE" 2 34 20 0 \
+            "Scale flags (lanczos/bicubic):" 3 1 "$DEFAULT_SCALE_FLAGS" 3 34 20 0 \
+            "WebP quality (1-100):" 4 1 "$DEFAULT_WEBP_QUALITY" 4 34 10 0 \
+            "WebP compression level (0-6):" 5 1 "$DEFAULT_WEBP_COMPRESSION_LEVEL" 5 34 10 0 \
+            "WebP preset (photo/picture/text/icon):" 6 1 "$DEFAULT_WEBP_PRESET" 7 34 20 0 \
+            "WebP alpha quality (0-100):" 8 1 "$DEFAULT_WEBP_ALPHA_QUALITY" 8 34 10 0 \
+            "Output filename:" 9 1 "$DEFAULT_OUTPUT_TEMPLATE" 9 34 40 0
+
+        if is_dialog_back; then
+            return 10
+        fi
+        if is_dialog_error; then
+            dialog --msgbox "Error: Failed to open WebP options dialog." 8 60
+            return 1
+        fi
+
+        FORM_DATA="$DIALOG_RESULT"
+        MAX_RESOLUTION=$(echo "$FORM_DATA" | sed -n '1p')
+        RESIZE_MODE=$(echo "$FORM_DATA" | sed -n '2p')
+        SCALE_FLAGS=$(echo "$FORM_DATA" | sed -n '3p')
+        WEBP_QUALITY=$(echo "$FORM_DATA" | sed -n '4p')
+        WEBP_COMPRESSION_LEVEL=$(echo "$FORM_DATA" | sed -n '5p')
+        WEBP_PRESET=$(echo "$FORM_DATA" | sed -n '6p')
+        WEBP_ALPHA_QUALITY=$(echo "$FORM_DATA" | sed -n '7p')
+        OUTPUT_TEMPLATE=$(echo "$FORM_DATA" | sed -n '8p')
+
+        [ "$DEFAULT_STRIP_METADATA" = "1" ] && WEBP_STRIP_STATE="on" || WEBP_STRIP_STATE="off"
+        [ "$DEFAULT_WEBP_LOSSLESS" = "1" ] && WEBP_LOSSLESS_STATE="on" || WEBP_LOSSLESS_STATE="off"
+
+        run_dialog_capture --clear --backtitle "Reduce Image and Share" \
+            --title "WebP Toggles" \
+            --checklist "Enable or disable options:" 11 70 2 \
+            "strip_metadata" "Strip metadata" "$WEBP_STRIP_STATE" \
+            "webp_lossless" "Lossless mode" "$WEBP_LOSSLESS_STATE"
+
+        if is_dialog_back; then
+            continue
+        fi
+        if is_dialog_error; then
+            dialog --msgbox "Error: Failed to open WebP toggles dialog." 8 60
+            return 1
+        fi
+
+        WEBP_FLAGS="$DIALOG_RESULT"
+        STRIP_METADATA="0"
+        WEBP_LOSSLESS="0"
+
+        case "$WEBP_FLAGS" in *"\"strip_metadata\""*) STRIP_METADATA="1" ;; esac
+        case "$WEBP_FLAGS" in *"\"webp_lossless\""*) WEBP_LOSSLESS="1" ;; esac
+        return 0
+    done
+}
+
 reduce_image_and_share() {
-    
     ORIGINAL_SIZE=$(du -h "$INPUT_FILE" | cut -f1)
     IMAGE_INFO=$(ffprobe -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$INPUT_FILE" 2>/dev/null)
 
     DEFAULT_OUTPUT_FORMAT="${IMAGE_OUTPUT_FORMAT:-jpeg}"
     DEFAULT_MAX_RESOLUTION="${IMAGE_MAX_RESOLUTION:-1280x720}"
-    DEFAULT_GENERAL_QUALITY="${IMAGE_GENERAL_QUALITY:-5}"
+    DEFAULT_RESIZE_MODE="${IMAGE_RESIZE_MODE:-fit}"
+    DEFAULT_SCALE_FLAGS="${IMAGE_SCALE_FLAGS:-lanczos}"
+    DEFAULT_STRIP_METADATA="${IMAGE_STRIP_METADATA:-1}"
     DEFAULT_OUTPUT_TEMPLATE="${IMAGE_OUTPUT_TEMPLATE:-%name_reduced.%ext}"
+
+    DEFAULT_JPEG_QUALITY="${IMAGE_JPEG_QUALITY:-${IMAGE_GENERAL_QUALITY:-5}}"
+    DEFAULT_JPEG_PROGRESSIVE="${IMAGE_JPEG_PROGRESSIVE:-1}"
+    DEFAULT_JPEG_OPTIMIZE="${IMAGE_JPEG_OPTIMIZE:-1}"
+    DEFAULT_JPEG_SUBSAMPLING="${IMAGE_JPEG_SUBSAMPLING:-420}"
+
+    DEFAULT_PNG_COMPRESSION="${IMAGE_PNG_COMPRESSION:-${IMAGE_GENERAL_QUALITY:-5}}"
+    DEFAULT_PNG_PRED="${IMAGE_PNG_PRED:-mixed}"
+    DEFAULT_PNG_PALETTE_MODE="${IMAGE_PNG_PALETTE_MODE:-0}"
+
+    DEFAULT_WEBP_QUALITY="${IMAGE_WEBP_QUALITY:-75}"
+    DEFAULT_WEBP_LOSSLESS="${IMAGE_WEBP_LOSSLESS:-0}"
+    DEFAULT_WEBP_COMPRESSION_LEVEL="${IMAGE_WEBP_COMPRESSION_LEVEL:-4}"
+    DEFAULT_WEBP_PRESET="${IMAGE_WEBP_PRESET:-photo}"
+    DEFAULT_WEBP_ALPHA_QUALITY="${IMAGE_WEBP_ALPHA_QUALITY:-80}"
 
     JPEG_STATE="off"
     PNG_STATE="off"
     WEBP_STATE="off"
-    
+
     case "$DEFAULT_OUTPUT_FORMAT" in
         "jpeg") JPEG_STATE="on" ;;
         "png") PNG_STATE="on" ;;
         "webp") WEBP_STATE="on" ;;
-        *) JPEG_STATE="on" ;;  # default fallback
+        *) JPEG_STATE="on" ;;
     esac
-    
-    if ! OUTPUT_FORMAT=$(dialog --clear --backtitle "Reduce Image and Share" \
-        --title "Select Output Format" \
-        --radiolist "Choose output format:" 12 50 3 \
-        "jpeg" "JPEG (.jpg)" "$JPEG_STATE" \
-        "png" "PNG (.png)" "$PNG_STATE" \
-        "webp" "WebP (.webp)" "$WEBP_STATE" \
-        2>&1 >/dev/tty); then
-        return
-    fi
 
-    if [ "$OUTPUT_FORMAT" = "jpeg" ] || [ "$OUTPUT_FORMAT" = "jpg" ]; then
-        if ! FORM_DATA=$(dialog --clear --backtitle "Reduce Image and Share" \
-            --title "FFmpeg Image Reduction Options" \
-            --form "Configure image reduction settings:\nOriginal size: $ORIGINAL_SIZE\nResolution: $IMAGE_INFO" 16 80 3 \
-            "Max resolution (e.g., 1920x1080):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 \
-            "JPEG quality (2-31, lower=better):" 2 1 "$DEFAULT_GENERAL_QUALITY" 2 35 10 0 \
-            "Output filename:" 3 1 "$DEFAULT_OUTPUT_TEMPLATE" 3 35 30 0 \
-            2>&1 >/dev/tty); then
+    while true; do
+        run_dialog_capture --clear --backtitle "Reduce Image and Share" \
+            --title "Select Output Format" \
+            --radiolist "Choose output format:" 12 50 3 \
+            "jpeg" "JPEG (.jpg)" "$JPEG_STATE" \
+            "png" "PNG (.png)" "$PNG_STATE" \
+            "webp" "WebP (.webp)" "$WEBP_STATE"
+
+        if is_dialog_back; then
             return
         fi
-        MAX_RESOLUTION=$(echo "$FORM_DATA" | sed -n '1p')
-        GENERAL_QUALITY=$(echo "$FORM_DATA" | sed -n '2p')
-        OUTPUT_TEMPLATE=$(echo "$FORM_DATA" | sed -n '3p')
-    elif [ "$OUTPUT_FORMAT" = "png" ]; then
-        if ! FORM_DATA=$(dialog --clear --backtitle "Reduce Image and Share" \
-            --title "FFmpeg Image Reduction Options" \
-            --form "Configure image reduction settings:\nOriginal size: $ORIGINAL_SIZE\nResolution: $IMAGE_INFO" 16 80 3 \
-            "Max resolution (e.g., 1920x1080):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 \
-            "PNG compression (0-9, higher=smaller):" 2 1 "$DEFAULT_GENERAL_QUALITY" 2 35 10 0 \
-            "Output filename:" 3 1 "$DEFAULT_OUTPUT_TEMPLATE" 3 35 30 0 \
-            2>&1 >/dev/tty); then
+        if is_dialog_error; then
+            dialog --msgbox "Error: Failed to open format selection dialog." 8 60
             return
         fi
-        MAX_RESOLUTION=$(echo "$FORM_DATA" | sed -n '1p')
-        GENERAL_QUALITY=$(echo "$FORM_DATA" | sed -n '2p')
-        OUTPUT_TEMPLATE=$(echo "$FORM_DATA" | sed -n '3p')
-    elif [ "$OUTPUT_FORMAT" = "webp" ]; then
-        if ! FORM_DATA=$(dialog --clear --backtitle "Reduce Image and Share" \
-            --title "FFmpeg Image Reduction Options" \
-            --form "Configure image reduction settings:\nOriginal size: $ORIGINAL_SIZE\nResolution: $IMAGE_INFO" 16 80 3 \
-            "Max resolution (e.g., 1920x1080):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 \
-            "WebP quality (1-100, higher=better):" 2 1 "$DEFAULT_GENERAL_QUALITY" 2 35 10 0 \
-            "Output filename:" 3 1 "$DEFAULT_OUTPUT_TEMPLATE" 3 35 30 0 \
-            2>&1 >/dev/tty); then
-            return
+
+        OUTPUT_FORMAT="$DIALOG_RESULT"
+        OPTION_STATUS=1
+
+        case "$OUTPUT_FORMAT" in
+            "jpeg"|"jpg")
+                configure_image_options_jpeg
+                OPTION_STATUS=$?
+                ;;
+            "png")
+                configure_image_options_png
+                OPTION_STATUS=$?
+                ;;
+            "webp")
+                configure_image_options_webp
+                OPTION_STATUS=$?
+                ;;
+        esac
+
+        if [ "$OPTION_STATUS" -eq 0 ]; then
+            break
         fi
-        MAX_RESOLUTION=$(echo "$FORM_DATA" | sed -n '1p')
-        GENERAL_QUALITY=$(echo "$FORM_DATA" | sed -n '2p')
-        OUTPUT_TEMPLATE=$(echo "$FORM_DATA" | sed -n '3p')
-    fi
+        if [ "$OPTION_STATUS" -eq 10 ]; then
+            continue
+        fi
+        return
+    done
 
     if [ "$SAVE_CONFIG" = "1" ]; then
         save_config "IMAGE" "IMAGE_OUTPUT_FORMAT=\"$OUTPUT_FORMAT\"
 IMAGE_MAX_RESOLUTION=\"$MAX_RESOLUTION\"
-IMAGE_GENERAL_QUALITY=\"$GENERAL_QUALITY\"
-IMAGE_OUTPUT_TEMPLATE=\"$OUTPUT_TEMPLATE\""
+IMAGE_RESIZE_MODE=\"$RESIZE_MODE\"
+IMAGE_SCALE_FLAGS=\"$SCALE_FLAGS\"
+IMAGE_STRIP_METADATA=\"$STRIP_METADATA\"
+IMAGE_OUTPUT_TEMPLATE=\"$OUTPUT_TEMPLATE\"
+IMAGE_JPEG_QUALITY=\"${JPEG_QUALITY:-$DEFAULT_JPEG_QUALITY}\"
+IMAGE_JPEG_PROGRESSIVE=\"${JPEG_PROGRESSIVE:-$DEFAULT_JPEG_PROGRESSIVE}\"
+IMAGE_JPEG_OPTIMIZE=\"${JPEG_OPTIMIZE:-$DEFAULT_JPEG_OPTIMIZE}\"
+IMAGE_JPEG_SUBSAMPLING=\"${JPEG_SUBSAMPLING:-$DEFAULT_JPEG_SUBSAMPLING}\"
+IMAGE_PNG_COMPRESSION=\"${PNG_COMPRESSION:-$DEFAULT_PNG_COMPRESSION}\"
+IMAGE_PNG_PRED=\"${PNG_PRED:-$DEFAULT_PNG_PRED}\"
+IMAGE_PNG_PALETTE_MODE=\"${PNG_PALETTE_MODE:-$DEFAULT_PNG_PALETTE_MODE}\"
+IMAGE_WEBP_QUALITY=\"${WEBP_QUALITY:-$DEFAULT_WEBP_QUALITY}\"
+IMAGE_WEBP_LOSSLESS=\"${WEBP_LOSSLESS:-$DEFAULT_WEBP_LOSSLESS}\"
+IMAGE_WEBP_COMPRESSION_LEVEL=\"${WEBP_COMPRESSION_LEVEL:-$DEFAULT_WEBP_COMPRESSION_LEVEL}\"
+IMAGE_WEBP_PRESET=\"${WEBP_PRESET:-$DEFAULT_WEBP_PRESET}\"
+IMAGE_WEBP_ALPHA_QUALITY=\"${WEBP_ALPHA_QUALITY:-$DEFAULT_WEBP_ALPHA_QUALITY}\""
     fi
 
     OUTPUT_NAME="$OUTPUT_TEMPLATE"
     OUTPUT_NAME="${OUTPUT_NAME//%name/$NAME}"
-    
+
     case $OUTPUT_FORMAT in
         "jpeg"|"jpg")
             OUTPUT_NAME="${OUTPUT_NAME//%ext/jpg}"
@@ -357,36 +598,73 @@ IMAGE_OUTPUT_TEMPLATE=\"$OUTPUT_TEMPLATE\""
     esac
 
     OUTPUT_FILE="$CURRENT_DIR/$OUTPUT_NAME"
-
-    FFMPEG_CMD="ffmpeg -y -i \"$INPUT_FILE\""
+    FILTER_GRAPH=""
 
     if [ "$MAX_RESOLUTION" != "0" ] && [ -n "$MAX_RESOLUTION" ]; then
-        FFMPEG_CMD="$FFMPEG_CMD -vf scale=$MAX_RESOLUTION:force_original_aspect_ratio=decrease"
+        case "$RESIZE_MODE" in
+            "fill")
+                FILTER_GRAPH="scale=$MAX_RESOLUTION:force_original_aspect_ratio=increase:flags=$SCALE_FLAGS,crop=$MAX_RESOLUTION"
+                ;;
+            "stretch")
+                FILTER_GRAPH="scale=$MAX_RESOLUTION:flags=$SCALE_FLAGS"
+                ;;
+            *)
+                FILTER_GRAPH="scale=$MAX_RESOLUTION:force_original_aspect_ratio=decrease:flags=$SCALE_FLAGS"
+                ;;
+        esac
     fi
 
-    # Format-specific options
+    if [ "$OUTPUT_FORMAT" = "png" ] && [ "${PNG_PALETTE_MODE:-0}" = "1" ]; then
+        if [ -n "$FILTER_GRAPH" ]; then
+            FILTER_GRAPH="$FILTER_GRAPH,format=pal8"
+        else
+            FILTER_GRAPH="format=pal8"
+        fi
+    fi
+
+    FFMPEG_ARGS=(-y -i "$INPUT_FILE")
+
+    if [ -n "$FILTER_GRAPH" ]; then
+        FFMPEG_ARGS+=("-vf" "$FILTER_GRAPH")
+    fi
+
+    if [ "${STRIP_METADATA:-0}" = "1" ]; then
+        FFMPEG_ARGS+=("-map_metadata" "-1")
+    fi
+
     case $OUTPUT_FORMAT in
         "jpeg"|"jpg")
-            FFMPEG_CMD="$FFMPEG_CMD -q:v $GENERAL_QUALITY"
+            FFMPEG_ARGS+=("-q:v" "${JPEG_QUALITY:-$DEFAULT_JPEG_QUALITY}")
+            if [ "${JPEG_PROGRESSIVE:-0}" = "1" ]; then
+                FFMPEG_ARGS+=("-progressive" "1")
+            fi
+            if [ "${JPEG_OPTIMIZE:-0}" = "1" ]; then
+                FFMPEG_ARGS+=("-optimize" "1")
+            fi
+            case "${JPEG_SUBSAMPLING:-420}" in
+                "444") FFMPEG_ARGS+=("-pix_fmt" "yuv444p") ;;
+                "422") FFMPEG_ARGS+=("-pix_fmt" "yuv422p") ;;
+                *) FFMPEG_ARGS+=("-pix_fmt" "yuv420p") ;;
+            esac
             ;;
         "png")
-            FFMPEG_CMD="$FFMPEG_CMD -compression_level $GENERAL_QUALITY"
+            FFMPEG_ARGS+=("-compression_level" "${PNG_COMPRESSION:-$DEFAULT_PNG_COMPRESSION}" "-pred" "${PNG_PRED:-$DEFAULT_PNG_PRED}")
             ;;
         "webp")
-            FFMPEG_CMD="$FFMPEG_CMD -c:v libwebp -quality $GENERAL_QUALITY"
+            FFMPEG_ARGS+=("-c:v" "libwebp" "-quality" "${WEBP_QUALITY:-$DEFAULT_WEBP_QUALITY}" "-lossless" "${WEBP_LOSSLESS:-$DEFAULT_WEBP_LOSSLESS}" "-compression_level" "${WEBP_COMPRESSION_LEVEL:-$DEFAULT_WEBP_COMPRESSION_LEVEL}" "-preset" "${WEBP_PRESET:-$DEFAULT_WEBP_PRESET}" "-alpha_quality" "${WEBP_ALPHA_QUALITY:-$DEFAULT_WEBP_ALPHA_QUALITY}")
             ;;
     esac
 
-    FFMPEG_CMD="$FFMPEG_CMD \"$OUTPUT_FILE\""
+    FFMPEG_ARGS+=("$OUTPUT_FILE")
 
-    { eval "$FFMPEG_CMD" 2>&1 ; } | dialog --progressbox 30 100
+    { ffmpeg "${FFMPEG_ARGS[@]}" 2>&1 ; } | dialog --progressbox 30 100
 
     if [ -f "$OUTPUT_FILE" ]; then
         NEW_SIZE=$(du -h "$OUTPUT_FILE" | cut -f1)
         termux-share -a send "$OUTPUT_FILE"
         dialog --msgbox "Image reduced and shared successfully!\nOriginal: $ORIGINAL_SIZE -> New: $NEW_SIZE\nOutput: $OUTPUT_NAME" 10 60
     else
-        dialog --msgbox "Error: Image conversion failed!\nCommand: $FFMPEG_CMD" 16 80
+        dialog --msgbox "Error: Image conversion failed!" 8 40
     fi
 }
 
@@ -405,21 +683,37 @@ copy_to_current() {
         *) COPY_STATE="on" ;;
     esac
 
-    if ! NEW_FILENAME=$(dialog --clear --backtitle "Copy to Current Folder" \
-        --title "Copy Options" \
-        --inputbox "Enter target filename:" 10 60 "$BASENAME" \
-        2>&1 >/dev/tty); then
-        return
-    fi
+    while true; do
+        run_dialog_capture --clear --backtitle "Copy to Current Folder" \
+            --title "Copy Options" \
+            --inputbox "Enter target filename:" 10 60 "$BASENAME"
+        if is_dialog_back; then
+            return
+        fi
+        if is_dialog_error; then
+            dialog --msgbox "Error: Failed to open copy options dialog." 8 60
+            return
+        fi
+        NEW_FILENAME="$DIALOG_RESULT"
+        break
+    done
 
-    if ! ACTION=$(dialog --clear --backtitle "Copy to Current Folder" \
-        --title "Select Action" \
-        --radiolist "Choose copy behavior:" 12 60 2 \
-        "copy" "Copy file to current folder" "$COPY_STATE" \
-        "move" "Move file to current folder" "$MOVE_STATE" \
-        2>&1 >/dev/tty); then
-        return
-    fi
+    while true; do
+        run_dialog_capture --clear --backtitle "Copy to Current Folder" \
+            --title "Select Action" \
+            --radiolist "Choose copy behavior:" 12 60 2 \
+            "copy" "Copy file to current folder" "$COPY_STATE" \
+            "move" "Move file to current folder" "$MOVE_STATE"
+        if is_dialog_back; then
+            return
+        fi
+        if is_dialog_error; then
+            dialog --msgbox "Error: Failed to open copy action dialog." 8 60
+            return
+        fi
+        ACTION="$DIALOG_RESULT"
+        break
+    done
 
     if [ "$SAVE_CONFIG" = "1" ]; then
         save_config "COPY" "COPY_ACTION=\"$ACTION\""
@@ -428,7 +722,12 @@ copy_to_current() {
     TARGET_FILE="$CURRENT_DIR/$NEW_FILENAME"
 
     if [ -f "$TARGET_FILE" ]; then
-        if ! dialog --yesno "File '$NEW_FILENAME' already exists in current directory.\nOverwrite?" 8 60; then
+        run_dialog_capture --yesno "File '$NEW_FILENAME' already exists in current directory.\nOverwrite?" 8 60
+        if is_dialog_error; then
+            dialog --msgbox "Error: Failed to open overwrite confirmation dialog." 8 60
+            return
+        fi
+        if [ "$DIALOG_STATUS" -ne "$DIALOG_OK" ]; then
             return
         fi
     fi
@@ -468,16 +767,23 @@ copy_to_current() {
 
 load_config
 while true; do
-    if ! CHOICE=$(dialog --clear --backtitle "uwu" \
+    run_dialog_capture --clear --backtitle "uwu" \
         --title "Main Menu" \
         --menu "What would you like to do with '$BASENAME'?" 15 60 3 \
         1 "Compress to archive and share" \
         2 "Reduce size/resolution (FFmpeg) and share" \
-        3 "Copy to current folder" \
-        2>&1 >/dev/tty); then
+        3 "Copy to current folder"
+
+    if is_dialog_back; then
         clear
         exit 0
     fi
+    if is_dialog_error; then
+        clear
+        dialog --msgbox "Error: Failed to open main menu." 8 50
+        exit 1
+    fi
+    CHOICE="$DIALOG_RESULT"
 
     case $CHOICE in
         1)
