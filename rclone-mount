@@ -1,18 +1,22 @@
 #!/data/data/com.termux/files/usr/bin/bash -e
 
-SOURCE="GDCrypt-remiliascarlet:"
+SOURCE=""
 TARGET=""
 CONFIG_FILE="/data/data/com.termux/files/home/.config/rclone/rclone.conf"
-REAL_USER="u0_a325"
+REAL_USER=$(whoami)
 
-usage() {
-    echo "Error: $1" >&2
-    echo "Usage: $0 -t <mount_folder> [-s <source>] [-c <config_file>] [-u <real_user>] [-- <rclone mount options>]"
+help() {
+    echo "Usage: $0 -t <mount_folder> -s <remote_source> [-c <config_file>] [-u <real_user>] [-- <rclone mount options>]"
     echo "  -t <mount_folder>    (Required) The destination folder to mount."
-    echo "  -s <source>          (Optional) The rclone remote source. Default: \"$SOURCE\""
+    echo "  -s <source>          (Required) The rclone remote source. Default: \"$SOURCE\""
     echo "  -c <config_file>     (Optional) Path to rclone config file."
     echo "  -u <real_user>       (Optional) The user to own the config file."
     exit 1
+}
+
+usage() {
+    echo "Error: $1" >&2
+    help
 }
 
 while getopts ":t:s:c:u:" opt; do
@@ -26,8 +30,8 @@ while getopts ":t:s:c:u:" opt; do
     esac
 done
 
-if [ -z "$TARGET" ]; then
-    usage "The mount folder (-t) option is required."
+if [ -z "$TARGET" ] || [ -z "$SOURCE" ]; then
+    usage "The mount folder (-t) and source (-s) options are required."
 fi
 
 shift $((OPTIND-1))
