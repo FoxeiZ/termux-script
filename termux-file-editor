@@ -40,6 +40,85 @@ get_form_field() {
     echo "$1" | sed -n "${2}p"
 }
 
+ask_output_action() {
+    local backtitle="$1"
+
+    run_dialog_capture --clear --backtitle "$backtitle" \
+        --title "Output Action" \
+        --radiolist "What do you want to do with the output file?" 12 60 2 \
+        "share" "Share the output file" on \
+        "save" "Save only (do not share)" off
+
+    if is_dialog_back; then
+        return 10
+    fi
+    if is_dialog_error; then
+        dialog --msgbox "Error: Failed to open output action dialog." 8 60
+        return 1
+    fi
+
+    OUTPUT_ACTION="$DIALOG_RESULT"
+    [ -z "$OUTPUT_ACTION" ] && OUTPUT_ACTION="share"
+    return 0
+}
+
+prompt_remove_after_share() {
+    local output_file="$1"
+    local summary_message="$2"
+
+    run_dialog_capture --yesno "$summary_message\n\nRemove generated file?" 13 80
+    if [ "$DIALOG_STATUS" -eq "$DIALOG_OK" ]; then
+        rm -f "$output_file"
+    fi
+}
+
+run_ffmpeg_with_progressbox() {
+    local backtitle="$1"
+    shift
+
+    run_command_with_progressbox "$backtitle" ffmpeg "$@"
+}
+
+run_command_with_progressbox() {
+    local backtitle="$1"
+    shift
+
+    local fifo_path
+    fifo_path=$(mktemp -u)
+
+    if ! mkfifo "$fifo_path"; then
+        dialog --msgbox "Error: Failed to create output pipe." 8 60
+        return 1
+    fi
+
+    "$@" >"$fifo_path" 2>&1 &
+    local command_pid=$!
+    local command_output
+
+    command_output=$(tee >(dialog --backtitle "$backtitle" --title "Progress (ESC to cancel)" --progressbox 30 100) <"$fifo_path")
+
+    local command_status
+    if kill -0 "$command_pid" 2>/dev/null; then
+        kill "$command_pid" 2>/dev/null || true
+        sleep 1
+        kill -9 "$command_pid" 2>/dev/null || true
+        wait "$command_pid" 2>/dev/null || true
+        command_status=130
+    else
+        wait "$command_pid"
+        command_status=$?
+    fi
+
+    rm -f "$fifo_path"
+
+    if [ "$command_status" -ne 0 ]; then
+        [ -z "$command_output" ] && command_output="No output captured."
+        dialog --backtitle "$backtitle" --title "Command log" --msgbox "$command_output" 30 100
+    fi
+
+    return "$command_status"
+}
+
 if [ "$(uname -o)" = "Cygwin" ]; then
     termux-share() { cygstart "${@: -1}"; }
 fi
@@ -61,19 +140,18 @@ save_config() {
     local prefix="$1"
     shift
     local config_data="$*"
-    
+
     if [ -f "$CONFIG_FILE" ]; then
         # Remove existing entries with the same prefix
-        grep -v "^${prefix}_" "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" 2>/dev/null || true
+        grep -v "^${prefix}_" "$CONFIG_FILE" >"${CONFIG_FILE}.tmp" 2>/dev/null || true
         mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE" 2>/dev/null || true
     fi
-    
-    echo "$config_data" >> "$CONFIG_FILE"
+
+    echo "$config_data" >>"$CONFIG_FILE"
 }
 
 # Function to compress file and share
 compress_and_share() {
-    
     # Set defaults from config or fallback values
     DEFAULT_FILENAME_TEMPLATE="${COMPRESS_FILENAME_TEMPLATE:-%name_%date.%ext}"
     DEFAULT_COMPRESSION_METHOD="${COMPRESS_COMPRESSION_METHOD:-7z}"
@@ -117,7 +195,7 @@ COMPRESS_PASSWORD=\"$PASSWORD\""
     OUTPUT_NAME="${OUTPUT_NAME//%name/$NAME}"
     OUTPUT_NAME="${OUTPUT_NAME//%date/$CURRENT_DATE}"
     OUTPUT_NAME="${OUTPUT_NAME//%original_ext/$EXT}"
-    
+
     if [ "$COMPRESSION_METHOD" = "7z" ]; then
         OUTPUT_NAME="${OUTPUT_NAME//%ext/7z}"
         OUTPUT_FILE="$CURRENT_DIR/$OUTPUT_NAME"
@@ -126,61 +204,47 @@ COMPRESS_PASSWORD=\"$PASSWORD\""
         OUTPUT_FILE="$CURRENT_DIR/$OUTPUT_NAME"
     fi
 
-    {
-        echo "XXX"
-        echo "0"
-        echo "Starting compression..."
-        echo "XXX"
-        
-        if [ -n "$PASSWORD" ]; then
-            if [ "$COMPRESSION_METHOD" = "7z" ]; then
-                7z a -mx="$COMPRESSION_LEVEL" -p"$PASSWORD" "$OUTPUT_FILE" "$INPUT_FILE" >/dev/null 2>&1
-            else
-                7z a -tzip -mx="$COMPRESSION_LEVEL" -p"$PASSWORD" "$OUTPUT_FILE" "$INPUT_FILE" >/dev/null 2>&1
-            fi
-        else
-            if [ "$COMPRESSION_METHOD" = "7z" ]; then
-                7z a -mx="$COMPRESSION_LEVEL" "$OUTPUT_FILE" "$INPUT_FILE" >/dev/null 2>&1
-            else
-                7z a -tzip -mx="$COMPRESSION_LEVEL" "$OUTPUT_FILE" "$INPUT_FILE" >/dev/null 2>&1
-            fi
-        fi
-        
-        echo "XXX"
-        echo "50"
-        echo "Compression completed. Preparing to share..."
-        echo "XXX"
-        
-        sleep 1
-        
-        echo "XXX"
-        echo "100"
-        echo "Done!"
-        echo "XXX"
-    } | dialog --backtitle "Compress and Share" --title "Progress" --gauge "Please wait..." 10 70 0
+    ARCHIVE_ARGS=(7z a)
+    if [ "$COMPRESSION_METHOD" = "zip" ]; then
+        ARCHIVE_ARGS+=("-tzip")
+    fi
+    ARCHIVE_ARGS+=("-mx=$COMPRESSION_LEVEL")
+    if [ -n "$PASSWORD" ]; then
+        ARCHIVE_ARGS+=("-p$PASSWORD")
+    fi
+    ARCHIVE_ARGS+=("$OUTPUT_FILE" "$INPUT_FILE")
+
+    run_command_with_progressbox "Compress and Share" 7z "${ARCHIVE_ARGS[@]}"
+    ARCHIVE_STATUS=$?
+
+    if [ "$ARCHIVE_STATUS" -ne 0 ]; then
+        return
+    fi
 
     if [ -f "$OUTPUT_FILE" ]; then
-        termux-share -a send "$OUTPUT_FILE"
-        dialog --msgbox "File compressed and shared successfully!\nOutput: $OUTPUT_NAME" 8 60
-    else
-        dialog --msgbox "Error: Compression failed!" 8 40
+        if [ "$OUTPUT_ACTION" = "share" ]; then
+            termux-share -a send "$OUTPUT_FILE"
+            prompt_remove_after_share "$OUTPUT_FILE" "File compressed and shared successfully!\nOutput: $OUTPUT_NAME"
+        else
+            dialog --msgbox "File compressed and saved successfully!\nOutput: $OUTPUT_NAME" 8 60
+        fi
     fi
 }
 
 reduce_and_share() {
     FILE_TYPE=$(file -b --mime-type "$INPUT_FILE" 2>/dev/null)
-    
+
     case $FILE_TYPE in
-        image/*)
-            reduce_image_and_share
-            ;;
-        video/*)
-            reduce_video_and_share
-            ;;
-        *)
-            dialog --msgbox "Error: Unsupported media type. Only video and image files are supported." 8 60
-            return
-            ;;
+    image/*)
+        reduce_image_and_share
+        ;;
+    video/*)
+        reduce_video_and_share
+        ;;
+    *)
+        dialog --msgbox "Error: Unsupported media type. Only video and image files are supported." 8 60
+        return
+        ;;
     esac
 }
 
@@ -287,20 +351,27 @@ VIDEO_CUSTOM_FFMPEG_ARGS=\"$CUSTOM_FFMPEG_ARGS\""
 
     if [ -n "$CUSTOM_FFMPEG_ARGS" ]; then
         # shell-style splitting without eval
-        read -r -a CUSTOM_FFMPEG_ARGS_ARRAY <<< "$CUSTOM_FFMPEG_ARGS"
+        read -r -a CUSTOM_FFMPEG_ARGS_ARRAY <<<"$CUSTOM_FFMPEG_ARGS"
         FFMPEG_ARGS+=("${CUSTOM_FFMPEG_ARGS_ARRAY[@]}")
     fi
 
     FFMPEG_ARGS+=("$OUTPUT_FILE")
 
-    { ffmpeg "${FFMPEG_ARGS[@]}" 2>&1 ; } | dialog --progressbox 30 100
+    run_ffmpeg_with_progressbox "Reduce Video and Share" "${FFMPEG_ARGS[@]}"
+    FFMPEG_STATUS=$?
+
+    if [ "$FFMPEG_STATUS" -ne 0 ]; then
+        return
+    fi
 
     if [ -f "$OUTPUT_FILE" ]; then
         NEW_SIZE=$(du -h "$OUTPUT_FILE" | cut -f1)
-        termux-share -a send "$OUTPUT_FILE"
-        dialog --msgbox "Video reduced and shared successfully!\nOriginal: $ORIGINAL_SIZE -> New: $NEW_SIZE\nOutput: $OUTPUT_NAME" 10 60
-    else
-        dialog --msgbox "Error: Video conversion failed!" 10 50
+        if [ "$OUTPUT_ACTION" = "share" ]; then
+            termux-share -a send "$OUTPUT_FILE"
+            prompt_remove_after_share "$OUTPUT_FILE" "Video reduced and shared successfully!\nOriginal: $ORIGINAL_SIZE -> New: $NEW_SIZE\nOutput: $OUTPUT_NAME"
+        else
+            dialog --msgbox "Video reduced and saved successfully!\nOriginal: $ORIGINAL_SIZE -> New: $NEW_SIZE\nOutput: $OUTPUT_NAME" 10 60
+        fi
     fi
 }
 
@@ -508,10 +579,10 @@ reduce_image_and_share() {
     WEBP_STATE="off"
 
     case "$DEFAULT_OUTPUT_FORMAT" in
-        "jpeg") JPEG_STATE="on" ;;
-        "png") PNG_STATE="on" ;;
-        "webp") WEBP_STATE="on" ;;
-        *) JPEG_STATE="on" ;;
+    "jpeg") JPEG_STATE="on" ;;
+    "png") PNG_STATE="on" ;;
+    "webp") WEBP_STATE="on" ;;
+    *) JPEG_STATE="on" ;;
     esac
 
     while true; do
@@ -534,18 +605,18 @@ reduce_image_and_share() {
         OPTION_STATUS=1
 
         case "$OUTPUT_FORMAT" in
-            "jpeg"|"jpg")
-                configure_image_options_jpeg
-                OPTION_STATUS=$?
-                ;;
-            "png")
-                configure_image_options_png
-                OPTION_STATUS=$?
-                ;;
-            "webp")
-                configure_image_options_webp
-                OPTION_STATUS=$?
-                ;;
+        "jpeg" | "jpg")
+            configure_image_options_jpeg
+            OPTION_STATUS=$?
+            ;;
+        "png")
+            configure_image_options_png
+            OPTION_STATUS=$?
+            ;;
+        "webp")
+            configure_image_options_webp
+            OPTION_STATUS=$?
+            ;;
         esac
 
         if [ "$OPTION_STATUS" -eq 0 ]; then
@@ -582,19 +653,19 @@ IMAGE_WEBP_ALPHA_QUALITY=\"${WEBP_ALPHA_QUALITY:-$DEFAULT_WEBP_ALPHA_QUALITY}\""
     OUTPUT_NAME="${OUTPUT_NAME//%name/$NAME}"
 
     case $OUTPUT_FORMAT in
-        "jpeg"|"jpg")
-            OUTPUT_NAME="${OUTPUT_NAME//%ext/jpg}"
-            ;;
-        "png")
-            OUTPUT_NAME="${OUTPUT_NAME//%ext/png}"
-            ;;
-        "webp")
-            OUTPUT_NAME="${OUTPUT_NAME//%ext/webp}"
-            ;;
-        *)
-            OUTPUT_NAME="${OUTPUT_NAME//%ext/jpg}"
-            OUTPUT_FORMAT="jpeg"
-            ;;
+    "jpeg" | "jpg")
+        OUTPUT_NAME="${OUTPUT_NAME//%ext/jpg}"
+        ;;
+    "png")
+        OUTPUT_NAME="${OUTPUT_NAME//%ext/png}"
+        ;;
+    "webp")
+        OUTPUT_NAME="${OUTPUT_NAME//%ext/webp}"
+        ;;
+    *)
+        OUTPUT_NAME="${OUTPUT_NAME//%ext/jpg}"
+        OUTPUT_FORMAT="jpeg"
+        ;;
     esac
 
     OUTPUT_FILE="$CURRENT_DIR/$OUTPUT_NAME"
@@ -602,15 +673,15 @@ IMAGE_WEBP_ALPHA_QUALITY=\"${WEBP_ALPHA_QUALITY:-$DEFAULT_WEBP_ALPHA_QUALITY}\""
 
     if [ "$MAX_RESOLUTION" != "0" ] && [ -n "$MAX_RESOLUTION" ]; then
         case "$RESIZE_MODE" in
-            "fill")
-                FILTER_GRAPH="scale=$MAX_RESOLUTION:force_original_aspect_ratio=increase:flags=$SCALE_FLAGS,crop=$MAX_RESOLUTION"
-                ;;
-            "stretch")
-                FILTER_GRAPH="scale=$MAX_RESOLUTION:flags=$SCALE_FLAGS"
-                ;;
-            *)
-                FILTER_GRAPH="scale=$MAX_RESOLUTION:force_original_aspect_ratio=decrease:flags=$SCALE_FLAGS"
-                ;;
+        "fill")
+            FILTER_GRAPH="scale=$MAX_RESOLUTION:force_original_aspect_ratio=increase:flags=$SCALE_FLAGS,crop=$MAX_RESOLUTION"
+            ;;
+        "stretch")
+            FILTER_GRAPH="scale=$MAX_RESOLUTION:flags=$SCALE_FLAGS"
+            ;;
+        *)
+            FILTER_GRAPH="scale=$MAX_RESOLUTION:force_original_aspect_ratio=decrease:flags=$SCALE_FLAGS"
+            ;;
         esac
     fi
 
@@ -633,38 +704,45 @@ IMAGE_WEBP_ALPHA_QUALITY=\"${WEBP_ALPHA_QUALITY:-$DEFAULT_WEBP_ALPHA_QUALITY}\""
     fi
 
     case $OUTPUT_FORMAT in
-        "jpeg"|"jpg")
-            FFMPEG_ARGS+=("-q:v" "${JPEG_QUALITY:-$DEFAULT_JPEG_QUALITY}")
-            if [ "${JPEG_PROGRESSIVE:-0}" = "1" ]; then
-                FFMPEG_ARGS+=("-progressive" "1")
-            fi
-            if [ "${JPEG_OPTIMIZE:-0}" = "1" ]; then
-                FFMPEG_ARGS+=("-optimize" "1")
-            fi
-            case "${JPEG_SUBSAMPLING:-420}" in
-                "444") FFMPEG_ARGS+=("-pix_fmt" "yuv444p") ;;
-                "422") FFMPEG_ARGS+=("-pix_fmt" "yuv422p") ;;
-                *) FFMPEG_ARGS+=("-pix_fmt" "yuv420p") ;;
-            esac
-            ;;
-        "png")
-            FFMPEG_ARGS+=("-compression_level" "${PNG_COMPRESSION:-$DEFAULT_PNG_COMPRESSION}" "-pred" "${PNG_PRED:-$DEFAULT_PNG_PRED}")
-            ;;
-        "webp")
-            FFMPEG_ARGS+=("-c:v" "libwebp" "-quality" "${WEBP_QUALITY:-$DEFAULT_WEBP_QUALITY}" "-lossless" "${WEBP_LOSSLESS:-$DEFAULT_WEBP_LOSSLESS}" "-compression_level" "${WEBP_COMPRESSION_LEVEL:-$DEFAULT_WEBP_COMPRESSION_LEVEL}" "-preset" "${WEBP_PRESET:-$DEFAULT_WEBP_PRESET}" "-alpha_quality" "${WEBP_ALPHA_QUALITY:-$DEFAULT_WEBP_ALPHA_QUALITY}")
-            ;;
+    "jpeg" | "jpg")
+        FFMPEG_ARGS+=("-q:v" "${JPEG_QUALITY:-$DEFAULT_JPEG_QUALITY}")
+        if [ "${JPEG_PROGRESSIVE:-0}" = "1" ]; then
+            FFMPEG_ARGS+=("-progressive" "1")
+        fi
+        if [ "${JPEG_OPTIMIZE:-0}" = "1" ]; then
+            FFMPEG_ARGS+=("-optimize" "1")
+        fi
+        case "${JPEG_SUBSAMPLING:-420}" in
+        "444") FFMPEG_ARGS+=("-pix_fmt" "yuv444p") ;;
+        "422") FFMPEG_ARGS+=("-pix_fmt" "yuv422p") ;;
+        *) FFMPEG_ARGS+=("-pix_fmt" "yuv420p") ;;
+        esac
+        ;;
+    "png")
+        FFMPEG_ARGS+=("-compression_level" "${PNG_COMPRESSION:-$DEFAULT_PNG_COMPRESSION}" "-pred" "${PNG_PRED:-$DEFAULT_PNG_PRED}")
+        ;;
+    "webp")
+        FFMPEG_ARGS+=("-c:v" "libwebp" "-quality" "${WEBP_QUALITY:-$DEFAULT_WEBP_QUALITY}" "-lossless" "${WEBP_LOSSLESS:-$DEFAULT_WEBP_LOSSLESS}" "-compression_level" "${WEBP_COMPRESSION_LEVEL:-$DEFAULT_WEBP_COMPRESSION_LEVEL}" "-preset" "${WEBP_PRESET:-$DEFAULT_WEBP_PRESET}" "-alpha_quality" "${WEBP_ALPHA_QUALITY:-$DEFAULT_WEBP_ALPHA_QUALITY}")
+        ;;
     esac
 
     FFMPEG_ARGS+=("$OUTPUT_FILE")
 
-    { ffmpeg "${FFMPEG_ARGS[@]}" 2>&1 ; } | dialog --progressbox 30 100
+    run_ffmpeg_with_progressbox "Reduce Image and Share" "${FFMPEG_ARGS[@]}"
+    FFMPEG_STATUS=$?
+
+    if [ "$FFMPEG_STATUS" -ne 0 ]; then
+        return
+    fi
 
     if [ -f "$OUTPUT_FILE" ]; then
         NEW_SIZE=$(du -h "$OUTPUT_FILE" | cut -f1)
-        termux-share -a send "$OUTPUT_FILE"
-        dialog --msgbox "Image reduced and shared successfully!\nOriginal: $ORIGINAL_SIZE -> New: $NEW_SIZE\nOutput: $OUTPUT_NAME" 10 60
-    else
-        dialog --msgbox "Error: Image conversion failed!" 8 40
+        if [ "$OUTPUT_ACTION" = "share" ]; then
+            termux-share -a send "$OUTPUT_FILE"
+            prompt_remove_after_share "$OUTPUT_FILE" "Image reduced and shared successfully!\nOriginal: $ORIGINAL_SIZE -> New: $NEW_SIZE\nOutput: $OUTPUT_NAME"
+        else
+            dialog --msgbox "Image reduced and saved successfully!\nOriginal: $ORIGINAL_SIZE -> New: $NEW_SIZE\nOutput: $OUTPUT_NAME" 10 60
+        fi
     fi
 }
 
@@ -679,8 +757,8 @@ copy_to_current() {
     MOVE_STATE="off"
 
     case "$DEFAULT_COPY_ACTION" in
-        "move") MOVE_STATE="on" ;;
-        *) COPY_STATE="on" ;;
+    "move") MOVE_STATE="on" ;;
+    *) COPY_STATE="on" ;;
     esac
 
     while true; do
@@ -718,7 +796,7 @@ copy_to_current() {
     if [ "$SAVE_CONFIG" = "1" ]; then
         save_config "COPY" "COPY_ACTION=\"$ACTION\""
     fi
-    
+
     TARGET_FILE="$CURRENT_DIR/$NEW_FILENAME"
 
     if [ -f "$TARGET_FILE" ]; then
@@ -741,13 +819,13 @@ copy_to_current() {
             echo "Copying file..."
         fi
         echo "XXX"
-        
+
         if [ "$ACTION" = "move" ]; then
             mv "$INPUT_FILE" "$TARGET_FILE"
         else
             cp "$INPUT_FILE" "$TARGET_FILE"
         fi
-        
+
         echo "XXX"
         echo "100"
         echo "Done!"
@@ -786,18 +864,34 @@ while true; do
     CHOICE="$DIALOG_RESULT"
 
     case $CHOICE in
-        1)
-            compress_and_share
-            ;;
-        2)
-            reduce_and_share
-            ;;
-        3)
-            copy_to_current
-            ;;
-        *)
-            clear
-            exit 0
-            ;;
+    1)
+        ask_output_action "Compress and Share"
+        ACTION_STATUS=$?
+        if [ "$ACTION_STATUS" -eq 10 ]; then
+            continue
+        fi
+        if [ "$ACTION_STATUS" -ne 0 ]; then
+            continue
+        fi
+        compress_and_share
+        ;;
+    2)
+        ask_output_action "Reduce and Share"
+        ACTION_STATUS=$?
+        if [ "$ACTION_STATUS" -eq 10 ]; then
+            continue
+        fi
+        if [ "$ACTION_STATUS" -ne 0 ]; then
+            continue
+        fi
+        reduce_and_share
+        ;;
+    3)
+        copy_to_current
+        ;;
+    *)
+        clear
+        exit 0
+        ;;
     esac
 done
