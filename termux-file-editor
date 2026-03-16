@@ -166,7 +166,7 @@ reduce_video_and_share() {
 
     if ! FORM_DATA=$(dialog --clear --backtitle "Reduce Video and Share" \
         --title "FFmpeg Video Reduction Options" \
-    --form "Configure video reduction settings:\nOriginal size: $ORIGINAL_SIZE\nOriginal resolution: $ORIGINAL_RESOLUTION" 22 80 9 \
+    --form "Configure video reduction settings:\nOriginal size: $ORIGINAL_SIZE\nOriginal resolution: $ORIGINAL_RESOLUTION" 32 80 9 \
     "Max resolution (e.g., 1280x720):" 1 1 "$DEFAULT_MAX_RESOLUTION" 1 35 20 0 \
     "Target file size (MB, 0=auto):" 2 1 "$DEFAULT_TARGET_SIZE" 2 35 10 0 \
     "Max FPS (0=keep original):" 3 1 "$DEFAULT_MAX_FPS" 3 35 10 0 \
@@ -175,7 +175,7 @@ reduce_video_and_share() {
     "CRF quality (18-32, lower=better):" 6 1 "$DEFAULT_CRF_QUALITY" 6 35 10 0 \
     "Output filename:" 7 1 "$DEFAULT_OUTPUT_TEMPLATE" 7 35 30 0 \
     "Start time (HH:MM:SS, optional):" 8 1 "$DEFAULT_START_TIME" 8 35 15 0 \
-    "Custom FFmpeg args:" 9 1 "$DEFAULT_CUSTOM_FFMPEG_ARGS" 9 20 40 0 \
+    "Custom FFmpeg args:" 9 1 "$DEFAULT_CUSTOM_FFMPEG_ARGS" 21 20 80 0 \
         2>&1 >/dev/tty); then
         return
     fi
@@ -396,17 +396,34 @@ copy_to_current() {
         return
     fi
 
-    if ! FORM_DATA=$(dialog --clear --backtitle "Copy to Current Folder" \
+    DEFAULT_COPY_ACTION="${COPY_ACTION:-copy}"
+    COPY_STATE="off"
+    MOVE_STATE="off"
+
+    case "$DEFAULT_COPY_ACTION" in
+        "move") MOVE_STATE="on" ;;
+        *) COPY_STATE="on" ;;
+    esac
+
+    if ! NEW_FILENAME=$(dialog --clear --backtitle "Copy to Current Folder" \
         --title "Copy Options" \
-        --form "Configure copy settings:" 12 60 2 \
-        "New filename:" 1 1 "$BASENAME" 1 15 40 0 \
-        "Action (copy/move):" 2 1 "copy" 2 20 10 0 \
+        --inputbox "Enter target filename:" 10 60 "$BASENAME" \
         2>&1 >/dev/tty); then
         return
     fi
 
-    NEW_FILENAME=$(echo "$FORM_DATA" | sed -n '1p')
-    ACTION=$(echo "$FORM_DATA" | sed -n '2p')
+    if ! ACTION=$(dialog --clear --backtitle "Copy to Current Folder" \
+        --title "Select Action" \
+        --radiolist "Choose copy behavior:" 12 60 2 \
+        "copy" "Copy file to current folder" "$COPY_STATE" \
+        "move" "Move file to current folder" "$MOVE_STATE" \
+        2>&1 >/dev/tty); then
+        return
+    fi
+
+    if [ "$SAVE_CONFIG" = "1" ]; then
+        save_config "COPY" "COPY_ACTION=\"$ACTION\""
+    fi
     
     TARGET_FILE="$CURRENT_DIR/$NEW_FILENAME"
 
@@ -450,26 +467,31 @@ copy_to_current() {
 }
 
 load_config
-CHOICE=$(dialog --clear --backtitle "uwu" \
-    --title "Main Menu" \
-    --menu "What would you like to do with '$BASENAME'?" 15 60 3 \
-    1 "Compress to archive and share" \
-    2 "Reduce size/resolution (FFmpeg) and share" \
-    3 "Copy to current folder" \
-    2>&1 >/dev/tty)
-
-case $CHOICE in
-    1)
-        compress_and_share
-        ;;
-    2)
-        reduce_and_share
-        ;;
-    3)
-        copy_to_current
-        ;;
-    *)
+while true; do
+    if ! CHOICE=$(dialog --clear --backtitle "uwu" \
+        --title "Main Menu" \
+        --menu "What would you like to do with '$BASENAME'?" 15 60 3 \
+        1 "Compress to archive and share" \
+        2 "Reduce size/resolution (FFmpeg) and share" \
+        3 "Copy to current folder" \
+        2>&1 >/dev/tty); then
         clear
         exit 0
-        ;;
-esac
+    fi
+
+    case $CHOICE in
+        1)
+            compress_and_share
+            ;;
+        2)
+            reduce_and_share
+            ;;
+        3)
+            copy_to_current
+            ;;
+        *)
+            clear
+            exit 0
+            ;;
+    esac
+done
