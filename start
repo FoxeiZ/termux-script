@@ -21,8 +21,9 @@ name_filter="$1"
 packages=()
 
 log_info "querying installed packages"
-while IFS='=' read -r _ package_name; do
-    if [ -n "$package_name" ]; then
+while IFS= read -r line; do
+    package_name="${line##*=}"
+    if [ -n "$package_name" ] && [ "$package_name" != "$line" ]; then
         packages+=("$package_name")
     fi
 done < <(pm list packages -f "$name_filter" 2>/dev/null)
