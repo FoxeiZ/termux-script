@@ -34,7 +34,7 @@ while IFS= read -r line; do
     if [ -n "$package_name" ]; then
         packages+=("$package_name")
     fi
-done < <(cmd package list packages 2>/dev/null | grep -F -i -- "$name_filter")
+done < <(cmd package list packages -e 2>/dev/null | grep -F -i -- "$name_filter")
 
 count="${#packages[@]}"
 log_info "found ${count} matching package(s)"
