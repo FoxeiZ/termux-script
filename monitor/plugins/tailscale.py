@@ -1,58 +1,179 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import re
 import signal
-import subprocess
-import time
 from pathlib import Path
-from queue import Empty
 from typing import TYPE_CHECKING
 
-import requests
+import httpx
 from lib.plugin import Plugin
 
 if TYPE_CHECKING:
     from logging import Logger
 
-    from lib.manager import PluginManager
-    from lib.plugin.metadata import PluginMetadata
+    from lib.types import PluginMetadata
+    from lib.worker import PluginManager
 
 
-class BasePopen(subprocess.Popen[bytes]):
-    def cleanup(self):
-        with contextlib.suppress(Exception):
-            if self.stdout is not None:
-                self.stdout.close()
-
-        with contextlib.suppress(Exception):
-            if self.stdin is not None:
-                self.stdin.close()
-
-        with contextlib.suppress(Exception):
-            if self.stderr is not None:
-                self.stderr.close()
-
-
-class Tailscaled(BasePopen):
-    def __init__(self, logger: Logger, home_dir: Path | str, auth_key: str = ""):
+class Tailscaled:
+    def __init__(
+        self,
+        logger: Logger,
+        home_dir: Path | str,
+        auth_key: str = "",
+        upgrade_check: bool = False,
+    ):
         self.logger = logger
-        self.logger.debug("tailscaled process started")
-        self.logger.debug("initializing Tailscaled with home_dir: %s", home_dir)
-
         self.home_dir = Path(home_dir).absolute()
         self.auth_key = auth_key
+        self.upgrade_check = upgrade_check
         self.stopped = False
+        self.process: asyncio.subprocess.Process | None = None
+        self.connected_event = asyncio.Event()
 
         self.logging_file = self.home_dir / "tailscaled.log"
         self.tailscaled_bin = self.home_dir / "tailscaled"
         self.tailscale_bin = self.home_dir / "tailscale"
 
+    def cleanup(self):
+        if self.process:
+            with contextlib.suppress(Exception):
+                if self.process.stdin:
+                    self.process.stdin.close()
+
+    async def _get_latest_version(self) -> str:
+        self.logger.debug("fetching tailscale version from https://pkgs.tailscale.com/stable")
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get("https://pkgs.tailscale.com/stable")
+            response.raise_for_status()
+
+        version_match = re.search(r"<option[^>]*>([\d.]+)", response.text)
+        if not version_match:
+            raise RuntimeError("could not find version number in response")
+
+        version = version_match.group(1)
+        self.logger.debug("found tailscale version: %s", version)
+        return version
+
+    @staticmethod
+    def _parse_version(version: str) -> tuple[int, ...]:
+        parts = version.split(".")
+        return tuple(int(part) for part in parts if part.isdigit())
+
+    async def _get_installed_version(self) -> str | None:
+        self.logger.debug("checking installed tailscale version")
+        proc = await asyncio.create_subprocess_exec(
+            self.tailscale_bin.as_posix(),
+            "version",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=self.home_dir,
+        )
+        stdout, _ = await proc.communicate()
+
+        if proc.returncode != 0:
+            self.logger.warning("failed to read installed tailscale version")
+            return None
+
+        match = re.search(r"([\d]+\.[\d]+\.[\d]+)", stdout.decode(errors="ignore"))
+        if not match:
+            self.logger.warning("could not parse installed tailscale version")
+            return None
+
+        version = match.group(1)
+        self.logger.debug("installed tailscale version: %s", version)
+        return version
+
+    async def check_for_update(self) -> bool:
+        try:
+            latest_version = await self._get_latest_version()
+            installed_version = await self._get_installed_version()
+
+            if installed_version is None:
+                self.logger.info("installed tailscale version is unknown, running upgrade")
+                return True
+
+            has_update = self._parse_version(latest_version) > self._parse_version(installed_version)
+            if has_update:
+                self.logger.info("tailscale update available: %s -> %s", installed_version, latest_version)
+            else:
+                self.logger.debug("tailscale is up to date: %s", installed_version)
+            return has_update
+        except Exception as e:
+            self.logger.warning("tailscale update check failed: %s", e)
+            return False
+
+    async def upgrade(self) -> bool:
+        if not await self.check_for_update():
+            self.logger.debug("tailscale upgrade skipped")
+            return False
+
+        try:
+            await self._download_tailscale_binaries()
+            self.logger.info("tailscale binaries upgraded successfully")
+            return True
+        except Exception as e:
+            self.logger.warning("tailscale upgrade failed: %s", e)
+            return False
+
+    async def _download_tailscale_binaries(self):
+        """download and extract tailscale binaries"""
+        try:
+            version = await self._get_latest_version()
+
+            download_url = f"https://pkgs.tailscale.com/stable/tailscale_{version}_arm64.tgz"
+            self.logger.debug("downloading from: %s", download_url)
+
+            tar_file = self.home_dir / f"tailscale_{version}_arm64.tgz"
+
+            self.home_dir.mkdir(parents=True, exist_ok=True)
+
+            async with httpx.AsyncClient(timeout=60.0) as client, client.stream("GET", download_url) as r:
+                r.raise_for_status()
+                with tar_file.open("wb") as f:
+                    async for chunk in r.aiter_bytes(chunk_size=65536):
+                        f.write(chunk)
+
+            self.logger.debug("download completed, extracting to: %s", self.home_dir)
+
+            proc = await asyncio.create_subprocess_exec(
+                "tar",
+                "xfz",
+                str(tar_file),
+                "-C",
+                str(self.home_dir),
+                "--strip-components=1",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
+
+            if proc.returncode != 0:
+                self.logger.error("tar extraction failed: %s", stderr.decode(errors="ignore"))
+                raise Exception(f"failed to extract tailscale: {stderr.decode(errors='ignore')}")
+
+            self.logger.debug("extraction completed successfully")
+            tar_file.unlink()
+            self.logger.debug("cleaned up downloaded tar file")
+
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            self.logger.error("network error during download: %s", e)
+            raise Exception(f"failed to download tailscale: {e}") from e
+        except Exception as e:
+            self.logger.error("unexpected error during download: %s", e)
+            raise
+
+    async def start(self) -> None:
+        self.logger.debug("tailscaled process started")
+        self.logger.debug("initializing Tailscaled with home_dir: %s", self.home_dir)
+
         if not self.tailscaled_bin.exists() or not self.tailscale_bin.exists():
             self.logger.debug("missing required files, attempting download")
-            self._download_tailscale_binaries()
+            await self._download_tailscale_binaries()
 
-        # check again after download attempt
         missing_files: list[str] = []
         if not self.tailscaled_bin.exists():
             missing_files.append(str(self.tailscaled_bin))
@@ -61,6 +182,11 @@ class Tailscaled(BasePopen):
         if missing_files:
             self.logger.error("missing required files: %s", ", ".join(missing_files))
             raise FileNotFoundError(f"missing required files: {', '.join(missing_files)}")
+
+        if self.upgrade_check:
+            self.logger.debug("tailscale upgrade check is enabled")
+            with contextlib.suppress(Exception):
+                await self.upgrade()
 
         state_dir = self.home_dir / "state"
         if not state_dir.exists():
@@ -75,190 +201,116 @@ class Tailscaled(BasePopen):
             "--outbound-http-proxy-listen=localhost:1055",
         ]
 
-        super().__init__(
-            args,
+        self.process = await asyncio.create_subprocess_exec(
+            *args,
             start_new_session=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            bufsize=1,
-            universal_newlines=True,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
             cwd=self.home_dir,
         )
         self.logger.debug("tailscaled initialized successfully")
 
-    def _download_tailscale_binaries(self):
-        """download and extract tailscale binaries"""
-        try:
-            self.logger.debug("fetching tailscale version from https://pkgs.tailscale.com/stable")
-
-            response = requests.get("https://pkgs.tailscale.com/stable", timeout=30)
-            response.raise_for_status()
-
-            version_match = re.search(r"<option[^>]*>([\d.]+)", response.text)
-            if not version_match:
-                raise Exception("could not find version number in response")
-
-            version = version_match.group(1)
-            self.logger.debug("found tailscale version: %s", version)
-
-            download_url = f"https://pkgs.tailscale.com/stable/tailscale_{version}_arm64.tgz"
-            self.logger.debug("downloading from: %s", download_url)
-
-            tar_file = self.home_dir / f"tailscale_{version}_arm64.tgz"
-
-            self.home_dir.mkdir(parents=True, exist_ok=True)
-            with requests.get(download_url, stream=True, timeout=60) as r:
-                r.raise_for_status()
-                with Path(tar_file).open("wb") as f:
-                    f.writelines(r.iter_content(chunk_size=8192))
-
-            self.logger.debug("download completed, extracting to: %s", self.home_dir)
-
-            subprocess.run(
-                [
-                    "tar",
-                    "xfz",
-                    str(tar_file),
-                    "-C",
-                    str(self.home_dir),
-                    "--strip-components=1",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            self.logger.debug("extraction completed successfully")
-            tar_file.unlink()
-            self.logger.debug("cleaned up downloaded tar file")
-
-        except requests.RequestException as e:
-            self.logger.error("network error during download: %s", e)
-            raise Exception(f"failed to download tailscale: {e}") from e
-
-        except subprocess.CalledProcessError as e:
-            self.logger.error("tar extraction failed: %s", e.stderr)
-            raise Exception(f"failed to extract tailscale: {e}") from e
-
-        except Exception as e:
-            self.logger.error("unexpected error during download: %s", e)
-            raise
-
-    def stdout_reader(self):
-        self.logger.debug("starting output reader thread")
-        stdout = self.stdout  # cache reference
-        if stdout is None:
+    async def stdout_reader(self):
+        self.logger.debug("starting output reader task")
+        if not self.process or not self.process.stdout:
             return
 
-        while not self.stopped:
+        while not self.stopped and self.process.returncode is None:
             try:
-                line = stdout.readline()
-            except ValueError:  # stdout closed
-                break
-
-            if not line:
-                break
-
-            line_str = line.decode("utf-8", errors="surrogateescape") if isinstance(line, bytes) else line
-            line_str = line_str.strip()
-            self.logger.debug(line_str)
-
-        self.logger.debug("output reader thread stopped")
-
-    def bring_up_connection(self):
-        self.logger.debug("bringing up connection")
-        sp = subprocess.run(
-            [
-                self.tailscale_bin,
-                "up",
-                "--authkey",
-                self.auth_key,
-                "--advertise-exit-node",
-            ],
-            check=True,
-            cwd=self.home_dir,
-        )
-        if sp.returncode != 0:
-            raise Exception("failed to bring up connection")
-
-    def wait_for_connection(self, timeout: int = 60):
-        self.logger.debug("waiting for connection with timeout: %d seconds", timeout)
-        # pattern = re.compile(r"magicsock.*connected")
-        start_time = time.time()
-
-        stdout = self.stdout
-        if stdout is None:
-            raise Exception("stdout is None")
-
-        while time.time() - start_time < timeout:
-            try:
-                try:
-                    line = stdout.readline()
-                except ValueError:  # stdout closed
+                line_bytes = await self.process.stdout.readline()
+                if not line_bytes:
                     break
 
-                if not line.strip():
-                    time.sleep(0.1)
-                    continue
+                line_str = line_bytes.decode("utf-8", errors="surrogateescape").strip()
+                if line_str:
+                    self.logger.debug(line_str)
 
-                if "bootstrap dial succeeded" in (
-                    line.decode("utf-8", errors="surrogateescape") if isinstance(line, bytes) else line
-                ):
-                    self.logger.debug("connection established")
-                    return True
-                else:
-                    time.sleep(0.1)
-                    self.logger.debug(line.strip())
-            except Empty:
-                if self.poll() is not None:
-                    raise Exception("tailscaled stopped unexpectedly") from None
-                continue
+                    if "bootstrap dial succeeded" in line_str:
+                        self.connected_event.set()
+            except asyncio.CancelledError:
+                self.logger.debug("output reader task cancelled")
+                break
+            except Exception:
+                break
 
-        return False
+        self.logger.debug("output reader task stopped")
 
-    def _graceful_stop(self, timeout: int = 15):
-        self.logger.debug("attempting graceful stop")
-        self.send_signal(signal.SIGINT)
+    async def bring_up_connection(self):
+        self.logger.debug("bringing up connection")
+        proc = await asyncio.create_subprocess_exec(
+            self.tailscale_bin.as_posix(),
+            "up",
+            "--authkey",
+            self.auth_key,
+            "--advertise-exit-node",
+            cwd=self.home_dir,
+        )
+
         try:
-            self.wait(timeout=timeout)
+            await asyncio.wait_for(proc.wait(), timeout=30.0)
+        except TimeoutError:
+            proc.kill()
+            raise
+
+        if proc.returncode != 0:
+            raise Exception(f"failed to bring up connection, code: {proc.returncode}")
+
+    async def wait_for_connection(self, timeout: int = 60) -> bool:
+        """Wait for the stdout_reader to find the success log."""
+        self.logger.debug("waiting for connection with timeout: %d seconds", timeout)
+        try:
+            await asyncio.wait_for(self.connected_event.wait(), timeout=timeout)
             return True
-        except subprocess.TimeoutExpired:
+        except TimeoutError:
+            return False
+
+    async def __call_check(self, *args: str) -> bool:
+        self.logger.debug("calling command: %s", " ".join(args))
+        proc = await asyncio.create_subprocess_exec(*args)
+        await proc.wait()
+        return proc.returncode == 0
+
+    async def _graceful_stop(self, timeout: int = 15) -> bool:
+        if not self.process:
+            return False
+
+        self.logger.debug("attempting graceful stop")
+        self.process.send_signal(signal.SIGINT)
+        try:
+            await asyncio.wait_for(self.process.wait(), timeout=timeout)
+            return True
+        except TimeoutError:
             self.logger.debug("graceful stop timed out")
             return False
 
-    def __call_check(self, *args: str) -> bool:
-        self.logger.debug("calling command: %s", " ".join(args))
-        process = subprocess.run(args, check=False)
-        return process.returncode == 0
-
-    def _pkill_stop(self):
+    async def _pkill_stop(self) -> bool:
         self.logger.debug("attempting pkill stop")
-        return self.__call_check(
+        return await self.__call_check(
             "pkill",
             "-f",
             "tailscaled.*userspace-networking.*",
         )
 
-    def _kill_stop(self):
+    async def _kill_stop(self) -> bool:
+        if not self.process:
+            return False
         self.logger.debug("attempting calling kill")
-        return self.__call_check("kill", str(self.pid))
+        return await self.__call_check("kill", str(self.process.pid))
 
-    def stop(self, timeout: int = 15):
-        if self.stopped:
+    async def stop(self, timeout: int = 15):
+        if self.stopped or not self.process:
             return
 
         self.logger.debug("stopping Tailscaled process with timeout: %d seconds", timeout)
 
         for cb in [self._graceful_stop, self._pkill_stop, self._kill_stop]:
             try:
-                if cb():
-                    # run poll check first
-                    # if still running, wait for timeout
-                    # then check again
-                    if self.poll() is None:
-                        with contextlib.suppress(subprocess.TimeoutExpired):
-                            self.wait(timeout=timeout)
+                if await cb():
+                    if self.process.returncode is None:
+                        with contextlib.suppress(asyncio.TimeoutError):
+                            await asyncio.wait_for(self.process.wait(), timeout=timeout)
 
-                    if self.poll() is not None:
+                    if self.process.returncode is not None:
                         self.logger.debug("stop method %s succeeded", cb.__name__)
                         break
                     else:
@@ -266,7 +318,6 @@ class Tailscaled(BasePopen):
 
             except PermissionError:
                 pass
-
             except Exception as e:
                 self.logger.debug("stop method %s raised exception: %s", cb.__name__, e)
                 continue
@@ -278,42 +329,48 @@ class Tailscaled(BasePopen):
         self.logger.debug("tailscaled process stopped")
 
 
-class Socatd(BasePopen):
+class Socatd:
     def __init__(self, logger: Logger):
         self.logger = logger
-
-        self.logger.debug("initializing Socatd")
         self.started = False
         self.stopped = False
+        self.process: asyncio.subprocess.Process | None = None
         self.logger.debug("socatd initialized successfully")
 
-    def start(self):
+    def cleanup(self):
+        if self.process:
+            with contextlib.suppress(Exception):
+                if self.process.stdin:
+                    self.process.stdin.close()
+
+    async def start(self):
         self.logger.debug("starting Socatd process")
-        self.args = [
+        args = [
             "socat",
             "TCP-LISTEN:0,reuseaddr,fork",
             "SOCKS5:127.0.0.1:,socksport=8055",
         ]
 
-        super().__init__(
-            self.args,
+        self.process = await asyncio.create_subprocess_exec(
+            *args,
             start_new_session=True,
         )
         self.started = True
         self.logger.debug("socatd process started")
 
-    def stop(self, timeout: int = 15):
-        if self.stopped or not self.started:
+    async def stop(self, timeout: int = 15):
+        if self.stopped or not self.started or not self.process:
             return
 
         self.logger.debug("stopping Socatd process with timeout: %d seconds", timeout)
 
-        if self.poll() is None:  # if running
-            self.send_signal(signal.SIGINT)
+        if self.process.returncode is None:  # if running
+            self.process.send_signal(signal.SIGINT)
             try:
-                self.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                self.kill()  # force kill if sigint failed
+                await asyncio.wait_for(self.process.wait(), timeout=timeout)
+            except TimeoutError:
+                self.process.kill()  # force kill if sigint failed
+                await self.process.wait()
 
         self.cleanup()
         self.stopped = True
@@ -331,36 +388,48 @@ class TailscaledPlugin(Plugin, requires_root=True):
 
         home_dir = metadata.kwargs.get("home_dir", "./tailscale_data")
         auth_key = metadata.kwargs.get("auth_key", "")
+        upgrade_check = metadata.kwargs.get("upgrade_check", False)
 
         self.logger.debug("initializing with home_dir: %s", home_dir)
-        self.tailscaled = Tailscaled(self.logger.getChild("tailscaled"), home_dir, auth_key)
+        self.tailscaled = Tailscaled(
+            self.logger.getChild("tailscaled"),
+            home_dir,
+            auth_key,
+            upgrade_check,
+        )
         self.socatd = Socatd(self.logger.getChild("socatd"))
         self.logger.debug("manager initialized successfully")
 
-    def start(self):
+    async def start(self):
         self.logger.debug("starting manager")
+        reader_task = None
         try:
-            if not self.tailscaled.wait_for_connection():
+            await self.tailscaled.start()
+
+            reader_task = asyncio.create_task(self.tailscaled.stdout_reader())
+            if not await self.tailscaled.wait_for_connection():
                 raise Exception("tailscaled failed to connect")
 
-            self.tailscaled.bring_up_connection()
-            self.socatd.start()
+            await self.tailscaled.bring_up_connection()
+            await self.socatd.start()
             self.logger.debug("manager started successfully")
 
-            # main loop start here
-            self.tailscaled.stdout_reader()
+            stop_task = asyncio.create_task(self._stop_event.wait())
+            _, pending = await asyncio.wait([reader_task, stop_task], return_when=asyncio.FIRST_COMPLETED)
+
+            for task in pending:
+                task.cancel()
+
+        except asyncio.CancelledError:
+            self.logger.info("tailscaled plugin task cancelled")
+            raise
         except Exception as e:
             self.logger.error("failed to start tailscaled plugin: %s", e)
-            self.stop()
             raise
-
-    def stop(self):
-        super().stop()
-        self.logger.debug("stopping manager")
-        # with contextlib.suppress(Exception):
-        #     self.socatd.cleanup()
-        # with contextlib.suppress(Exception):
-        #     self.tailscaled.cleanup()
-        self.socatd.stop()
-        self.tailscaled.stop()
-        self.logger.debug("manager stopped successfully")
+        finally:
+            self.logger.debug("executing teardown sequence")
+            if reader_task and not reader_task.done():
+                reader_task.cancel()
+            await self.socatd.stop()
+            await self.tailscaled.stop()
+            self.logger.debug("manager stopped successfully")

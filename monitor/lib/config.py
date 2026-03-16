@@ -9,7 +9,6 @@ if TYPE_CHECKING:
     from typing import Any, TypedDict
 
     class _ConfigT(TypedDict):
-        DISABLE_IPC: bool
         LOAD_TEST_PLUGINS: bool
         LOG_FUNCTION_CALL: bool
         LOG_LEVEL: str
@@ -19,6 +18,7 @@ if TYPE_CHECKING:
         RUN_SCRIPT_ONLY: bool
         SCRIPTS_USE_SCREEN: bool
         TAILSCALE_AUTH_KEY: str | None
+        TAILSCALE_UPGRADE_CHECK: bool
         WEBHOOK_URL: str | None
 
 
@@ -31,7 +31,6 @@ IS_TERMUX = (
 
 class ConfigLoader:
     _defaults: ClassVar[_ConfigT] = {
-        "DISABLE_IPC": False,
         "LOAD_TEST_PLUGINS": False,
         "LOG_FUNCTION_CALL": False,
         "LOG_LEVEL": "INFO",
@@ -41,6 +40,7 @@ class ConfigLoader:
         "RUN_SCRIPT_ONLY": False,
         "SCRIPTS_USE_SCREEN": False,
         "TAILSCALE_AUTH_KEY": None,
+        "TAILSCALE_UPGRADE_CHECK": False,
         "WEBHOOK_URL": None,
     }
 
@@ -110,6 +110,12 @@ class ConfigLoader:
             help="Tailscale authentication key",
         )
         parser.add_argument(
+            "--tailscale-upgrade-check",
+            dest="TAILSCALE_UPGRADE_CHECK",
+            action="store_true",
+            help="Check for a newer tailscale version and auto-upgrade local binaries",
+        )
+        parser.add_argument(
             "--scripts-use-screen",
             dest="SCRIPTS_USE_SCREEN",
             action="store_true",
@@ -120,12 +126,6 @@ class ConfigLoader:
             dest="LOAD_TEST_PLUGINS",
             action="store_true",
             help="Load test plugins for development purposes",
-        )
-        parser.add_argument(
-            "--disable-ipc",
-            dest="DISABLE_IPC",
-            action="store_true",
-            help="Disable inter-process communication (IPC)",
         )
 
         args, _ = parser.parse_known_args()
@@ -187,6 +187,10 @@ class ConfigLoader:
         return self._config.get("TAILSCALE_AUTH_KEY")
 
     @property
+    def tailscale_upgrade_check(self) -> bool:
+        return self._config.get("TAILSCALE_UPGRADE_CHECK", False)
+
+    @property
     def scripts_use_screen(self) -> bool:
         return self._config.get("SCRIPTS_USE_SCREEN", False)
 
@@ -197,10 +201,6 @@ class ConfigLoader:
     @property
     def load_test_plugins(self) -> bool:
         return self._config.get("LOAD_TEST_PLUGINS", False)
-
-    @property
-    def disable_ipc(self) -> bool:
-        return self._config.get("DISABLE_IPC", False)
 
 
 Config = ConfigLoader()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import signal
@@ -13,8 +14,8 @@ from lib.plugin.base import Plugin
 if TYPE_CHECKING:
     from logging import Logger
 
-    from lib.manager import PluginManager
-    from lib.plugin.metadata import PluginMetadata
+    from lib.types import PluginMetadata
+    from lib.worker import PluginManager
 
 
 class ScriptPlugin(Plugin, restart_on_failure=True):
@@ -22,7 +23,7 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
         script_path: str
         args: list[str]
         use_screen: bool
-        _process: subprocess.Popen[str] | None
+        _process: asyncio.subprocess.Process | None
 
     def __init__(
         self,
@@ -46,8 +47,6 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
     def _get_command(self) -> list[str]:
         cmd = [self.script_path, *self.args]
         if self.use_screen:
-            # -D -m: Start screen in detached mode, but don't fork.
-            # -S name: Session name
             return ["screen", "-D", "-m", "-S", self.name, *cmd]
         return cmd
 
@@ -71,46 +70,62 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
         candidate = Path.home() / ".screen"
         return candidate if candidate.is_dir() else None
 
-    def _list_matching_screen_sessions(self) -> list[str]:
+    async def _list_matching_screen_sessions(self) -> list[str]:
         try:
-            result = subprocess.run(["screen", "-ls"], capture_output=True, text=True, check=False)
+            proc = await asyncio.create_subprocess_exec(
+                "screen",
+                "-ls",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            result_text = stdout.decode(errors="ignore")
         except Exception as exc:
             self.logger.debug("failed to list screen sessions: %s", exc)
             return []
 
         sessions: list[str] = []
-        for line in result.stdout.splitlines():
-            # session lines look like: "\t<pid>.<name>\t(<state>)"
+        for line in result_text.splitlines():
             m = re.match(r"^\s+(\d+\.(\S+))", line)
             if m and self._is_matching_screen_name(m.group(2)):
                 sessions.append(m.group(1))
         return sessions
 
-    def _cleanup_screen_state(self) -> None:
+    async def _cleanup_screen_state(self) -> None:
         if not self.use_screen or IS_WINDOWS:
             return
 
-        for session_id in self._list_matching_screen_sessions():
+        for session_id in await self._list_matching_screen_sessions():
             self.logger.debug("quitting stale screen session %s", session_id)
             try:
-                subprocess.run(
-                    ["screen", "-S", session_id, "-X", "quit"],
-                    capture_output=True,
-                    check=False,
+                proc = await asyncio.create_subprocess_exec(
+                    "screen",
+                    "-S",
+                    session_id,
+                    "-X",
+                    "quit",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
                 )
+                await proc.communicate()
             except Exception as exc:
                 self.logger.debug("failed to quit screen session %s: %s", session_id, exc)
 
-        # wipe dead sockets via screen, then forcibly remove any remaining ones
-        # (screen -wipe cannot remove sockets owned by a different uid)
         try:
-            subprocess.run(["screen", "-wipe"], capture_output=True, check=False)
+            proc = await asyncio.create_subprocess_exec(
+                "screen",
+                "-wipe",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
         except Exception as exc:
             self.logger.debug("failed to wipe screen sockets: %s", exc)
 
         screen_dir = self._get_screen_dir()
         if not screen_dir:
             return
+
         for socket_file in screen_dir.iterdir():
             pid_name = socket_file.name.split(".", 1)
             if len(pid_name) == 2 and self._is_matching_screen_name(pid_name[1]):
@@ -120,65 +135,72 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
                 except OSError as exc:
                     self.logger.debug("failed to remove screen socket %s: %s", socket_file.name, exc)
 
-    def start(self) -> None:
+    async def start(self) -> None:
         cmd = self._get_command()
         self.logger.info("starting script with command: %s", cmd)
 
         try:
-            self._cleanup_screen_state()
+            await self._cleanup_screen_state()
             popen_kwargs = self._get_popen_kwargs()
-            self._process = subprocess.Popen(cmd, cwd=self.cwd, **popen_kwargs)
-            while not self._stop_event.is_set():
-                if self._process.poll() is not None:
-                    break
-                self._stop_event.wait(0.5)
 
-            if self._stop_event.is_set():
+            self._process = await asyncio.create_subprocess_exec(cmd[0], *cmd[1:], cwd=self.cwd, **popen_kwargs)
+
+            process_task = asyncio.create_task(self._process.wait())
+            stop_task = asyncio.create_task(self._stop_event.wait())
+
+            done, pending = await asyncio.wait([process_task, stop_task], return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+
+            if stop_task in done:
                 self.logger.info("stopping %s process", self.name)
-                self._terminate_process()
+                await self._terminate_process()
             else:
-                self.logger.warning("script %s self-exited with code %s", self.name, self._process.returncode)
-                if self.restart_on_failure and self._process.returncode != 0:
+                returncode = self._process.returncode
+                self.logger.warning("script %s self-exited with code %s", self.name, returncode)
+                if self.restart_on_failure and returncode != 0:
                     raise RuntimeError(f"script {self.name} exited unexpectedly")
+
+        except asyncio.CancelledError:
+            self.logger.info("script plugin %s task was cancelled", self.name)
+            await self._terminate_process()
+            raise
         finally:
-            self._cleanup_screen_state()
+            await self._cleanup_screen_state()
             self._process = None
 
-    def _terminate_process(self) -> None:
+    async def _terminate_process(self) -> None:
         if not self._process:
             return
 
         if self.use_screen:
             self.logger.info("terminating screen session %s", self.name)
-            self._cleanup_screen_state()
+            await self._cleanup_screen_state()
 
         self._signal_process_group(signal.SIGTERM if not IS_WINDOWS else signal.CTRL_BREAK_EVENT)
         try:
-            self._process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
+            await asyncio.wait_for(self._process.wait(), timeout=5.0)
+        except TimeoutError:
             self.logger.warning("process did not exit, terminating")
             self._signal_process_group(signal.SIGTERM if not IS_WINDOWS else signal.CTRL_BREAK_EVENT)
             try:
-                self._process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
+                await asyncio.wait_for(self._process.wait(), timeout=2.0)
+            except TimeoutError:
                 self.logger.warning("process did not terminate, killing")
                 self._kill_process_group()
 
     def _signal_process_group(self, sig: int) -> None:
-        """send a signal to the process group."""
         if not self._process:
             return
         try:
             if IS_WINDOWS:
                 self._process.send_signal(sig)
             else:
-                # send signal to entire process group
                 os.killpg(self._process.pid, sig)
         except (ProcessLookupError, OSError) as exc:
             self.logger.debug("failed to send signal %s to process group: %s", sig, exc)
 
     def _kill_process_group(self) -> None:
-        """forcefully kill the process group."""
         if not self._process:
             return
         try:
@@ -193,3 +215,4 @@ class ScriptPlugin(Plugin, restart_on_failure=True):
         if self._process:
             self.logger.warning("force killing process %s and its children", self.name)
             self._kill_process_group()
+        super().force_stop()

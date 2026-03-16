@@ -4,28 +4,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, TypedDict
 
 if TYPE_CHECKING:
-    from .plugin.metadata import PluginMetadata
-
-
-class IPCCommand(StrEnum):
-    START = "start"
-    STOP = "stop"
-    RESTART = "restart"
-    LIST = "list"
-
-
-class IPCRequest(TypedDict):
-    cmd: str
-    plugin_name: str
-    args: list[Any]
-    kwargs: dict[str, Any]
-    force: bool
-
-
-class IPCResponse(TypedDict):
-    status: str
-    message: str
-    data: object | None
+    from . import PluginMetadata
 
 
 class PipeCommand(StrEnum):

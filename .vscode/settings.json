@@ -1,5 +1,4 @@
 {
-    "python.analysis.typeCheckingMode": "standard",
     "ruff.organizeImports": true,
     "editor.codeActionsOnSave": {
         "source.fixAll.ruff": "always",
@@ -25,4 +24,11 @@
     "[css]": {
         "editor.defaultFormatter": "esbenp.prettier-vscode"
     },
+    "files.watcherExclude": {
+        "**/.git/objects/**": true,
+        "**/.git/subtree-cache/**": true,
+        "**/.hg/store/**": true,
+        "**/.venv/**": true,
+    }
+    // "window.zoomLevel": -0.5,
 }

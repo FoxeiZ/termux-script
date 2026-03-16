@@ -1,359 +1,38 @@
 from __future__ import annotations
 
-import importlib
+import asyncio
+import contextlib
 import json
 import multiprocessing
 import os
-import socket
-import subprocess
-import threading
-import time
+import secrets
+import signal
 import traceback
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .config import DIR, IS_TERMUX, IS_WINDOWS, Config
+from .config import DIR, IS_TERMUX, Config
 from .errors import DuplicatePluginError
-from .ipc import recv_str, send_json
-from .ipc_types import IPCCommand, IPCRequest, IPCResponse, PipeCommand, PipeRequest, PipeResponse
+from .ipc import IPCServer
 from .plugin import Plugin
-from .plugin.metadata import PluginMetadata
 from .plugin.script import ScriptPlugin
-from .utils import configure_queue_logging, get_logger, log_function_call, setup_logging_queue
+from .types import IPCCommand, IPCCommandInternal, PipeCommand, PluginMetadata
+from .utils import get_logger, log_function_call, setup_logging_queue
+from .worker import PluginManager
 
-__all__ = ["Manager", "PluginManager"]
-
+__all__ = ["IS_TERMUX", "Manager"]
 
 if TYPE_CHECKING:
-    import logging
     from collections.abc import Mapping
     from multiprocessing.connection import PipeConnection
 
-
-class PluginManager(multiprocessing.Process):
-    def __init__(
-        self,
-        role: str,
-        pipe: PipeConnection,
-        log_queue: multiprocessing.Queue[logging.LogRecord],
-        max_retries: int,
-        retry_delay: int,
-        webhook_url: str | None,
-    ) -> None:
-        super().__init__(name=f"PluginManager-{role}")
-        self.role = role
-        if role not in ("root", "non-root"):
-            raise ValueError("role must be 'root' or 'non-root'")
-        self.pipe = pipe
-        self.log_queue = log_queue
-        self.max_retries = max_retries
-        self.retry_delay = retry_delay
-        self.webhook_url = webhook_url or ""
-        self.plugins: dict[str, Plugin] = {}
-        self.metadata_by_name: dict[str, PluginMetadata] = {}
-        self.logger: logging.Logger = get_logger(f"plugin_manager.{role}", handler=None)
-
-    def run(self) -> None:
-        configure_queue_logging(self.log_queue)
-        self._drop_privileges_if_needed()
-        self.logger.info("starting plugin manager process")
-        request_id = ""
-        try:
-            while True:
-                try:
-                    if not self.pipe.poll(0.5):
-                        continue
-
-                    request = self.pipe.recv()
-                    request_id = request["id"]
-                    response = self._handle_request(request)
-                    self.pipe.send(response)
-
-                    if request["cmd"] == PipeCommand.SHUTDOWN:
-                        self.logger.info("shutdown complete, exiting plugin manager process")
-                        return
-
-                except EOFError:
-                    self.logger.info("pipe closed")
-                    return
-
-                except KeyboardInterrupt:
-                    pass
-
-                except Exception as exc:
-                    error_response: PipeResponse = {
-                        "id": request_id or uuid.uuid4().hex,
-                        "status": "failed",
-                        "message": str(exc),
-                        "data": traceback.format_exc() if Config.debug else None,
-                    }
-                    try:
-                        self.pipe.send(error_response)
-                    except Exception:
-                        self.logger.info("pipe send failed, exiting")
-                        return
-        finally:
-            self._cleanup()
-
-    def _cleanup(self) -> None:
-        self.logger.debug("cleaning up %s plugin manager resources", self.role)
-        try:
-            self.pipe.close()
-        except Exception as exc:
-            self.logger.warning("failed to close pipe: %s", exc)
-
-        try:
-            self.log_queue.cancel_join_thread()
-        except Exception as exc:
-            self.logger.warning("failed to cancel log queue join thread: %s", exc)
-
-    def _drop_privileges_if_needed(self) -> None:
-        if IS_WINDOWS:
-            return
-
-        if os.getuid() != 0 or os.geteuid() != 0:
-            self.logger.info("not running as root, no need to drop privileges")
-            return
-
-        if self.role != "non-root":
-            return
-
-        if not IS_TERMUX:
-            self.logger.warning("non-root role requested but not running in Termux, cannot drop privileges")
-            return
-
-        self.logger.info("dropping root privileges for non-root role in Termux")
-        try:
-            p = subprocess.run(["dumpsys", "package", "com.termux"], check=True, capture_output=True)
-            for line in p.stdout.decode().splitlines():
-                s_line = line.strip()
-                if s_line.startswith("userId="):
-                    uid_str = s_line.split("=", 1)[1].strip()
-                    uid = int(uid_str)
-                    os.setgroups(
-                        [
-                            9997,  # everybody
-                            3003,  # inet
-                            uid,
-                        ]
-                    )
-                    os.setgid(uid)
-                    os.setuid(uid)
-                    self._fix_suroot_env_vars()
-                    self.logger.info("dropped privileges to uid/gid %d", uid)
-                    return
-        except Exception as exc:
-            self.logger.error("failed to drop privileges: %s", exc)
-
-    def _fix_suroot_env_vars(self) -> None:
-        env = os.environ.copy()
-        for key, value in list(env.items()):
-            if ".suroot" not in value:
-                continue
-
-            home_path = Path(value)
-            parts = home_path.parts
-            try:
-                suroot_index = parts.index(".suroot")
-            except ValueError:
-                continue
-            new_home = Path(*parts[:suroot_index], *parts[suroot_index + 1 :])
-            new_value = str(new_home)
-            os.environ[key] = new_value
-            self.logger.debug("fixed env var %s: %s -> %s", key, value, new_value)
-
-    def _handle_request(self, request: PipeRequest) -> PipeResponse:
-        cmd = request["cmd"]
-        request_id = request["id"]
-
-        if cmd == PipeCommand.LOAD:
-            metadata = request.get("metadata")
-            if not metadata:
-                return self._response(request_id, "failed", "metadata is required", None)
-            return self._pipe_load_plugin(metadata, request_id)
-
-        if cmd == PipeCommand.START:
-            return self._pipe_start_plugin(request)
-
-        if cmd == PipeCommand.STOP:
-            return self._pipe_stop_plugin(request)
-
-        if cmd == PipeCommand.RESTART:
-            return self._pipe_restart_plugin(request)
-
-        if cmd == PipeCommand.LIST:
-            return self._response(request_id, "ok", "ok", list(self.metadata_by_name.keys()))
-
-        if cmd == PipeCommand.SHUTDOWN:
-            self._stop_all()
-            return self._response(request_id, "ok", "ok", None)
-
-        return self._response(request_id, "failed", "unsupported command", None)
-
-    def _response(self, request_id: str, status: str, message: str, data: Any | None) -> PipeResponse:
-        return {
-            "id": request_id,
-            "status": status,
-            "message": message,
-            "data": data,
-        }
-
-    def load_plugin(self, metadata: PluginMetadata) -> None:
-        """load a plugin from metadata. raises exception on failure."""
-        if metadata.name in self.plugins:
-            self.logger.debug("plugin %s already loaded, skipping", metadata.name)
-            return
-
-        self.logger.info("loading plugin %s from %s", metadata.name, metadata.module_path)
-        try:
-            module = importlib.import_module(metadata.module_path)
-        except Exception as exc:
-            self.logger.error("failed to import module %s: %s", metadata.module_path, exc)
-            raise ImportError(f"import failed: {exc}") from exc
-
-        plugin_cls = getattr(module, metadata.class_name, None)
-        if not plugin_cls or not issubclass(plugin_cls, Plugin):
-            self.logger.error("invalid plugin class %s in module %s", metadata.class_name, metadata.module_path)
-            raise TypeError("invalid plugin class")
-
-        logger = get_logger(f"plugin.{metadata.name}", handler=None)
-        try:
-            plugin = plugin_cls(manager=self, metadata=metadata, logger=logger)
-        except Exception as exc:
-            self.logger.error("failed to initialize plugin %s: %s", metadata.name, exc)
-            raise RuntimeError(f"init failed: {exc}") from exc
-
-        self.plugins[metadata.name] = plugin
-        self.metadata_by_name[metadata.name] = metadata
-        self.logger.info("plugin %s loaded successfully", metadata.name)
-
-    def start_plugin(self, plugin_name: str, metadata: PluginMetadata | None = None) -> None:
-        """start a plugin by name. raises exception on failure."""
-        self.logger.info("starting plugin %s", plugin_name)
-        plugin = self.plugins.get(plugin_name)
-        if plugin is None and metadata:
-            self.load_plugin(metadata)
-            plugin = self.plugins.get(plugin_name)
-
-        if plugin is None:
-            self.logger.error("plugin %s not loaded", plugin_name)
-            raise ValueError("plugin not loaded")
-
-        if plugin.thread and plugin.thread.is_alive():
-            self.logger.debug("plugin %s already running, skipping", plugin_name)
-            return
-
-        thread = threading.Thread(target=plugin._start, daemon=False, name=f"Plugin-{plugin.name}")
-        plugin.thread = thread
-        thread.start()
-        self.logger.info("plugin %s started", plugin_name)
-
-    def stop_plugin(self, plugin_name: str) -> None:
-        """stop a plugin by name. raises exception on failure."""
-        self.logger.info("stopping plugin %s", plugin_name)
-        plugin = self.plugins.get(plugin_name)
-        if not plugin:
-            self.logger.error("plugin %s not loaded", plugin_name)
-            raise ValueError("plugin not loaded")
-
-        if not plugin.thread:
-            self.logger.debug("plugin %s has no thread, nothing to stop", plugin_name)
-            return
-
-        self.logger.debug("sending stop signal to plugin %s", plugin_name)
-        plugin.stop()
-        deadline = time.time() + 5.0
-        while plugin.thread.is_alive() and time.time() < deadline:
-            plugin.thread.join(timeout=0.1)
-            if not plugin.thread.is_alive():
-                break
-
-        if plugin.thread.is_alive():
-            self.logger.warning("plugin %s did not stop gracefully, forcing stop", plugin_name)
-            plugin.force_stop()
-            plugin.thread.join(timeout=1.0)
-
-        if plugin.thread.is_alive():
-            self.logger.error("plugin %s failed to stop after force stop, marking as zombie", plugin_name)
-            plugin._thread = None
-            raise RuntimeError("failed to stop")
-
-        plugin.thread = None
-        self.logger.info("plugin %s stopped", plugin_name)
-
-    def restart_plugin(self, plugin_name: str, metadata: PluginMetadata | None = None) -> None:
-        """restart a plugin by name. raises exception on failure."""
-        self.logger.info("restarting plugin %s", plugin_name)
-        self.stop_plugin(plugin_name)
-        self.start_plugin(plugin_name, metadata)
-        self.logger.info("plugin %s restarted", plugin_name)
-
-    def _pipe_load_plugin(self, metadata: PluginMetadata, request_id: str) -> PipeResponse:
-        """pipe wrapper for load_plugin."""
-        try:
-            self.load_plugin(metadata)
-            return self._response(request_id, "ok", "loaded", None)
-        except Exception as exc:
-            self.logger.error("pipe_load_plugin failed for %s: %s", metadata.name, exc)
-            return self._response(request_id, "failed", str(exc), traceback.format_exc() if Config.debug else None)
-
-    def _pipe_plugin_action(
-        self,
-        request: PipeRequest,
-        action: str,
-        handler: Any,
-        success_message: str,
-    ) -> PipeResponse:
-        """generic pipe wrapper for plugin actions (start/stop/restart)."""
-        request_id = request["id"]
-        plugin_name = request.get("plugin_name")
-        if not plugin_name:
-            self.logger.error("pipe_%s_plugin called without plugin_name", action)
-            return self._response(request_id, "failed", "plugin_name is required", None)
-
-        try:
-            # pass metadata only for actions that need it (start/restart)
-            if action in ("start", "restart"):
-                handler(plugin_name, request.get("metadata"))
-            else:
-                handler(plugin_name)
-            return self._response(request_id, "ok", success_message, None)
-        except Exception as exc:
-            self.logger.error("pipe_%s_plugin failed for %s: %s", action, plugin_name, exc)
-            return self._response(request_id, "failed", str(exc), traceback.format_exc() if Config.debug else None)
-
-    def _pipe_start_plugin(self, request: PipeRequest) -> PipeResponse:
-        """pipe wrapper for start_plugin."""
-        return self._pipe_plugin_action(request, "start", self.start_plugin, "started")
-
-    def _pipe_stop_plugin(self, request: PipeRequest) -> PipeResponse:
-        """pipe wrapper for stop_plugin."""
-        return self._pipe_plugin_action(request, "stop", self.stop_plugin, "stopped")
-
-    def _pipe_restart_plugin(self, request: PipeRequest) -> PipeResponse:
-        """pipe wrapper for restart_plugin."""
-        return self._pipe_plugin_action(request, "restart", self.restart_plugin, "restarted")
-
-    def _stop_all(self) -> None:
-        """stop all plugins."""
-        failed_plugins: list[str] = []
-        for name in list(self.plugins.keys()):
-            try:
-                self.logger.info("stopping plugin %s", name)
-                self.stop_plugin(name)
-            except Exception as exc:
-                self.logger.warning("failed to stop plugin %s: %s", name, exc)
-                failed_plugins.append(name)
-
-        for name in failed_plugins:
-            plugin = self.plugins.get(name)
-            if plugin and plugin.thread and plugin.thread.is_alive():
-                self.logger.warning("force marking plugin %s thread as stopped", name)
-                plugin.thread = None
+    from .types import IPCRequest, IPCRequestInternal, IPCRequestManager, IPCResponse, PipeRequest, PipeResponse
 
 
 class Manager:
+    __password__: str = secrets.token_hex(16)
+
     def __init__(
         self,
         max_retries: int = 3,
@@ -367,17 +46,19 @@ class Manager:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self._webhook_url = webhook_url
+        self._stopped = False
 
         self.ipc_port = ipc_port
-        self.ipc_thread: threading.Thread | None = None
-        self._ipc_stop_event: threading.Event | None = threading.Event()
+        self.ipc_server: IPCServer | None = None
 
         self.metadata_by_name: dict[str, PluginMetadata] = {}
         self.role_by_name: dict[str, str] = {}
         self.workers: dict[str, PluginManager] = {}
         self.pipes: dict[str, PipeConnection] = {}
-        self._pipe_locks: dict[str, threading.Lock] = {}
+        self._pipe_locks: dict[str, asyncio.Lock] = {}
         self._pending_pipe_responses: dict[str, dict[str, PipeResponse]] = {}
+        self._shutdown_event = asyncio.Event()
+
         self.mp_context = multiprocessing.get_context("spawn")
 
     @property
@@ -465,6 +146,8 @@ class Manager:
             max_retries=self.max_retries,
             retry_delay=self.retry_delay,
             webhook_url=self._webhook_url,
+            ipc_password=self.__password__,
+            ipc_port=self.ipc_port,
         )
         non_root_worker = PluginManager(
             role="non-root",
@@ -473,6 +156,8 @@ class Manager:
             max_retries=self.max_retries,
             retry_delay=self.retry_delay,
             webhook_url=self._webhook_url,
+            ipc_password=self.__password__,
+            ipc_port=self.ipc_port,
         )
 
         root_worker.start()
@@ -480,10 +165,16 @@ class Manager:
 
         self.workers = {"root": root_worker, "non-root": non_root_worker}
         self.pipes = {"root": root_parent, "non-root": non_root_parent}
-        self._pipe_locks = {"root": threading.Lock(), "non-root": threading.Lock()}
         self._pending_pipe_responses = {"root": {}, "non-root": {}}
 
-    def _load_metadata_to_workers(self) -> None:
+    def _pipe_lock(self, role: str) -> asyncio.Lock:
+        lock = self._pipe_locks.get(role)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._pipe_locks[role] = lock
+        return lock
+
+    async def _load_metadata_to_workers(self) -> None:
         for metadata in self.metadata_by_name.values():
             role = "root" if metadata.requires_root else "non-root"
             request: PipeRequest = {
@@ -495,7 +186,7 @@ class Manager:
                 "kwargs": {},
                 "force": False,
             }
-            response = self._send_pipe_request(role, request)
+            response = await self._send_pipe_request(role, request)
             if response["status"] != "ok":
                 self.logger.warning(
                     "failed to load plugin %s in %s worker: %s",
@@ -504,7 +195,7 @@ class Manager:
                     response.get("message", "unknown error"),
                 )
 
-    def _send_pipe_request(
+    async def _send_pipe_request(
         self,
         role: str,
         request: PipeRequest,
@@ -512,18 +203,19 @@ class Manager:
         check_worker_alive: bool = False,
     ) -> PipeResponse:
         pipe = self.pipes[role]
-        lock = self._pipe_locks.setdefault(role, threading.Lock())
+        lock = self._pipe_lock(role)
         pending_responses = self._pending_pipe_responses.setdefault(role, {})
         worker = self.workers.get(role) if check_worker_alive else None
-        with lock:
+
+        async with lock:
             try:
                 cached_response = pending_responses.pop(request["id"], None)
                 if cached_response is not None:
                     return cached_response
 
-                pipe.send(request)
-                start_time = time.time()
-                while time.time() - start_time < timeout:
+                await asyncio.to_thread(pipe.send, request)
+                start_time = asyncio.get_running_loop().time()
+                while asyncio.get_running_loop().time() - start_time < timeout:
                     if worker and not worker.is_alive():
                         return {
                             "id": request["id"],
@@ -532,8 +224,8 @@ class Manager:
                             "data": None,
                         }
 
-                    if pipe.poll(0.05):
-                        response = pipe.recv()
+                    if await asyncio.to_thread(pipe.poll, 0.05):
+                        response = await asyncio.to_thread(pipe.recv)
                         response_id = response.get("id")
                         if response_id == request["id"]:
                             return response
@@ -541,6 +233,8 @@ class Manager:
                             pending_responses[response_id] = response
                         else:
                             self.logger.debug("dropping malformed pipe response without id: %s", response)
+
+                    await asyncio.sleep(0)
             except (ValueError, OSError, EOFError, BrokenPipeError) as exc:
                 return {
                     "id": request["id"],
@@ -556,7 +250,7 @@ class Manager:
                 "data": None,
             }
 
-    def start_plugin(self, plugin_name: str) -> PipeResponse:
+    async def start_plugin(self, plugin_name: str) -> PipeResponse:
         self.logger.info("starting plugin %s", plugin_name)
         metadata = self.metadata_by_name.get(plugin_name)
         if not metadata:
@@ -572,9 +266,9 @@ class Manager:
             "kwargs": {},
             "force": False,
         }
-        return self._send_pipe_request(role, request)
+        return await self._send_pipe_request(role, request)
 
-    def stop_plugin(self, plugin_name: str) -> PipeResponse:
+    async def stop_plugin(self, plugin_name: str) -> PipeResponse:
         self.logger.info("stopping plugin %s", plugin_name)
         metadata = self.metadata_by_name.get(plugin_name)
         if not metadata:
@@ -589,9 +283,9 @@ class Manager:
             "kwargs": {},
             "force": False,
         }
-        return self._send_pipe_request(role, request)
+        return await self._send_pipe_request(role, request)
 
-    def restart_plugin(self, plugin_name: str) -> PipeResponse:
+    async def restart_plugin(self, plugin_name: str) -> PipeResponse:
         self.logger.info("restarting plugin %s", plugin_name)
         metadata = self.metadata_by_name.get(plugin_name)
         if not metadata:
@@ -606,14 +300,14 @@ class Manager:
             "kwargs": {},
             "force": False,
         }
-        return self._send_pipe_request(role, request)
+        return await self._send_pipe_request(role, request)
 
-    def list_plugins(self) -> list[str]:
+    async def list_plugins(self) -> list[str]:
         self.logger.info("listing plugins")
-        results: list[str] = []
-        for role in ["root", "non-root"]:
+
+        async def fetch_for_role(role: str) -> list[str]:
             if role not in self.pipes:
-                continue
+                return []
             request: PipeRequest = {
                 "id": uuid.uuid4().hex,
                 "cmd": PipeCommand.LIST,
@@ -623,29 +317,38 @@ class Manager:
                 "kwargs": {},
                 "force": False,
             }
-            response = self._send_pipe_request(role, request)
+            response = await self._send_pipe_request(role, request)
             if response["status"] == "ok" and isinstance(response["data"], list):
-                results.extend(response["data"])
-        return results
+                return response["data"]
+            return []
 
-    def start(self) -> None:
+        results = await asyncio.gather(fetch_for_role("root"), fetch_for_role("non-root"))
+        return [item for sublist in results for item in sublist]
+
+    async def start(self) -> None:
         self.logger.info("starting manager")
         self._load_scripts()
         self._start_workers()
-        self._load_metadata_to_workers()
-        for plugin_name in self.metadata_by_name:
-            response = self.start_plugin(plugin_name)
+        await self._load_metadata_to_workers()
+
+        start_tasks = [self.start_plugin(name) for name in self.metadata_by_name]
+        responses = await asyncio.gather(*start_tasks)
+
+        for name, response in zip(self.metadata_by_name.keys(), responses, strict=True):
             if response["status"] != "ok":
                 self.logger.warning(
                     "failed to start plugin %s: %s",
-                    plugin_name,
+                    name,
                     response.get("message", "unknown error"),
                 )
 
-        if not Config.disable_ipc:
-            self.start_ipc(self.ipc_port)
+        await self.start_ipc(self.ipc_port)
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
+        if self._stopped:
+            return
+
+        self._stopped = True
         self.logger.info("stopping manager")
         for role in list(self.pipes.keys()):
             worker = self.workers.get(role)
@@ -663,17 +366,17 @@ class Manager:
                 "force": False,
             }
             try:
-                self._send_pipe_request(role, request, timeout=0.3, check_worker_alive=True)
+                await self._send_pipe_request(role, request, timeout=0.3, check_worker_alive=True)
             except Exception as exc:
                 self.logger.warning("failed to send shutdown to %s: %s", role, exc)
 
-        alive_workers = {name: w for name, w in self.workers.items() if w.is_alive()}
+        alive_workers = {name: worker for name, worker in self.workers.items() if worker.is_alive()}
         if alive_workers:
             self.logger.debug("waiting for workers to exit: %s", list(alive_workers.keys()))
-            deadline = time.time() + 5.0
-            while alive_workers and time.time() < deadline:
+            deadline = asyncio.get_running_loop().time() + 5.0
+            while alive_workers and asyncio.get_running_loop().time() < deadline:
                 for name, worker in list(alive_workers.items()):
-                    worker.join(timeout=0.1)
+                    await asyncio.to_thread(worker.join, 0.1)
                     if not worker.is_alive():
                         self.logger.debug("worker %s exited", name)
                         del alive_workers[name]
@@ -681,10 +384,9 @@ class Manager:
             for name, worker in alive_workers.items():
                 self.logger.debug("worker %s did not exit in time, terminating", name)
                 worker.terminate()
-                worker.join(timeout=0.5)
+                await asyncio.to_thread(worker.join, 0.5)
 
-        self.stop_ipc()
-        self._stop_log_listener()
+        await self.stop_ipc()
 
     def _stop_log_listener(self) -> None:
         self.logger.info("stopping log listener")
@@ -743,7 +445,7 @@ class Manager:
             except Exception as exc:
                 self.logger.error("failed to register script %s: %s", item.name, exc)
 
-    def _handle_ipc_request(self, request: IPCRequest) -> IPCResponse:
+    async def _handle_ipc_request(self, request: IPCRequestManager) -> IPCResponse:
         cmd_value = request.get("cmd", "")
         plugin_name = request.get("plugin_name", "")
         try:
@@ -752,7 +454,7 @@ class Manager:
             return {"status": "failed", "message": "unsupported command", "data": None}
 
         if cmd == IPCCommand.LIST:
-            return {"status": "ok", "message": "ok", "data": self.list_plugins()}
+            return {"status": "ok", "message": "ok", "data": await self.list_plugins()}
 
         if not plugin_name:
             return {"status": "failed", "message": "plugin_name is required", "data": None}
@@ -762,11 +464,11 @@ class Manager:
             return {"status": "failed", "message": "plugin not found", "data": None}
 
         if cmd == IPCCommand.START:
-            response = self.start_plugin(plugin_name)
+            response = await self.start_plugin(plugin_name)
         elif cmd == IPCCommand.STOP:
-            response = self.stop_plugin(plugin_name)
+            response = await self.stop_plugin(plugin_name)
         elif cmd == IPCCommand.RESTART:
-            response = self.restart_plugin(plugin_name)
+            response = await self.restart_plugin(plugin_name)
         else:
             response = {"status": "failed", "message": "unsupported command", "data": None, "id": uuid.uuid4().hex}
 
@@ -779,16 +481,51 @@ class Manager:
             "data": data,
         }
 
-    def _handle_ipc_command(self, raw: str) -> Mapping[str, Any]:
+    async def _handle_internal_ipc_command(self, request: IPCRequestInternal) -> IPCResponse:
+        internal_cmd = request.get("internal_cmd", "")
+        try:
+            cmd = IPCCommandInternal(internal_cmd)
+        except ValueError:
+            return {"status": "failed", "message": "unsupported command", "data": None}
+
+        match cmd:
+            case IPCCommandInternal.REBOOT:
+                is_test = "test" in request.get("args", [])
+
+                async def _stop():
+                    await self.stop()
+                    self._shutdown_event.set()
+
+                def shutdown(*args: Any) -> None:
+                    import subprocess  # noqa: PLC0415
+
+                    if IS_TERMUX and not is_test:
+                        subprocess.run(["sudo", "reboot"], check=False)
+                    else:
+                        print("reboot command received")
+
+                asyncio.create_task(_stop()).add_done_callback(shutdown)
+                return {"status": "ok", "message": "shutting down", "data": None}
+            case _:
+                return {"status": "failed", "message": "unsupported internal command", "data": None}
+
+    async def _handle_ipc_command(self, raw: str) -> Mapping[str, Any]:
         try:
             request: IPCRequest = json.loads(raw)
-            return self._handle_ipc_request(request)
+            if request.get("cmd") == IPCCommand.INTERNAL.value:
+                return await self._handle_internal_ipc_command(request)  # type: ignore
+            elif request.get("plugin_name"):
+                return await self._handle_ipc_request(request)  # type: ignore
+            else:
+                return {"status": "failed", "message": "invalid request format", "data": None}
+
         except json.JSONDecodeError as exc:
             return {
                 "status": "failed",
                 "message": f"invalid JSON: {exc}",
                 "data": traceback.format_exc() if Config.debug else None,
             }
+
         except Exception as exc:
             return {
                 "status": "failed",
@@ -796,78 +533,55 @@ class Manager:
                 "data": traceback.format_exc() if Config.debug else None,
             }
 
-    def _ipc_worker(self, tcp_port: int = 8765) -> None:
-        assert self._ipc_stop_event is not None
-
-        port = tcp_port or (self.ipc_port or 8765)
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server_socket.bind(("127.0.0.1", port))
-        server_socket.listen(1)
-        server_socket.settimeout(1.0)
-        self.logger.info("ipc tcp server listening on 127.0.0.1:%d", port)
-        try:
-            while not self._ipc_stop_event.is_set():
-                try:
-                    conn, addr = server_socket.accept()
-                except TimeoutError:
-                    continue
-
-                with conn:
-                    try:
-                        data = recv_str(conn)
-                        response = self._handle_ipc_command(data)
-                        send_json(conn, response)
-                    except TimeoutError:
-                        self.logger.warning("ipc client %s timed out, closing connection", addr)
-                    except ConnectionError as exc:
-                        self.logger.debug("ipc client %s disconnected: %s", addr, exc)
-        finally:
-            server_socket.close()
-
-    def start_ipc(self, tcp_port: int = 8765) -> None:
+    async def start_ipc(self, tcp_port: int = 8765) -> None:
         self.logger.info("starting ipc listener on port %s", tcp_port)
-        if self.ipc_thread and self.ipc_thread.is_alive():
+        if self.ipc_server is not None:
             self.logger.info("ipc already running")
             return
 
-        if self._ipc_stop_event is None:
-            self._ipc_stop_event = threading.Event()
-
         self.ipc_port = tcp_port
-        thread = threading.Thread(
-            target=self._ipc_worker,
-            args=(self.ipc_port,),
-            daemon=True,
-            name="IPC-Listener",
+        self.ipc_server = IPCServer(
+            host="127.0.0.1",
+            port=self.ipc_port,
+            on_message_received=self._handle_ipc_command,
+            logger=self.logger,
         )
-        thread.start()
-        self.ipc_thread = thread
-        self.logger.info("ipc listener started")
+        await self.ipc_server.start()
 
-    def stop_ipc(self) -> None:
+    async def stop_ipc(self) -> None:
         self.logger.info("stopping ipc listener")
-        if not self.ipc_thread:
+        if self.ipc_server is None:
             return
-        if not self._ipc_stop_event:
-            return
-        self._ipc_stop_event.set()
-        self.ipc_thread.join(timeout=2.0)
-        self.ipc_thread = None
-        self._ipc_stop_event = None
-        self.logger.info("ipc listener stopped")
+        await self.ipc_server.stop()
+        self.ipc_server = None
 
     @log_function_call
-    def run(self) -> None:
+    async def run(self) -> None:
         self.logger.info("starting run loop")
-        self.start()
+        await self.start()
+
+        loop = asyncio.get_running_loop()
+
+        def _signal_handler() -> None:
+            self.logger.info("shutdown signal received")
+            self._shutdown_event.set()
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            with contextlib.suppress(NotImplementedError):
+                loop.add_signal_handler(sig, _signal_handler)
+
         try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            self.logger.info("ctrl+c detected, exiting")
+            # if IS_WINDOWS:
+            #     while not shutdown_event.is_set():
+            #         with contextlib.suppress(TimeoutError):
+            #             await asyncio.wait_for(shutdown_event.wait(), timeout=1.0)
+            # else:
+            await self._shutdown_event.wait()
+        except asyncio.CancelledError:
+            self.logger.info("manager run task cancelled")
         except Exception as exc:
             self.logger.error("manager error: %s", exc)
         finally:
             self.logger.info("stopping run loop")
-            self.stop()
+            await self.stop()
+            self._stop_log_listener()

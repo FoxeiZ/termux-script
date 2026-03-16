@@ -7,6 +7,7 @@ from .plugin_test.long_process import (
     NativeLongProcessPlugin,
     NativeLongProcessPluginRoot,
 )
+from .plugin_test.reboot import TestRebootAfter
 from .process_watch_monitor import ProcessWatchMonitorPlugin
 from .system_monitor import SystemMonitorPlugin
 from .system_server_monitor import SystemServerPlugin
@@ -25,4 +26,5 @@ __all__ = [
     "TailscaledPlugin",
     "TestCron2Min",
     "TestCronPerMin",
+    "TestRebootAfter",
 ]

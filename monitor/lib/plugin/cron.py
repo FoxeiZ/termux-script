@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from abc import abstractmethod
+import asyncio
+import contextlib
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, override
 
@@ -9,8 +10,8 @@ from .base import Plugin
 if TYPE_CHECKING:
     from logging import Logger
 
-    from lib.manager import PluginManager
-    from lib.plugin.metadata import PluginMetadata
+    from lib.types import PluginMetadata
+    from lib.worker import PluginManager
 
 
 class CronParser:
@@ -161,11 +162,7 @@ class CronPlugin(Plugin):
         if run_on_startup:
             cls.run_on_startup = run_on_startup
 
-    def is_stopped(self) -> bool:
-        """Check if the plugin is stopped."""
-        return self._stop_event.is_set()
-
-    def wait_until_next_run(self) -> bool:
+    async def wait_until_next_run(self) -> bool:
         """Wait until the next scheduled time. Returns True if stopped, False if time to run."""
         next_run = self._cron_parser.next()
         now = datetime.now()
@@ -173,7 +170,9 @@ class CronPlugin(Plugin):
 
         if wait_seconds > 0:
             self.logger.debug("next run scheduled for %s (in %.1f seconds)", next_run, wait_seconds)
-            return self._stop_event.wait(wait_seconds)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._stop_event.wait(), timeout=wait_seconds)
+                return True
 
         return False
 
@@ -187,36 +186,29 @@ class CronPlugin(Plugin):
 
         return self._cron_parser._matches_time(now)
 
-    @abstractmethod
-    def start(self) -> Any:
-        """The actual job to run. Must be implemented by subclasses."""
-        raise NotImplementedError
-
     @override
-    def _start(self) -> None:
+    async def _start(self) -> None:
         self.logger.info("starting cron plugin with expression: %s", self.cron_expression)
 
-        if self.run_on_startup:
-            self.logger.info("running on startup as requested")
-            try:
-                self.start()
-                self._last_run = datetime.now().replace(second=0, microsecond=0)
-            except Exception as e:
-                self.logger.error("plugin %s failed on startup: %s", self.name, e)
-
         while not self._stop_event.is_set():
+            if self.run_on_startup:
+                self.logger.info("running on startup as requested")
+                await self.start()
+                self._last_run = datetime.now().replace(second=0, microsecond=0)
+
             try:
-                if self.wait_until_next_run():
+                if await self.wait_until_next_run():
                     break
 
                 if self.should_run_now():
                     self.logger.debug("running scheduled job at %s", datetime.now())
-                    self.start()
+                    await self.start()
                     self._last_run = datetime.now().replace(second=0, microsecond=0)
-                elif self._stop_event.wait(1):
-                    break
+                else:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(self._stop_event.wait(), timeout=5.0)
+                        break
 
-            except Exception as e:
-                self.logger.error("plugin %s failed: %s", self.name, e)
-                if self._stop_event.wait(60):
-                    break
+            except asyncio.CancelledError:
+                self.logger.info("cron plugin %s task was cancelled", self.name)
+                raise

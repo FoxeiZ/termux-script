@@ -8,3 +8,6 @@ venv/
 !logger.py
 galleries/
 detracked/
+Album/
+.env
+*.session

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from dataclasses import dataclass
@@ -13,10 +14,8 @@ if TYPE_CHECKING:
     from logging import Logger
     from typing import TypedDict
 
-    from lib._types import WebhookPayload
-    from lib.manager import PluginManager
-    from lib.plugin.metadata import PluginMetadata
-    from monitor.lib._types import EmbedField
+    from lib.types import EmbedField, PluginMetadata, WebhookPayload
+    from lib.worker import PluginManager
 
     class _ProcessSample(TypedDict):
         pid: int
@@ -134,7 +133,7 @@ class ProcessWatchMonitorPlugin(IntervalPlugin, requires_root=True):
         rows = [f"{sample['name']} ({sample['pid']}): {sample[key]:.2f}%" for sample in ranked]
         return f"{label}:\n" + "\n".join(rows)
 
-    def _send_watch_notification(
+    async def _send_watch_notification(
         self,
         entry: _WatchEntry,
         top_cpu: list[_ProcessSample],
@@ -197,12 +196,13 @@ class ProcessWatchMonitorPlugin(IntervalPlugin, requires_root=True):
                 }
             ]
         }
-        self.send_webhook(payload=payload)
+        if self.notifier is not None:
+            await self.notifier.send_webhook(payload=payload)
 
     @log_function_call
-    def start(self) -> None:
+    async def start(self) -> None:
         now = time.time()
-        samples = self._collect_samples()
+        samples = await asyncio.to_thread(self._collect_samples)
 
         top_cpu = self._rank_samples(samples, "cpu_percent", self.top_n)
         top_ram = self._rank_samples(samples, "ram_percent", self.top_n)
@@ -251,7 +251,7 @@ class ProcessWatchMonitorPlugin(IntervalPlugin, requires_root=True):
                     entry.pid,
                     self.watch_seconds,
                 )
-                self._send_watch_notification(entry, top_cpu, top_ram, top_combined)
+                await self._send_watch_notification(entry, top_cpu, top_ram, top_combined)
                 entry.notified = True
 
         for watched_pid in list(self._watch_list.keys()):
