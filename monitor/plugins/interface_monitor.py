@@ -13,7 +13,6 @@ from lib.ipc import send_json
 from lib.manager import Manager
 from lib.plugin import IntervalPlugin
 from lib.types import IPCCommand, IPCCommandInternal, IPCRequestInternal
-from lib.utils import log_function_call
 
 if TYPE_CHECKING:
     from logging import Logger
@@ -115,7 +114,6 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
         self._lost_network_since: datetime.datetime | None = None
         self._hotspot_started: bool = False
 
-    @log_function_call
     def compare_states(
         self,
         old_state: dict[str, Any],
@@ -135,7 +133,6 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
 
         return False
 
-    @log_function_call
     async def get_ifconfig_output(self) -> str:
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -158,7 +155,6 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
         except FileNotFoundError:
             return default_ifconfig_output()
 
-    @log_function_call
     def parse_network_interfaces(self, ifconfig_output: str) -> dict[str, Any]:
         interface_pattern = r"^(\w+[\w\d_]*): "
 
@@ -201,7 +197,6 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
 
         return interfaces
 
-    @log_function_call
     def format_interface_info(self, interface_name: str, data: dict[str, Any]) -> EmbedField:
         ipv4_info: list[str] = []
         for ip in data["ipv4"]:
@@ -225,7 +220,6 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
             "inline": False,
         }
 
-    @log_function_call
     def build_embeds(self, interfaces: dict[str, Any]) -> list[Embed]:
         embeds_list: list[Embed] = []
         for interface, data in interfaces.items():
@@ -238,7 +232,6 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
             embeds_list.append(embed)
         return embeds_list
 
-    @log_function_call
     async def perform_reboot(self) -> None:
         async with self.manager.internal_ipc() as (_, writer):
             request: IPCRequestInternal = {
@@ -250,7 +243,6 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
             }
             await send_json(writer, request)
 
-    @log_function_call
     async def start_wifi_hotspot(self) -> None:
         """Start WiFi hotspot when network connection is lost."""
         if self._hotspot_started:
@@ -294,7 +286,6 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
         except Exception as e:
             self.logger.error("unexpected error starting hotspot: %s", e)
 
-    @log_function_call
     async def stop_wifi_hotspot(self) -> None:
         if not self._hotspot_started:
             return
@@ -322,7 +313,6 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
         except Exception as e:
             self.logger.error("unexpected error stopping hotspot: %s", e)
 
-    @log_function_call
     async def start(self) -> None:
         raw_output = await self.get_ifconfig_output()
         current_state = self.parse_network_interfaces(raw_output)
