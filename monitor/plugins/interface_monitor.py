@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import datetime
 import re
+import socket
 import time
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -92,6 +93,7 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
         username: str
         avatar_url: str
         _previous_state: dict[str, Any]
+        _last_reported_connectivity: bool | None
 
     exclude_interfaces: ClassVar[list[str]] = ["dummy0", "lo", "r_rmnet_data0", "rmnet_data0", "rmnet_ipa0"]
 
@@ -113,6 +115,7 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
         self._previous_state = {}
         self._lost_network_since: datetime.datetime | None = None
         self._hotspot_started: bool = False
+        self._last_reported_connectivity: bool | None = None
 
     def compare_states(
         self,
@@ -232,6 +235,42 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
             embeds_list.append(embed)
         return embeds_list
 
+    def has_connectivity_interface(self, interfaces: dict[str, Any]) -> bool:
+        for data in interfaces.values():
+            for ipv4 in data["ipv4"]:
+                address = str(ipv4.get("address") or "")
+                if address and not address.startswith("127."):
+                    return True
+
+            for ipv6 in data["ipv6"]:
+                address = str(ipv6.get("address") or "").lower()
+                if address and address != "::1" and not address.startswith("fe80:"):
+                    return True
+
+        return False
+
+    async def has_internet_dns(
+        self,
+        host: str = "discord.com",
+        timeout: float = 3.0,
+    ) -> bool:
+        loop = asyncio.get_running_loop()
+        try:
+            await asyncio.wait_for(
+                loop.getaddrinfo(host, 443, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM),
+                timeout=timeout,
+            )
+            return True
+        except TimeoutError:
+            self.logger.warning("dns reachability check timed out for host %s", host)
+            return False
+        except socket.gaierror as exc:
+            self.logger.warning("dns reachability check failed for host %s: %s", host, exc)
+            return False
+        except OSError as exc:
+            self.logger.warning("dns reachability check failed with OS error for host %s: %s", host, exc)
+            return False
+
     async def perform_reboot(self) -> None:
         async with self.manager.internal_ipc() as (_, writer):
             request: IPCRequestInternal = {
@@ -239,6 +278,17 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
                 "internal_cmd": IPCCommandInternal.REBOOT,
                 "kwargs": {},
                 "args": [],
+                "password": self.manager.ipc_password,
+            }
+            await send_json(writer, request)
+
+    async def update_connectivity_state(self, has_connectivity: bool) -> None:
+        async with self.manager.internal_ipc() as (_, writer):
+            request: IPCRequestInternal = {
+                "cmd": IPCCommand.INTERNAL,
+                "internal_cmd": IPCCommandInternal.UPDATE_STATE,
+                "kwargs": {},
+                "args": [{"has_internet_access": has_connectivity}],
                 "password": self.manager.ipc_password,
             }
             await send_json(writer, request)
@@ -317,10 +367,21 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
         raw_output = await self.get_ifconfig_output()
         current_state = self.parse_network_interfaces(raw_output)
         changes = self.compare_states(self._previous_state, current_state)
+        has_connectivity = self.has_connectivity_interface(current_state)
+        dns_reachable = await self.has_internet_dns()
+        has_internet_access = has_connectivity and dns_reachable
+
+        if self._last_reported_connectivity is None or self._last_reported_connectivity != has_internet_access:
+            await self.update_connectivity_state(has_internet_access)
+            self._last_reported_connectivity = has_internet_access
 
         if changes:
-            if "wlan0" not in current_state:
-                self.logger.warning("network interface wlan0 not found, assuming no network")
+            if not has_internet_access:
+                self.logger.warning(
+                    "network unavailable (interface=%s, dns=%s), assuming no network",
+                    has_connectivity,
+                    dns_reachable,
+                )
 
                 if not self._lost_network_since:
                     self._lost_network_since = datetime.datetime.now(datetime.UTC)

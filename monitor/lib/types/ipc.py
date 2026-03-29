@@ -14,6 +14,7 @@ class IPCCommand(StrEnum):
 
 class IPCCommandInternal(StrEnum):
     REBOOT = "internal_shutdown"
+    UPDATE_STATE = "internal_update_state"
 
 
 class IPCRequest(TypedDict):

@@ -30,6 +30,35 @@ if TYPE_CHECKING:
     from .types import IPCRequest, IPCRequestInternal, IPCRequestManager, IPCResponse, PipeRequest, PipeResponse
 
 
+class ManagerStateContext:
+    class State:
+        def __init__(self) -> None:
+            self.started = False
+            self.stopped = False
+            self.plugins_loaded = False
+            self.workers_started = False
+            self.ipc_started = False
+            self.has_internet_access = None
+            self.last_error = None
+
+    def __init__(self) -> None:
+        self.__state = self.State()
+        self.lock = asyncio.Lock()
+
+    async def __aenter__(self) -> State:
+        await self.lock.acquire()
+        return self.__state
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        if self.lock.locked():
+            self.lock.release()
+
+
 class Manager:
     __password__: str = secrets.token_hex(16)
 
@@ -42,11 +71,11 @@ class Manager:
     ) -> None:
         self.log_queue, self.log_listener = setup_logging_queue()
         self.logger = get_logger(self.__class__.__name__, handler=None)
+        self.ctx_state = ManagerStateContext()
 
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self._webhook_url = webhook_url
-        self._stopped = False
 
         self.ipc_port = ipc_port
         self.ipc_server: IPCServer | None = None
@@ -132,7 +161,7 @@ class Manager:
             webhook_url=webhook_url,
         )
 
-    def _start_workers(self) -> None:
+    async def _start_workers(self) -> None:
         if self.workers:
             return
 
@@ -166,6 +195,8 @@ class Manager:
         self.workers = {"root": root_worker, "non-root": non_root_worker}
         self.pipes = {"root": root_parent, "non-root": non_root_parent}
         self._pending_pipe_responses = {"root": {}, "non-root": {}}
+        async with self.ctx_state as state:
+            state.workers_started = True
 
     def _pipe_lock(self, role: str) -> asyncio.Lock:
         lock = self._pipe_locks.get(role)
@@ -328,7 +359,7 @@ class Manager:
     async def start(self) -> None:
         self.logger.info("starting manager")
         self._load_scripts()
-        self._start_workers()
+        await self._start_workers()
         await self._load_metadata_to_workers()
 
         start_tasks = [self.start_plugin(name) for name in self.metadata_by_name]
@@ -341,14 +372,18 @@ class Manager:
                     name,
                     response.get("message", "unknown error"),
                 )
+        async with self.ctx_state as state:
+            state.plugins_loaded = True
 
         await self.start_ipc(self.ipc_port)
 
     async def stop(self) -> None:
-        if self._stopped:
-            return
+        async with self.ctx_state as state:
+            if state.stopped:
+                self.logger.info("manager already stopped")
+                return
+            state.stopped = True
 
-        self._stopped = True
         self.logger.info("stopping manager")
         for role in list(self.pipes.keys()):
             worker = self.workers.get(role)
@@ -493,6 +528,7 @@ class Manager:
                 is_test = "test" in request.get("args", [])
 
                 async def _stop():
+                    # call `stop` manager before triggering shutdown event to ensure logs are processed before reboot
                     await self.stop()
                     self._shutdown_event.set()
 
@@ -506,6 +542,16 @@ class Manager:
 
                 asyncio.create_task(_stop()).add_done_callback(shutdown)
                 return {"status": "ok", "message": "shutting down", "data": None}
+
+            case IPCCommandInternal.UPDATE_STATE:
+                state_datas: list[dict[str, Any]] = request.get("args", [{}])
+                for state_data in state_datas:
+                    for key, value in state_data.items():
+                        async with self.ctx_state as state:
+                            if hasattr(state, key):
+                                setattr(state, key, value)
+                return {"status": "ok", "message": "state updated", "data": None}
+
             case _:
                 return {"status": "failed", "message": "unsupported internal command", "data": None}
 
@@ -547,6 +593,8 @@ class Manager:
             logger=self.logger,
         )
         await self.ipc_server.start()
+        async with self.ctx_state as state:
+            state.ipc_started = True
 
     async def stop_ipc(self) -> None:
         self.logger.info("stopping ipc listener")
@@ -576,6 +624,8 @@ class Manager:
             #         with contextlib.suppress(TimeoutError):
             #             await asyncio.wait_for(shutdown_event.wait(), timeout=1.0)
             # else:
+            async with self.ctx_state as state:
+                state.started = True
             await self._shutdown_event.wait()
         except asyncio.CancelledError:
             self.logger.info("manager run task cancelled")
