@@ -375,50 +375,60 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
             await self.update_connectivity_state(has_internet_access)
             self._last_reported_connectivity = has_internet_access
 
-        if changes:
-            if not has_internet_access:
+        if not has_internet_access:
+            if changes or self._lost_network_since is None:
                 self.logger.warning(
                     "network unavailable (interface=%s, dns=%s), assuming no network",
                     has_connectivity,
                     dns_reachable,
                 )
 
-                if not self._lost_network_since:
-                    self._lost_network_since = datetime.datetime.now(datetime.UTC)
-                    if self.hotspot_enabled:
-                        await self.start_wifi_hotspot()
-
-                self._previous_state = current_state
-                return
-
-            if self._lost_network_since:
-                if self.notifier is not None:
-                    await self.notifier.send_webhook(
-                        {
-                            "username": self.name,
-                            "avatar_url": self.avatar_url,
-                            "embeds": [
-                                {
-                                    "title": "Network connection restored",
-                                    "color": 2302945,
-                                    "fields": [
-                                        {
-                                            "name": "Network connection restored",
-                                            "value": f"Network connection restored after {datetime.datetime.now(datetime.UTC) - self._lost_network_since}.",
-                                            "inline": False,
-                                        }
-                                    ],
-                                    "footer": {
-                                        "text": f"Lost network since {self._lost_network_since.strftime('%Y-%m-%d %H:%M:%S')}",
-                                    },
-                                }
-                            ],
-                        }
-                    )
-                self._lost_network_since = None
+            if not self._lost_network_since:
+                self._lost_network_since = datetime.datetime.now(datetime.UTC)
                 if self.hotspot_enabled:
-                    await self.stop_wifi_hotspot()
+                    await self.start_wifi_hotspot()
 
+            if changes:
+                self._previous_state = current_state
+
+            if self._lost_network_since and self.reboot_enabled:
+                time_since_lost = datetime.datetime.now(datetime.UTC) - self._lost_network_since
+                if time_since_lost.total_seconds() > self.reboot_threshold:
+                    await self.perform_reboot()
+            return
+
+        if self._lost_network_since:
+            if self.notifier is not None:
+                await self.notifier.send_webhook(
+                    {
+                        "username": self.name,
+                        "avatar_url": self.avatar_url,
+                        "embeds": [
+                            {
+                                "title": "Network connection restored",
+                                "color": 2302945,
+                                "fields": [
+                                    {
+                                        "name": "Network connection restored",
+                                        "value": f"Network connection restored after {datetime.datetime.now(datetime.UTC) - self._lost_network_since}.",
+                                        "inline": False,
+                                    }
+                                ],
+                                "footer": {
+                                    "text": f"Lost network since {self._lost_network_since.strftime('%Y-%m-%d %H:%M:%S')}",
+                                },
+                            }
+                        ],
+                    }
+                )
+            self._lost_network_since = None
+            if self.hotspot_enabled:
+                await self.stop_wifi_hotspot()
+
+            # force sending of the current state since internet is fully back
+            changes = True
+
+        if changes:
             embeds = self.build_embeds(current_state)
             if self.notifier is not None:
                 await self.notifier.send_webhook(
@@ -431,10 +441,6 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
                 )
             self.logger.info("network change detected, sent update to Discord")
             self._previous_state = current_state
-        elif self._lost_network_since and self.reboot_enabled:
-            time_since_lost = datetime.datetime.now(datetime.UTC) - self._lost_network_since
-            if time_since_lost.total_seconds() > self.reboot_threshold:
-                await self.perform_reboot()
 
 
 if __name__ == "__main__":
