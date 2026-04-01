@@ -116,6 +116,7 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
         self._lost_network_since: datetime.datetime | None = None
         self._hotspot_started: bool = False
         self._last_reported_connectivity: bool | None = None
+        self._pending_interface_update: bool = True
 
     def compare_states(
         self,
@@ -273,6 +274,9 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
 
     async def perform_reboot(self) -> None:
         async with self.manager.internal_ipc() as (_, writer):
+            if not writer:
+                return
+
             request: IPCRequestInternal = {
                 "cmd": IPCCommand.INTERNAL,
                 "internal_cmd": IPCCommandInternal.REBOOT,
@@ -282,8 +286,12 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
             }
             await send_json(writer, request)
 
-    async def update_connectivity_state(self, has_connectivity: bool) -> None:
+    async def update_connectivity_state(self, has_connectivity: bool) -> bool:
         async with self.manager.internal_ipc() as (_, writer):
+            if not writer:
+                self._last_reported_connectivity = None
+                return False
+
             request: IPCRequestInternal = {
                 "cmd": IPCCommand.INTERNAL,
                 "internal_cmd": IPCCommandInternal.UPDATE_STATE,
@@ -292,6 +300,7 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
                 "password": self.manager.ipc_password,
             }
             await send_json(writer, request)
+            return True
 
     async def start_wifi_hotspot(self) -> None:
         """Start WiFi hotspot when network connection is lost."""
@@ -367,12 +376,18 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
         raw_output = await self.get_ifconfig_output()
         current_state = self.parse_network_interfaces(raw_output)
         changes = self.compare_states(self._previous_state, current_state)
+
+        if changes:
+            self._pending_interface_update = True
+            self._previous_state = current_state
+
         has_connectivity = self.has_connectivity_interface(current_state)
         dns_reachable = await self.has_internet_dns()
         has_internet_access = has_connectivity and dns_reachable
 
-        if self._last_reported_connectivity is None or self._last_reported_connectivity != has_internet_access:
-            await self.update_connectivity_state(has_internet_access)
+        if (
+            self._last_reported_connectivity is None or self._last_reported_connectivity != has_internet_access
+        ) and await self.update_connectivity_state(has_internet_access):
             self._last_reported_connectivity = has_internet_access
 
         if not has_internet_access:
@@ -387,9 +402,6 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
                 self._lost_network_since = datetime.datetime.now(datetime.UTC)
                 if self.hotspot_enabled:
                     await self.start_wifi_hotspot()
-
-            if changes:
-                self._previous_state = current_state
 
             if self._lost_network_since and self.reboot_enabled:
                 time_since_lost = datetime.datetime.now(datetime.UTC) - self._lost_network_since
@@ -426,21 +438,21 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
                 await self.stop_wifi_hotspot()
 
             # force sending of the current state since internet is fully back
-            changes = True
+            self._pending_interface_update = True
 
-        if changes:
+        if self._pending_interface_update:
             embeds = self.build_embeds(current_state)
             if self.notifier is not None:
                 await self.notifier.send_webhook(
                     {
                         "username": self.name,
                         "avatar_url": self.avatar_url,
-                        "content": "## Network interface information",
+                        "content": "## Network interface information" + (" (restored)" if not changes else ""),
                         "embeds": embeds,
                     }
                 )
-            self.logger.info("network change detected, sent update to Discord")
-            self._previous_state = current_state
+            self.logger.info("sent interface update to Discord")
+            self._pending_interface_update = False
 
 
 if __name__ == "__main__":

@@ -422,6 +422,7 @@ class PluginManager(multiprocessing.Process):
 
         except Exception as e:
             self.logger.error("internal ipc request failed: %s", e)
+            yield None, None
         finally:
             if writer:
                 writer.close()
