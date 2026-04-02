@@ -376,6 +376,7 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
         raw_output = await self.get_ifconfig_output()
         current_state = self.parse_network_interfaces(raw_output)
         changes = self.compare_states(self._previous_state, current_state)
+        self.logger.debug(f"======\n{raw_output=}\n{current_state=}\n{self._previous_state=}\n{changes=}\n======")
 
         if changes:
             self._pending_interface_update = True
