@@ -136,13 +136,13 @@ class Manager:
         kwargs: dict[str, Any],
         restart_on_failure: bool,
     ) -> PluginMetadata:
-        name = getattr(plugin, "name", plugin.__name__)
+        cls_params = plugin._get_class_params()
+        name = kwargs.get("name") or cls_params.get("name") or plugin.__name__
         module_path = plugin.__module__
         class_name = plugin.__name__
-        requires_root = bool(getattr(plugin, "_requires_root", False))
-        webhook_url = kwargs.get("webhook_url") or self._webhook_url or ""
-        raw_max_retries = kwargs.pop("max_retries", None)
+        requires_root = cls_params.get("requires_root", False)
 
+        raw_max_retries = kwargs.get("max_retries") or cls_params.get("max_retries")
         metadata_max_retries: int | None = None
         if raw_max_retries is not None:
             try:
@@ -164,7 +164,7 @@ class Manager:
 
         if plugin is ScriptPlugin:
             script_path = kwargs.get("script_path")
-            requires_root = bool(kwargs.pop("requires_root", requires_root))
+            requires_root = cls_params.get("requires_root", False)
             if script_path and name == plugin.__name__:
                 base_name = kwargs.get("name") or Path(str(script_path)).stem
                 unique = uuid.uuid4().hex[:6]
@@ -179,7 +179,9 @@ class Manager:
             max_retries=metadata_max_retries,
             args=list(args),
             kwargs=dict(kwargs),
-            webhook_url=webhook_url,
+            base_delay=cls_params.get("base_delay"),
+            max_backoff=cls_params.get("max_backoff"),
+            webhook_url=kwargs.get("webhook_url") or self._webhook_url or "",
         )
 
     async def _start_workers(self) -> None:

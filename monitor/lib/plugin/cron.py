@@ -129,13 +129,8 @@ class CronParser:
 
 
 class CronPlugin(Plugin):
-    if TYPE_CHECKING:
-        cron_expression: str
-        run_on_startup: bool
-        _cls_cron_expression: ClassVar[str | None]
-        _cls_run_on_startup: ClassVar[bool | None]
-        _cron_parser: CronParser
-        _last_run: datetime | None
+    _cls_cron_expression: ClassVar[str | None] = None
+    _cls_run_on_startup: ClassVar[bool | None] = None
 
     def __init__(
         self,
