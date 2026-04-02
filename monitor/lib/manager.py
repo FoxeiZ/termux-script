@@ -106,8 +106,9 @@ class Manager:
         if not issubclass(plugin, Plugin):
             raise TypeError("Plugin must be a subclass of Plugin")
 
-        requires_root = bool(getattr(plugin, "_requires_root", False))
-        restart_on_failure = bool(getattr(plugin, "_restart_on_failure", False))
+        cls_params = plugin._get_class_params()
+        requires_root = bool(cls_params.get("requires_root", False))
+        restart_on_failure = bool(cls_params.get("restart_on_failure", False))
 
         if not force:
             if Config.run_script_only and plugin is not ScriptPlugin:
@@ -142,7 +143,7 @@ class Manager:
         class_name = plugin.__name__
         requires_root = cls_params.get("requires_root", False)
 
-        raw_max_retries = kwargs.get("max_retries") or cls_params.get("max_retries")
+        raw_max_retries = kwargs["max_retries"] if "max_retries" in kwargs else cls_params.get("max_retries")
         metadata_max_retries: int | None = None
         if raw_max_retries is not None:
             try:

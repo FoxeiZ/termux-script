@@ -275,6 +275,10 @@ class Plugin:
         return self._stop_event.is_set()
 
     async def wait_backoff(self) -> None:
+        if self._stop_event.is_set():
+            self.logger.debug("stop event already set for plugin %s, skipping restart backoff", self.name)
+            return
+
         backoff = min(self._base_delay * (2 ** (self._attempts - 1)), self._max_backoff)
         jitter = backoff * 0.1
         delay = backoff + (((secrets.randbelow(2001) / 1000.0) - 1.0) * jitter)
@@ -331,6 +335,10 @@ class Plugin:
 
                 if self._max_retries != -1 and self._attempts >= self._max_retries:
                     self.logger.error("max retries reached for plugin %s; giving up", self.name)
+                    break
+
+                if self._stop_event.is_set():
+                    self.logger.debug("stop requested for plugin %s, skipping restart", self.name)
                     break
 
                 await self.wait_backoff()
