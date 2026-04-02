@@ -260,13 +260,32 @@ class Plugin:
         with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
 
+    def _log_start_failure(self, exception: Exception) -> None:
+        self.logger.error("plugin %s failed: %s", self.name, exception)
+
+    def _on_restart_disabled(self) -> None:
+        """Called when the plugin fails and restart_on_failure is disabled."""
+
+    def _exit_after_successful_start(self) -> bool:
+        """Whether the plugin should exit after a successful start() call."""
+        return True
+
+    async def _wait_before_next_cycle(self) -> bool:
+        """Return `True` to stop the loop."""
+        return False
+
     async def _start(self) -> None:
-        """Start the plugin. This method get called by the manager, don't call it directly."""
+        """Start the plugin. This method get called by the manager, don't call it directly.
+
+        You mostly want to override `start()` instead of this method,
+        but you can if you want to customize the start behavior.
+        """
         while not self._stop_event.is_set():
+            started_successfully = False
             try:
                 await self.start()
                 self._attempts = 0
-                return
+                started_successfully = True
 
             except asyncio.CancelledError:
                 self.logger.info("plugin %s task was cancelled", self.name)
@@ -274,9 +293,10 @@ class Plugin:
 
             except Exception as e:
                 self._attempts += 1
-                self.logger.error("plugin %s failed: %s", self.name, e)
+                self._log_start_failure(e)
 
                 if not self.restart_on_failure:
+                    self._on_restart_disabled()
                     break
 
                 if self._max_retries != -1 and self._attempts >= self._max_retries:
@@ -284,6 +304,12 @@ class Plugin:
                     break
 
                 await self.wait_backoff()
+
+            if started_successfully and self._exit_after_successful_start():
+                return
+
+            if await self._wait_before_next_cycle():
+                break
 
     @abstractmethod
     async def start(self) -> None:

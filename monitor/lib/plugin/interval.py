@@ -32,6 +32,9 @@ class IntervalPlugin(Plugin):
         self.interval = int(interval_value) if interval_value is not None else 60
 
     async def wait(self, timeout: float | int) -> bool:
+        """Wait for the specified timeout or until the plugin is stopped.
+        Returns True if the plugin was stopped, False if the timeout was reached.
+        """
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._stop_event.wait(), timeout=timeout)
             return True
@@ -47,33 +50,19 @@ class IntervalPlugin(Plugin):
         self.on_stop()
 
     @override
-    async def _start(self) -> None:
-        while not self._stop_event.is_set():
-            try:
-                await self.start()
-                self._attempts = 0
+    def _log_start_failure(self, exception: Exception) -> None:
+        self.logger.error("plugin %s failed: %s", self.name, exception, stack_info=True)
 
-            except asyncio.CancelledError:
-                self.logger.info("plugin %s task was cancelled", self.name)
-                raise
+    @override
+    def _on_restart_disabled(self) -> None:
+        self.logger.info("plugin %s will not restart (restart_on_failure=False)", self.name)
 
-            except Exception as e:
-                self._attempts += 1
-                self.logger.error("plugin %s failed: %s", self.name, e, stack_info=True)
+    @override
+    def _exit_after_successful_start(self) -> bool:
+        return False
 
-                if not self.restart_on_failure:
-                    self.logger.info("plugin %s will not restart (restart_on_failure=False)", self.name)
-                    break
-
-                if self._max_retries != -1 and self._attempts >= self._max_retries:
-                    self.logger.error("max retries reached for plugin %s; giving up", self.name)
-                    break
-
-                await self.wait_backoff()
-
-            if self.interval <= 0:
-                raise RuntimeError("interval must be a positive integer")
-
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(self._stop_event.wait(), timeout=self.interval)
-                break
+    @override
+    async def _wait_before_next_cycle(self) -> bool:
+        if self.interval <= 0:
+            raise RuntimeError("interval must be a positive integer")
+        return await self.wait(self.interval)
