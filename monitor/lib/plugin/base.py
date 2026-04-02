@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import secrets
 from abc import abstractmethod
-from typing import TYPE_CHECKING, ClassVar, Literal, TypedDict, cast, overload, type_check_only
+from typing import TYPE_CHECKING, ClassVar, Literal, TypedDict, cast, overload
 
 from .notifier import DiscordNotifier
 
@@ -230,14 +230,15 @@ class Plugin:
         cls._cls_base_delay = base_delay
         cls._cls_max_backoff = max_backoff
 
-    @type_check_only
-    class ClassParams(TypedDict):
-        name: str
-        requires_root: bool
-        restart_on_failure: bool
-        max_retries: int | None
-        base_delay: int | None
-        max_backoff: int | None
+    if TYPE_CHECKING:
+
+        class ClassParams(TypedDict):
+            name: str
+            requires_root: bool
+            restart_on_failure: bool
+            max_retries: int | None
+            base_delay: int | None
+            max_backoff: int | None
 
     @classmethod
     def _get_class_params(cls) -> ClassParams:
