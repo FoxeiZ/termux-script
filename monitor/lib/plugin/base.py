@@ -191,17 +191,26 @@ class Plugin:
             else:
                 source_value = item[0]
 
+            self.logger.info(
+                "resolving param from source %s: got value %s", item[0] if len(item) == 3 else "direct", source_value
+            )
+
             if source_value is None and caster is not None:
+                self.logger.info("skipping param because value is None and caster is defined")
                 continue
 
             try:
                 normalized_value = cast("T", source_value) if caster is None else caster(source_value)
+                self.logger.info("normalized value: %s", normalized_value)
             except (TypeError, ValueError):
+                self.logger.info("failed to normalize value: %s", source_value)
                 continue
 
             if checker is None or checker(normalized_value):
+                self.logger.info("param value %s passed validation", normalized_value)
                 return normalized_value
 
+        self.logger.debug("no valid param found; returning default value: %s", default)
         return default
 
     def __init_subclass__(
