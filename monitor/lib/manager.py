@@ -141,6 +141,26 @@ class Manager:
         class_name = plugin.__name__
         requires_root = bool(getattr(plugin, "_requires_root", False))
         webhook_url = kwargs.get("webhook_url") or self._webhook_url or ""
+        raw_max_retries = kwargs.pop("max_retries", None)
+
+        metadata_max_retries: int | None = None
+        if raw_max_retries is not None:
+            try:
+                metadata_max_retries = int(raw_max_retries)
+            except (TypeError, ValueError):
+                self.logger.warning(
+                    "invalid max_retries=%r for plugin %s; ignoring override",
+                    raw_max_retries,
+                    class_name,
+                )
+            else:
+                if metadata_max_retries < -1:
+                    self.logger.warning(
+                        "invalid max_retries=%d for plugin %s; using 0",
+                        metadata_max_retries,
+                        class_name,
+                    )
+                    metadata_max_retries = 0
 
         if plugin is ScriptPlugin:
             script_path = kwargs.get("script_path")
@@ -156,6 +176,7 @@ class Manager:
             class_name=class_name,
             requires_root=requires_root,
             restart_on_failure=restart_on_failure,
+            max_retries=metadata_max_retries,
             args=list(args),
             kwargs=dict(kwargs),
             webhook_url=webhook_url,

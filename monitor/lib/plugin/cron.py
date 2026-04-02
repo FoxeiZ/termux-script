@@ -9,6 +9,7 @@ from .base import Plugin
 
 if TYPE_CHECKING:
     from logging import Logger
+    from typing import ClassVar
 
     from lib.types import PluginMetadata
     from lib.worker import PluginManager
@@ -131,6 +132,8 @@ class CronPlugin(Plugin):
     if TYPE_CHECKING:
         cron_expression: str
         run_on_startup: bool
+        _cls_cron_expression: ClassVar[str | None]
+        _cls_run_on_startup: ClassVar[bool | None]
         _cron_parser: CronParser
         _last_run: datetime | None
 
@@ -142,25 +145,45 @@ class CronPlugin(Plugin):
     ) -> None:
         super().__init__(manager, metadata, logger)
 
-        cron_expression = metadata.kwargs.get("cron_expression")
-        run_on_startup = metadata.kwargs.get("run_on_startup")
+        cron_expression: str | None = metadata.kwargs.get("cron_expression")
+        run_on_startup: bool | None = metadata.kwargs.get("run_on_startup")
 
-        self.cron_expression = cron_expression or getattr(self.__class__, "cron_expression", "")
-        self.run_on_startup = bool(run_on_startup) or getattr(self.__class__, "run_on_startup", False)
-
-        if not self.cron_expression:
+        cron_expression = self._resolve_params(
+            params=[
+                (metadata.kwargs, "cron_expression", None),
+                (cron_expression,),
+                (self.__class__, "_cls_cron_expression", None),
+                (self.__class__, "cron_expression", None),
+            ],
+            default=None,
+        )
+        if cron_expression is None:
             raise ValueError("cron_expression must be provided either in __init__ or as class attribute")
+        self.cron_expression = cron_expression
 
+        self.run_on_startup = self._resolve_params(
+            params=[
+                (metadata.kwargs, "run_on_startup", None),
+                (run_on_startup,),
+                (self.__class__, "_cls_run_on_startup", None),
+                (self.__class__, "run_on_startup", None),
+            ],
+            default=False,
+            caster=bool,
+        )
         self._cron_parser = CronParser(self.cron_expression)
         self._last_run = None
 
-    def __init_subclass__(cls, cron_expression: str = "", run_on_startup: bool = False, **kwargs: Any) -> None:
+    def __init_subclass__(
+        cls,
+        cron_expression: str | None = None,
+        run_on_startup: bool | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Support class-level parameters like ``class CustomCronPlugin(CronPlugin, cron_expression="...")``"""
         super().__init_subclass__(**kwargs)
-        if cron_expression:
-            cls.cron_expression = cron_expression
-        if run_on_startup:
-            cls.run_on_startup = run_on_startup
+        cls._cls_cron_expression = cron_expression
+        cls._cls_run_on_startup = run_on_startup
 
     async def wait_until_next_run(self) -> bool:
         """Wait until the next scheduled time. Returns True if stopped, False if time to run."""

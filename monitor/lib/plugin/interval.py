@@ -51,14 +51,25 @@ class IntervalPlugin(Plugin):
         while not self._stop_event.is_set():
             try:
                 await self.start()
+                self._attempts = 0
+
             except asyncio.CancelledError:
                 self.logger.info("plugin %s task was cancelled", self.name)
                 raise
+
             except Exception as e:
+                self._attempts += 1
                 self.logger.error("plugin %s failed: %s", self.name, e, stack_info=True)
+
                 if not self.restart_on_failure:
                     self.logger.info("plugin %s will not restart (restart_on_failure=False)", self.name)
                     break
+
+                if self._max_retries != -1 and self._attempts >= self._max_retries:
+                    self.logger.error("max retries reached for plugin %s; giving up", self.name)
+                    break
+
+                await self.wait_backoff()
 
             if self.interval <= 0:
                 raise RuntimeError("interval must be a positive integer")

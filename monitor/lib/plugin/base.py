@@ -4,11 +4,12 @@ import asyncio
 import contextlib
 import secrets
 from abc import abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar, Literal, cast, overload
 
 from .notifier import DiscordNotifier
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
     from logging import Logger
 
     from lib.types import PluginMetadata
@@ -24,11 +25,22 @@ class Plugin:
         manager: PluginManager
         logger: Logger
         webhook_url: str
+        _cls_name: ClassVar[str]
+        _cls_base_delay: ClassVar[int | None]
+        _cls_max_backoff: ClassVar[int | None]
+        _cls_max_retries: ClassVar[int | None]
+        _cls_requires_root: ClassVar[bool]
+        _cls_restart_on_failure: ClassVar[bool]
+        _max_retries: int
         _requires_root: bool
         _task: asyncio.Task[None] | None
         notifier: DiscordNotifier | None
 
     __slots__ = (
+        "_attempts",
+        "_base_delay",
+        "_max_backoff",
+        "_max_retries",
         "_requires_root",
         "_restart_on_failure",
         "_stop_event",
@@ -49,14 +61,86 @@ class Plugin:
     ) -> None:
         self.manager = manager
         self.metadata = metadata
-        self.webhook_url = metadata.webhook_url
-        self.name = metadata.name
         self.logger = logger
-
-        self._requires_root = metadata.requires_root
-        self._restart_on_failure = metadata.restart_on_failure
         self._task = None
-        self._stop_event: asyncio.Event = asyncio.Event()
+        self._stop_event = asyncio.Event()
+        self._attempts = 0
+
+        self.webhook_url = self._resolve_params(
+            params=[
+                (metadata, "webhook_url", None),
+                (self.__class__, "_class_webhook_url", None),
+                (self.manager, "webhook_url", None),
+            ],
+            default="",
+            caster=str,
+            checker=lambda value: bool(value.strip()),
+        )
+        self.name = self._resolve_params(
+            params=[
+                (metadata, "name", None),
+                (self.__class__, "_cls_name", None),
+                (self.manager, "default_plugin_name", None),
+            ],
+            default=self.__class__.__name__,
+            caster=str,
+            checker=lambda value: bool(value.strip()),
+        )
+
+        self._requires_root = self._resolve_params(
+            params=[
+                (metadata, "requires_root", None),
+                (self.__class__, "_cls_requires_root", None),
+                (self.manager, "requires_root", None),
+            ],
+            default=False,
+            caster=None,
+            checker=lambda value: isinstance(value, bool),
+        )
+        self._restart_on_failure = self._resolve_params(
+            params=[
+                (metadata, "restart_on_failure", None),
+                (self.__class__, "_cls_restart_on_failure", None),
+                (self.manager, "restart_on_failure", None),
+            ],
+            default=False,
+            caster=None,
+            checker=lambda value: isinstance(value, bool),
+        )
+        base_delay = self._resolve_params(
+            params=[
+                (metadata, "base_delay", None),
+                (metadata.kwargs, "base_delay", None),
+                (self.__class__, "_cls_base_delay", None),
+                (self.manager, "base_delay", None),
+            ],
+            default=1,
+            caster=int,
+            checker=lambda value: value >= 1,
+        )
+        self._base_delay = max(0.1, base_delay)
+        self._max_backoff = self._resolve_params(
+            params=[
+                (metadata, "max_backoff", None),
+                (metadata.kwargs, "max_backoff", None),
+                (self.__class__, "_cls_max_backoff", None),
+                (self.manager, "max_backoff", None),
+            ],
+            default=300,
+            caster=int,
+            checker=lambda value: value >= 1,
+        )
+        self._max_retries = self._resolve_params(
+            params=[
+                (metadata, "max_retries", None),
+                (metadata.kwargs, "max_retries", None),
+                (self.__class__, "_cls_max_retries", None),
+                (self.manager, "max_retries", None),
+            ],
+            default=0,
+            caster=int,
+            checker=lambda value: value >= -1,
+        )
 
         self.notifier = None
         if self.webhook_url:
@@ -67,16 +151,75 @@ class Plugin:
                 logger=self.logger,
             )
 
+    @overload
+    def _resolve_params[T](
+        self,
+        params: Sequence[tuple[object, str, T | None] | tuple[T | None]],
+        default: T,
+        caster: type[T] | Callable[[object], T] | None = None,
+        checker: Callable[[T], bool] | None = None,
+    ) -> T: ...
+
+    @overload
+    def _resolve_params[T](
+        self,
+        params: Sequence[tuple[object, str, T | None] | tuple[T | None]],
+        default: Literal[None],
+        caster: type[T] | Callable[[object], T] | None = None,
+        checker: Callable[[T], bool] | None = None,
+    ) -> T | None: ...
+
+    def _resolve_params[T](
+        self,
+        params: Sequence[tuple[object, str, T | None] | tuple[T | None]],
+        default: T | None,
+        caster: type[T] | Callable[[object], T] | None = None,
+        checker: Callable[[T], bool] | None = None,
+    ) -> T | None:
+        """Resolve the first valid value from ordered candidates.
+
+        :param params: Ordered candidates as either `(source, name, default_value)` for attribute
+            lookup or `(value,)` for a direct value.
+        :param default: Value returned when no candidate passes validation.
+        :param caster: Converter applied before checking. If `None`, the raw value is checked directly.
+        :param checker: Return `True` for the value to be accepted. If `None`, all parsed values are accepted.
+        """
+        for item in params:
+            if len(item) == 3:
+                source, name, default_value = item
+                source_value = source if name == "" else getattr(source, name, default_value)
+            else:
+                source_value = item[0]
+
+            if source_value is None and caster is not None:
+                continue
+
+            try:
+                normalized_value = cast("T", source_value) if caster is None else caster(source_value)
+            except (TypeError, ValueError):
+                continue
+
+            if checker is None or checker(normalized_value):
+                return normalized_value
+
+        return default
+
     def __init_subclass__(
         cls,
         name: str = "",
         requires_root: bool = False,
         restart_on_failure: bool = False,
+        max_retries: int | None = None,
+        base_delay: int | None = None,
+        max_backoff: int | None = None,
     ) -> None:
         super().__init_subclass__()
-        cls.name = name or cls.__name__
-        cls._requires_root = requires_root
-        cls._restart_on_failure = restart_on_failure
+        cls._cls_name = name or cls.__name__
+        cls._cls_requires_root = requires_root
+        cls._cls_restart_on_failure = restart_on_failure
+        cls._cls_max_retries = max_retries
+        cls._cls_base_delay = base_delay
+        cls._cls_max_backoff = max_backoff
 
     @property
     def restart_on_failure(self) -> bool:
@@ -101,17 +244,28 @@ class Plugin:
     def is_stopped(self) -> bool:
         return self._stop_event.is_set()
 
+    async def wait_backoff(self) -> None:
+        backoff = min(self._base_delay * (2 ** (self._attempts - 1)), self._max_backoff)
+        jitter = backoff * 0.1
+        delay = backoff + (((secrets.randbelow(2001) / 1000.0) - 1.0) * jitter)
+        delay = max(0.1, delay)
+
+        self.logger.info(
+            "waiting for %.1fs before restarting plugin %s (attempt %d)",
+            delay,
+            self.name,
+            self._attempts,
+        )
+
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
+
     async def _start(self) -> None:
         """Start the plugin. This method get called by the manager, don't call it directly."""
-        attempts = 0
-        base_delay = max(1, self.manager.retry_delay)
-        max_retries = self.manager.max_retries
-        max_backoff = 300
-
         while not self._stop_event.is_set():
             try:
                 await self.start()
-                attempts = 0
+                self._attempts = 0
                 return
 
             except asyncio.CancelledError:
@@ -119,32 +273,17 @@ class Plugin:
                 raise
 
             except Exception as e:
-                attempts += 1
+                self._attempts += 1
                 self.logger.error("plugin %s failed: %s", self.name, e)
-                self.logger.exception(e)
 
                 if not self.restart_on_failure:
                     break
 
-                if max_retries > 0 and attempts >= max_retries:
+                if self._max_retries != -1 and self._attempts >= self._max_retries:
                     self.logger.error("max retries reached for plugin %s; giving up", self.name)
                     break
 
-                backoff = min(base_delay * (2 ** (attempts - 1)), max_backoff)
-                jitter = backoff * 0.1
-                delay = backoff + (((secrets.randbelow(2001) / 1000.0) - 1.0) * jitter)
-                delay = max(0.1, delay)
-
-                self.logger.info(
-                    "restarting plugin %s in %.1fs (attempt %d/%s)",
-                    self.name,
-                    delay,
-                    attempts,
-                    str(max_retries) if max_retries > 0 else "∞",
-                )
-
-                with contextlib.suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
+                await self.wait_backoff()
 
     @abstractmethod
     async def start(self) -> None:
