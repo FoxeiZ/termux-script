@@ -102,9 +102,11 @@ class PluginManager(multiprocessing.Process):
             self.logger.exception(exc)
         finally:
             self.logger.info("starting plugin manager cleanup")
-            self._cleanup()
+            with contextlib.suppress(Exception):
+                self._cleanup()
             elapsed = time.monotonic() - start_time
             self.logger.info("plugin manager cleanup complete after %.3fs", elapsed)
+            os._exit(0)
 
     async def _run_loop(self) -> None:
         loop = asyncio.get_running_loop()

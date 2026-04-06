@@ -438,7 +438,7 @@ class Manager:
                 "force": False,
             }
             try:
-                response = await self._send_pipe_request(role, request, timeout=0.3, check_worker_alive=True)
+                response = await self._send_pipe_request(role, request, timeout=2.5, check_worker_alive=True)
                 self.logger.debug(
                     "shutdown response from worker %s: id=%s status=%s message=%s",
                     role,
