@@ -167,6 +167,7 @@ class PluginManager(multiprocessing.Process):
 
         try:
             self.log_queue.cancel_join_thread()
+            self.log_queue.close()
         except Exception as exc:
             self.logger.warning("failed to cancel log queue join thread: %s", exc)
 
