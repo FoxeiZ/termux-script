@@ -232,12 +232,6 @@ class PluginManager(multiprocessing.Process):
         except Exception as exc:
             self.logger.warning("failed to cancel log queue join thread: %s", exc)
 
-        try:
-            self.log_queue.close()
-            self.logger.debug("log queue closed")
-        except Exception as exc:
-            self.logger.warning("failed to close log queue: %s", exc)
-
         self.logger.debug(
             "cleanup post-state: active_threads=%s",
             [thread.name for thread in threading.enumerate()],
