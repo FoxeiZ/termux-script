@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 class InterfaceInfo(TypedDict):
     ipv4: list[dict[str, Any]]
     ipv6: list[dict[str, Any]]
+    mac: list[str]
 
 
 type StateInfo = dict[str, InterfaceInfo]
@@ -74,14 +75,23 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
             new_ipv4 = {tuple(sorted(d.items())) for d in new_state[interface]["ipv4"]}
             old_ipv6 = {tuple(sorted(d.items())) for d in old_state[interface]["ipv6"]}
             new_ipv6 = {tuple(sorted(d.items())) for d in new_state[interface]["ipv6"]}
+            old_mac = set(old_state[interface]["mac"])
+            new_mac = set(new_state[interface]["mac"])
 
-            if old_ipv4 != new_ipv4 or old_ipv6 != new_ipv6:
+            if old_ipv4 != new_ipv4 or old_ipv6 != new_ipv6 or old_mac != new_mac:
                 return True
 
         return False
 
     def collect_network_interfaces(self) -> StateInfo:
         state: StateInfo = {}
+        link_families: set[int] = set()
+        with contextlib.suppress(TypeError, ValueError):
+            link_families.add(int(psutil.AF_LINK))
+        if hasattr(socket, "AF_PACKET"):
+            with contextlib.suppress(TypeError, ValueError):
+                link_families.add(int(socket.AF_PACKET))
+
         try:
             interface_map = psutil.net_if_addrs()
         except OSError as exc:
@@ -92,7 +102,7 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
             if interface_name in self.exclude_interfaces:
                 continue
 
-            interface_info: InterfaceInfo = {"ipv4": [], "ipv6": []}
+            interface_info: InterfaceInfo = {"ipv4": [], "ipv6": [], "mac": []}
             for address in addresses:
                 if address.family == socket.AF_INET:
                     destination = address.ptp or address.broadcast
@@ -109,6 +119,12 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
                             "address": address.address.split("%", 1)[0],
                         }
                     )
+                elif int(address.family) in link_families and address.address:
+                    if address.address not in interface_info["mac"]:
+                        interface_info["mac"].append(address.address)
+
+            if not interface_info["ipv4"] and not interface_info["ipv6"]:
+                continue
 
             state[interface_name] = interface_info
 
@@ -126,10 +142,13 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
 
         field_value = ""
         ipv6_info = [f"Address: {ip['address']}" for ip in data["ipv6"]]
+        mac_info = [f"Address: {mac}" for mac in data["mac"]]
         if ipv4_info:
             field_value += "**IPv4:**\n" + "\n\n".join(ipv4_info) + "\n\n"
         if ipv6_info:
-            field_value += "**IPv6:**\n" + "\n\n".join(ipv6_info)
+            field_value += "**IPv6:**\n" + "\n\n".join(ipv6_info) + "\n\n"
+        if mac_info:
+            field_value += "**MAC:**\n" + "\n\n".join(mac_info)
 
         return {
             "name": interface_name,
