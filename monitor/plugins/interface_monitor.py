@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import datetime
-import re
 import socket
 import time
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
 
+import psutil
 from lib.ipc import send_json
 from lib.manager import Manager
 from lib.plugin import IntervalPlugin
@@ -22,69 +22,12 @@ if TYPE_CHECKING:
     from lib.worker import PluginManager
 
 
-def default_ifconfig_output() -> str:
-    return """
-dummy0: flags=195<UP,BROADCAST,RUNNING,NOARP>  mtu 1500
-        inet6 fe80::3c17:e9ff:fe59:5f1  prefixlen 64  scopeid 0x20<link>
-        ether 3e:17:e9:59:05:f1  txqueuelen 1000  (Ethernet)
-        RX packets 0  bytes 0 (0.0 B)
-        RX errors 0  dropped 0  overruns 0  frame 0
-        TX packets 528  bytes 107978 (105.4 KiB)
-        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+class InterfaceInfo(TypedDict):
+    ipv4: list[dict[str, Any]]
+    ipv6: list[dict[str, Any]]
 
-lo: flags=73<UP,LOOPBACK,RUNNING>  mtu 65536
-        inet 127.0.0.1  netmask 255.0.0.0
-        inet6 ::1  prefixlen 128  scopeid 0x10<host>
-        loop  txqueuelen 1000  (Local Loopback)
-        RX packets 1859  bytes 105572 (103.0 KiB)
-        RX errors 0  dropped 0  overruns 0  frame 0
-        TX packets 1859  bytes 105572 (103.0 KiB)
-        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
 
-r_rmnet_data0: flags=65<UP,RUNNING>  mtu 1500
-        inet6 fe80::62e0:cf72:8c10:8f9f  prefixlen 64  scopeid 0x20<link>
-        unspec 00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00  txqueuelen 1000  (UNSPEC)
-        RX packets 0  bytes 0 (0.0 B)
-        RX errors 0  dropped 0  overruns 0  frame 0
-        TX packets 128  bytes 7124 (6.9 KiB)
-        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
-
-rmnet_data0: flags=65<UP,RUNNING>  mtu 1500
-        inet6 fe80::16d3:a95c:452a:3d76  prefixlen 64  scopeid 0x20<link>
-        unspec 00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00  txqueuelen 1000  (UNSPEC)
-        RX packets 24  bytes 3351 (3.2 KiB)
-        RX errors 0  dropped 0  overruns 0  frame 0
-        TX packets 33  bytes 2436 (2.3 KiB)
-        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
-
-rmnet_ipa0: flags=65<UP,RUNNING>  mtu 9216
-        unspec 00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00  txqueuelen 1000  (UNSPEC)
-        RX packets 10  bytes 3209 (3.1 KiB)
-        RX errors 0  dropped 0  overruns 0  frame 0
-        TX packets 161  bytes 10848 (10.5 KiB)
-        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
-
-tun0: flags=81<UP,POINTOPOINT,RUNNING>  mtu 1280
-        inet 100.96.0.4  netmask 255.255.255.255  destination 100.96.0.4
-        inet6 fe80::2c2a:3f37:3e90:94d0  prefixlen 64  scopeid 0x20<link>
-        inet6 2606:4700:110:8747:69ce:4da:d448:ea2c  prefixlen 128  scopeid 0x0<global>
-        unspec 00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00  txqueuelen 500  (UNSPEC)
-        RX packets 258881  bytes 297583689 (283.7 MiB)
-        RX errors 0  dropped 0  overruns 0  frame 0
-        TX packets 152248  bytes 12026144 (11.4 MiB)
-        TX errors 0  dropped 390 overruns 0  carrier 0  collisions 0
-
-wlan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
-        inet 192.168.1.100  netmask 255.255.255.0  broadcast 192.168.1.255
-        inet6 fe80::44eb:35ff:fe65:ce21  prefixlen 64  scopeid 0x20<link>
-        inet6 2001:ee0:e9fa:2040:44eb:35ff:fe65:ce21  prefixlen 64  scopeid 0x0<global>
-        inet6 2001:ee0:e9fa:2040:7bd4:7968:cce2:cb83  prefixlen 64  scopeid 0x0<global>
-        ether 46:eb:35:65:ce:21  txqueuelen 3000  (Ethernet)
-        RX packets 2525062  bytes 1677342759 (1.5 GiB)
-        RX errors 0  dropped 0  overruns 0  frame 0
-        TX packets 2965233  bytes 2395305804 (2.2 GiB)
-        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
-    """
+type StateInfo = dict[str, InterfaceInfo]
 
 
 class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
@@ -92,7 +35,7 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
     if TYPE_CHECKING:
         username: str
         avatar_url: str
-        _previous_state: dict[str, Any]
+        _previous_state: StateInfo
         _last_reported_connectivity: bool | None
 
     exclude_interfaces: ClassVar[list[str]] = ["dummy0", "lo", "r_rmnet_data0", "rmnet_data0", "rmnet_ipa0"]
@@ -120,8 +63,8 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
 
     def compare_states(
         self,
-        old_state: dict[str, Any],
-        new_state: dict[str, Any],
+        old_state: StateInfo,
+        new_state: StateInfo,
     ) -> bool:
         if set(old_state.keys()) != set(new_state.keys()):
             return True
@@ -137,69 +80,39 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
 
         return False
 
-    async def get_ifconfig_output(self) -> str:
+    def collect_network_interfaces(self) -> StateInfo:
+        state: StateInfo = {}
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "ifconfig",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await proc.communicate()
-            if proc.returncode == 0:
-                return stdout.decode(errors="ignore")
+            interface_map = psutil.net_if_addrs()
+        except OSError as exc:
+            self.logger.warning("failed to collect interfaces via psutil: %s", exc)
+            return state
 
-            proc = await asyncio.create_subprocess_exec(
-                "/sbin/ifconfig",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await proc.communicate()
-            return stdout.decode(errors="ignore")
-
-        except FileNotFoundError:
-            return default_ifconfig_output()
-
-    def parse_network_interfaces(self, ifconfig_output: str) -> dict[str, Any]:
-        interface_pattern = r"^(\w+[\w\d_]*): "
-
-        inet_pattern = (
-            r"inet (\d+\.\d+\.\d+\.\d+)(?:\s+netmask (\d+\.\d+\.\d+\.\d+))?(?:\s+destination (\d+\.\d+\.\d+\.\d+))?"
-        )
-        inet6_pattern = r"inet6 ([a-f0-9:]+)\s+prefixlen (\d+)"
-
-        interfaces: dict[str, Any] = {}
-        current_interface = None
-
-        for line in ifconfig_output.splitlines():
-            interface_match = re.match(interface_pattern, line)
-            if interface_match:
-                current_interface = interface_match.group(1)
-                if current_interface in self.exclude_interfaces:
-                    current_interface = None
-                    continue
-
-                interfaces[current_interface] = {"ipv4": [], "ipv6": []}
+        for interface_name, addresses in interface_map.items():
+            if interface_name in self.exclude_interfaces:
                 continue
 
-            if current_interface:
-                inet_match = re.search(inet_pattern, line)
-                if inet_match:
-                    ipv4_info = {
-                        "address": inet_match.group(1),
-                        "netmask": inet_match.group(2) if inet_match.group(2) else None,
-                        "destination": inet_match.group(3) if inet_match.group(3) else None,
-                    }
-                    interfaces[current_interface]["ipv4"].append(ipv4_info)
+            interface_info: InterfaceInfo = {"ipv4": [], "ipv6": []}
+            for address in addresses:
+                if address.family == socket.AF_INET:
+                    destination = address.ptp or address.broadcast
+                    interface_info["ipv4"].append(
+                        {
+                            "address": address.address,
+                            "netmask": address.netmask,
+                            "destination": destination,
+                        }
+                    )
+                elif address.family == socket.AF_INET6:
+                    interface_info["ipv6"].append(
+                        {
+                            "address": address.address.split("%", 1)[0],
+                        }
+                    )
 
-                inet6_match = re.search(inet6_pattern, line)
-                if inet6_match:
-                    ipv6_info = {
-                        "address": inet6_match.group(1),
-                        "prefixlen": inet6_match.group(2),
-                    }
-                    interfaces[current_interface]["ipv6"].append(ipv6_info)
+            state[interface_name] = interface_info
 
-        return interfaces
+        return state
 
     def format_interface_info(self, interface_name: str, data: dict[str, Any]) -> EmbedField:
         ipv4_info: list[str] = []
@@ -212,7 +125,7 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
             ipv4_info.append(info)
 
         field_value = ""
-        ipv6_info = [f"Address: {ip['address']}\nPrefix Length: {ip['prefixlen']}" for ip in data["ipv6"]]
+        ipv6_info = [f"Address: {ip['address']}" for ip in data["ipv6"]]
         if ipv4_info:
             field_value += "**IPv4:**\n" + "\n\n".join(ipv4_info) + "\n\n"
         if ipv6_info:
@@ -373,10 +286,11 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
             self.logger.error("unexpected error stopping hotspot: %s", e)
 
     async def start(self) -> None:
-        raw_output = await self.get_ifconfig_output()
-        current_state = self.parse_network_interfaces(raw_output)
+        current_state = self.collect_network_interfaces()
         changes = self.compare_states(self._previous_state, current_state)
-        self.logger.debug(f"======\n{raw_output=}\n{current_state=}\n{self._previous_state=}\n{changes=}\n======")
+        self.logger.debug(
+            "interface state current=%s previous=%s changed=%s", current_state, self._previous_state, changes
+        )
 
         if changes:
             self._pending_interface_update = True
