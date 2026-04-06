@@ -307,10 +307,6 @@ class InterfaceMonitorPlugin(IntervalPlugin, requires_root=True):
     async def start(self) -> None:
         current_state = self.collect_network_interfaces()
         changes = self.compare_states(self._previous_state, current_state)
-        self.logger.debug(
-            "interface state current=%s previous=%s changed=%s", current_state, self._previous_state, changes
-        )
-
         if changes:
             self._pending_interface_update = True
             self._previous_state = current_state
