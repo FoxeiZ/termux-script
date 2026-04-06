@@ -229,6 +229,15 @@ class Manager:
             self._pipe_locks[role] = lock
         return lock
 
+    @staticmethod
+    def _worker_debug_state(worker: PluginManager) -> dict[str, Any]:
+        return {
+            "pid": worker.pid,
+            "is_alive": worker.is_alive(),
+            "exitcode": worker.exitcode,
+            "name": worker.name,
+        }
+
     async def _load_metadata_to_workers(self) -> None:
         for metadata in self.metadata_by_name.values():
             role = "root" if metadata.requires_root else "non-root"
@@ -409,6 +418,10 @@ class Manager:
             state.stopped = True
 
         self.logger.info("stopping manager")
+        self.logger.debug(
+            "initial worker states: %s",
+            {name: self._worker_debug_state(worker) for name, worker in self.workers.items()},
+        )
         for role in list(self.pipes.keys()):
             worker = self.workers.get(role)
             if worker and not worker.is_alive():
@@ -425,7 +438,14 @@ class Manager:
                 "force": False,
             }
             try:
-                await self._send_pipe_request(role, request, timeout=0.3, check_worker_alive=True)
+                response = await self._send_pipe_request(role, request, timeout=0.3, check_worker_alive=True)
+                self.logger.debug(
+                    "shutdown response from worker %s: id=%s status=%s message=%s",
+                    role,
+                    response.get("id"),
+                    response.get("status"),
+                    response.get("message"),
+                )
             except Exception as exc:
                 self.logger.warning("failed to send shutdown to %s: %s", role, exc)
 
@@ -433,7 +453,15 @@ class Manager:
         if alive_workers:
             self.logger.debug("waiting for workers to exit: %s", list(alive_workers.keys()))
             deadline = asyncio.get_running_loop().time() + 5.0
+            last_status_log = 0.0
             while alive_workers and asyncio.get_running_loop().time() < deadline:
+                now = asyncio.get_running_loop().time()
+                if now - last_status_log >= 1.0:
+                    self.logger.debug(
+                        "worker wait status: %s",
+                        {name: self._worker_debug_state(worker) for name, worker in alive_workers.items()},
+                    )
+                    last_status_log = now
                 for name, worker in list(alive_workers.items()):
                     await asyncio.to_thread(worker.join, 0.1)
                     if not worker.is_alive():
@@ -441,9 +469,30 @@ class Manager:
                         del alive_workers[name]
 
             for name, worker in alive_workers.items():
-                self.logger.debug("worker %s did not exit in time, terminating", name)
+                self.logger.warning(
+                    "worker %s did not exit in time, terminating; state=%s",
+                    name,
+                    self._worker_debug_state(worker),
+                )
                 worker.terminate()
                 await asyncio.to_thread(worker.join, 0.5)
+                if worker.is_alive():
+                    self.logger.warning(
+                        "worker %s still alive after terminate; state=%s",
+                        name,
+                        self._worker_debug_state(worker),
+                    )
+                else:
+                    self.logger.debug(
+                        "worker %s exited after terminate; state=%s",
+                        name,
+                        self._worker_debug_state(worker),
+                    )
+
+        self.logger.debug(
+            "final worker states after stop: %s",
+            {name: self._worker_debug_state(worker) for name, worker in self.workers.items()},
+        )
 
         await self.stop_ipc()
 

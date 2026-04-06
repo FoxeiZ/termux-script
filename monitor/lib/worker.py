@@ -6,6 +6,8 @@ import importlib
 import multiprocessing
 import os
 import subprocess
+import threading
+import time
 import traceback
 import uuid
 from pathlib import Path
@@ -81,20 +83,37 @@ class PluginManager(multiprocessing.Process):
     def run(self) -> None:
         configure_queue_logging(self.log_queue)
         self._drop_privileges_if_needed()
+        start_time = time.monotonic()
         self.logger.info("starting plugin manager process")
+        self.logger.debug(
+            "plugin manager runtime context: role=%s pid=%s ppid=%s name=%s",
+            self.role,
+            os.getpid(),
+            os.getppid(),
+            self.name,
+        )
         try:
             asyncio.run(self._run_loop())
+            self.logger.info("plugin manager run loop exited normally")
         except KeyboardInterrupt:
             self.logger.info("plugin manager process interrupted")
+        except Exception as exc:
+            self.logger.error("plugin manager process crashed: %s", exc)
+            self.logger.exception(exc)
         finally:
+            self.logger.info("starting plugin manager cleanup")
             self._cleanup()
+            elapsed = time.monotonic() - start_time
+            self.logger.info("plugin manager cleanup complete after %.3fs", elapsed)
 
     async def _run_loop(self) -> None:
         loop = asyncio.get_running_loop()
+        processed_requests = 0
 
         if not IS_WINDOWS:
             # epoll/kqueue via fd is more efficient than polling in a thread
             # windows does not have this capability (eww)
+            self.logger.debug("run loop started in fd-reader mode")
             pipe_event = asyncio.Event()
 
             def _on_pipe_readable() -> None:
@@ -109,39 +128,74 @@ class PluginManager(multiprocessing.Process):
 
                     while self.pipe.poll():
                         request = self.pipe.recv()
+                        processed_requests += 1
+                        self.logger.debug(
+                            "received pipe request id=%s cmd=%s count=%s",
+                            request.get("id"),
+                            request.get("cmd"),
+                            processed_requests,
+                        )
                         should_exit = await self._process_request(request)
                         if should_exit:
+                            self.logger.debug(
+                                "run loop exit requested after %s requests",
+                                processed_requests,
+                            )
                             return
             finally:
                 loop.remove_reader(self.pipe.fileno())
+                self.logger.debug("fd reader removed from event loop")
         else:
+            self.logger.debug("run loop started in polling-thread mode")
             while True:
                 if not await asyncio.to_thread(self.pipe.poll, 0.1):
                     await asyncio.sleep(0)
                     continue
                 request = await asyncio.to_thread(self.pipe.recv)
+                processed_requests += 1
+                self.logger.debug(
+                    "received pipe request id=%s cmd=%s count=%s",
+                    request.get("id"),
+                    request.get("cmd"),
+                    processed_requests,
+                )
                 should_exit = await self._process_request(request)
                 if should_exit:
+                    self.logger.debug(
+                        "run loop exit requested after %s requests",
+                        processed_requests,
+                    )
                     return
 
     async def _process_request(self, request: PipeRequest) -> bool:
         request_id = request.get("id", uuid.uuid4().hex)
+        cmd = request.get("cmd")
+        self.logger.debug("processing request id=%s cmd=%s", request_id, cmd)
         try:
             response = await self._handle_request(request)
+            self.logger.debug(
+                "request id=%s cmd=%s produced response status=%s",
+                request_id,
+                cmd,
+                response.get("status"),
+            )
 
             if IS_WINDOWS:
                 await asyncio.to_thread(self.pipe.send, response)
             else:
                 self.pipe.send(response)
+            self.logger.debug("response sent for request id=%s cmd=%s", request_id, cmd)
 
-            if request.get("cmd") == PipeCommand.SHUTDOWN:
+            if cmd == PipeCommand.SHUTDOWN:
+                self.logger.info("shutdown request processed successfully id=%s", request_id)
                 self.logger.info("shutdown complete, exiting plugin manager process")
                 return True
 
         except EOFError:
-            self.logger.info("pipe closed, exiting")
+            self.logger.info("pipe closed while handling request id=%s cmd=%s, exiting", request_id, cmd)
             return True
         except Exception as exc:
+            self.logger.error("request processing failed id=%s cmd=%s: %s", request_id, cmd, exc)
             error_response: PipeResponse = {
                 "id": request_id,
                 "status": "failed",
@@ -153,6 +207,7 @@ class PluginManager(multiprocessing.Process):
                     await asyncio.to_thread(self.pipe.send, error_response)
                 else:
                     self.pipe.send(error_response)
+                self.logger.debug("error response sent for request id=%s cmd=%s", request_id, cmd)
             except Exception:
                 self.logger.warning("pipe send failed, exiting")
                 return True
@@ -160,16 +215,34 @@ class PluginManager(multiprocessing.Process):
 
     def _cleanup(self) -> None:
         self.logger.debug("cleaning up %s plugin manager resources", self.role)
+        self.logger.info("cleanup begin for %s plugin manager", self.role)
+        self.logger.debug(
+            "cleanup pre-state: active_threads=%s",
+            [thread.name for thread in threading.enumerate()],
+        )
         try:
             self.pipe.close()
+            self.logger.debug("pipe closed")
         except Exception as exc:
             self.logger.warning("failed to close pipe: %s", exc)
 
         try:
             self.log_queue.cancel_join_thread()
-            self.log_queue.close()
+            self.logger.debug("log queue cancel_join_thread called")
         except Exception as exc:
             self.logger.warning("failed to cancel log queue join thread: %s", exc)
+
+        try:
+            self.log_queue.close()
+            self.logger.debug("log queue closed")
+        except Exception as exc:
+            self.logger.warning("failed to close log queue: %s", exc)
+
+        self.logger.debug(
+            "cleanup post-state: active_threads=%s",
+            [thread.name for thread in threading.enumerate()],
+        )
+        self.logger.info("cleanup finished for %s plugin manager", self.role)
 
     def _drop_privileges_if_needed(self) -> None:
         if IS_WINDOWS:
@@ -395,7 +468,13 @@ class PluginManager(multiprocessing.Process):
         if not self.plugins:
             return
 
-        self.logger.info("broadcasting shutdown to all plugins")
+        running_tasks_before = [name for name, task in self.plugin_tasks.items() if not task.done()]
+        self.logger.info(
+            "broadcasting shutdown to all plugins (%s loaded, %s running tasks)",
+            len(self.plugins),
+            len(running_tasks_before),
+        )
+        self.logger.debug("running plugin tasks before shutdown: %s", running_tasks_before)
 
         stop_tasks = [self.stop_plugin(name) for name in self.plugins]
         results = await asyncio.gather(*stop_tasks, return_exceptions=True)
@@ -405,6 +484,8 @@ class PluginManager(multiprocessing.Process):
             if isinstance(result, Exception):
                 self.logger.warning("failed to stop plugin %s: %s", name, result)
                 failed_plugins.append(name)
+            else:
+                self.logger.debug("plugin %s stop completed without exception", name)
 
         for name in failed_plugins:
             plugin = self.plugins.get(name)
@@ -413,6 +494,16 @@ class PluginManager(multiprocessing.Process):
                 self.logger.warning("force cancelling rogue plugin %s task", name)
                 task.cancel()
                 plugin.task = None
+
+        task_states_after = {
+            name: {
+                "done": task.done(),
+                "cancelled": task.cancelled(),
+            }
+            for name, task in self.plugin_tasks.items()
+        }
+        self.logger.debug("plugin task states after shutdown: %s", task_states_after)
+        self.logger.info("shutdown broadcast finished for %s plugin manager", self.role)
 
     @contextlib.asynccontextmanager
     async def internal_ipc(self):
