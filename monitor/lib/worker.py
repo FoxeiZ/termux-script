@@ -83,7 +83,6 @@ class PluginManager(multiprocessing.Process):
     def run(self) -> None:
         configure_queue_logging(self.log_queue)
         self._drop_privileges_if_needed()
-        start_time = time.monotonic()
         self.logger.info("starting plugin manager process")
         self.logger.debug(
             "plugin manager runtime context: role=%s pid=%s ppid=%s name=%s",
@@ -101,11 +100,8 @@ class PluginManager(multiprocessing.Process):
             self.logger.error("plugin manager process crashed: %s", exc)
             self.logger.exception(exc)
         finally:
-            self.logger.info("starting plugin manager cleanup")
             with contextlib.suppress(Exception):
                 self._cleanup()
-            elapsed = time.monotonic() - start_time
-            self.logger.info("plugin manager cleanup complete after %.3fs", elapsed)
 
     async def _run_loop(self) -> None:
         loop = asyncio.get_running_loop()
@@ -215,6 +211,7 @@ class PluginManager(multiprocessing.Process):
         return False
 
     def _cleanup(self) -> None:
+        start_time = time.monotonic()
         self.logger.debug("cleaning up %s plugin manager resources", self.role)
         self.logger.info("cleanup begin for %s plugin manager", self.role)
         self.logger.debug(
@@ -237,7 +234,8 @@ class PluginManager(multiprocessing.Process):
             "cleanup post-state: active_threads=%s",
             [thread.name for thread in threading.enumerate()],
         )
-        self.logger.info("cleanup finished for %s plugin manager", self.role)
+        elapsed = time.monotonic() - start_time
+        self.logger.info("cleanup finished for %s plugin manager in %s seconds", self.role, elapsed)
 
     def _drop_privileges_if_needed(self) -> None:
         if IS_WINDOWS:
@@ -391,27 +389,31 @@ class PluginManager(multiprocessing.Process):
             raise ValueError("plugin not loaded")
 
         task = self.plugin_tasks.get(plugin_name)
-        if task is None or task.done():
+        if task is None:
             self.logger.debug("plugin %s has no running task, nothing to stop", plugin_name)
             plugin.task = None
             return
 
-        plugin.stop()
-        try:
-            await asyncio.wait_for(task, timeout=5.0)
-        except TimeoutError:
-            self.logger.warning("plugin %s did not stop gracefully, forcing stop", plugin_name)
-            plugin.force_stop()
+        elif task.done():
+            self.logger.debug("plugin %s task already completed", plugin_name)
+
+        else:
+            plugin.stop()
             try:
-                with contextlib.suppress(asyncio.CancelledError):
-                    await asyncio.wait_for(task, timeout=1.0)
-            except TimeoutError as exc:
-                self.logger.error("plugin %s failed to stop after force stop", plugin_name)
-                raise RuntimeError("failed to stop") from exc
+                await asyncio.wait_for(task, timeout=5.0)
+            except TimeoutError:
+                self.logger.warning("plugin %s did not stop gracefully, forcing stop", plugin_name)
+                plugin.force_stop()
+                try:
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await asyncio.wait_for(task, timeout=1.0)
+                except TimeoutError as exc:
+                    self.logger.error("plugin %s failed to stop after force stop", plugin_name)
+                    raise RuntimeError("failed to stop") from exc
+            self.logger.info("plugin %s stopped", plugin_name)
 
         self.plugin_tasks.pop(plugin_name, None)
         plugin.task = None
-        self.logger.info("plugin %s stopped", plugin_name)
 
     async def restart_plugin(self, plugin_name: str, metadata: PluginMetadata | None = None) -> None:
         self.logger.info("restarting plugin %s", plugin_name)
