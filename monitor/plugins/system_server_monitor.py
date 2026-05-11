@@ -121,6 +121,9 @@ class SystemServerPlugin(IntervalPlugin, requires_root=True):
                 await self.notifier.send_webhook({"embeds": [{"title": "System Server Monitor", "description": msg}]})
 
             async with self.manager.internal_ipc() as (_, writer):
+                if not writer:
+                    return
+
                 request: IPCRequestInternal = {
                     "cmd": IPCCommand.INTERNAL,
                     "internal_cmd": IPCCommandInternal.REBOOT,
