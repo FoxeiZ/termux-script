@@ -1,20 +1,18 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
 if [ "$EUID" -ne 0 ]; then
-    echo "Error: Orchestrator must be run as root." >&2
+    echo "Error: must be run as root." >&2
     exit 1
 fi
-
-echo "=== [INITIATING ORCHESTRATED REBOOT SEQUENCE] ==="
 
 USER_HOME="/data/data/com.termux/files/home"
 SU_CMD="su -c"
 
 echo "[1/4] Sending shutdown broadcast to User PM2 instances..."
-$SU_CMD "pm2 kill"
+PM2_HOME="$USER_HOME/.pm2" $SU_CMD "pm2 kill"
 
 echo "[2/4] Sending shutdown broadcast to Root PM2 instances..."
-PM2_HOME="$USER_HOME/.pm2-root" pm2 kill
+PM2_HOME="$USER_HOME/.suroot/.pm2" $SU_CMD "pm2 kill"
 
 echo "[3/4] Waiting for processes to terminate..."
 MAX_WAIT_SECONDS=30
