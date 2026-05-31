@@ -6,7 +6,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 USER_HOME="/data/data/com.termux/files/home"
-SU_CMD="su -c"
+SU_CMD="sudo -E"
 
 echo "[1/4] Sending shutdown broadcast to User PM2 instances..."
 PM2_HOME="$USER_HOME/.pm2" $SU_CMD "pm2 kill"
