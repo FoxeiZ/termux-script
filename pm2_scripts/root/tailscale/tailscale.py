@@ -105,7 +105,7 @@ class Tailscaled:
         self.logger.debug("fetching tailscale version from https://pkgs.tailscale.com/stable")
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get("https://pkgs.tailscale.com/stable")
+            response = await client.get("https://pkgs.tailscale.com/stable", follow_redirects=True)
             response.raise_for_status()
 
         version_match = re.search(r"<option[^>]*>([\d.]+)", response.text)
