@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 async def main(plugin: Plugin) -> None:
     loop = asyncio.get_running_loop()
-    task = asyncio.create_task(plugin.start())
+    task = asyncio.create_task(plugin._start())
 
     shutdown_signal: asyncio.Future[None] = loop.create_future()
     shutdown_task: asyncio.Task[None] | None = None
