@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import psutil
+from dotenv import find_dotenv, load_dotenv
 
 if __name__ == "__main__":
     from __base__ import *
@@ -42,6 +43,10 @@ class ProcessWatchConfigT(IntervalConfigT):
 
 
 class ProcessWatchConfig(IntervalConfigLoader[ProcessWatchConfigT]):
+    def __init__(self) -> None:
+        load_dotenv(find_dotenv(".env.process_watch", usecwd=True))
+        super().__init__()
+
     def get_defaults(self) -> ProcessWatchConfigT:
         defaults = super().get_defaults()
         defaults.update(

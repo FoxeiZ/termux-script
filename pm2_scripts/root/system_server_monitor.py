@@ -5,6 +5,7 @@ import os
 from typing import TYPE_CHECKING, override
 
 import psutil
+from dotenv import find_dotenv, load_dotenv
 
 if __name__ == "__main__":
     from __base__ import *
@@ -24,6 +25,10 @@ class SystemServerConfigT(IntervalConfigT):
 
 
 class SystemServerConfigLoader(IntervalConfigLoader[SystemServerConfigT]):
+    def __init__(self) -> None:
+        load_dotenv(find_dotenv(".env.system_server", usecwd=True))
+        super().__init__()
+
     @override
     def get_defaults(self) -> SystemServerConfigT:
         defaults = super().get_defaults()

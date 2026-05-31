@@ -10,6 +10,7 @@ import time
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, override
 
 import psutil
+from dotenv import find_dotenv, load_dotenv
 
 if __name__ == "__main__":
     from __base__ import *
@@ -30,6 +31,10 @@ class InterfaceMonitorConfigData(IntervalConfigT):
 
 
 class InterfaceMonitorConfig(IntervalConfigLoader[InterfaceMonitorConfigData]):
+    def __init__(self) -> None:
+        load_dotenv(find_dotenv(".env.interface_monitor", usecwd=True))
+        super().__init__()
+
     @override
     def get_defaults(self) -> InterfaceMonitorConfigData:
         defaults = super().get_defaults()

@@ -11,6 +11,7 @@ if __name__ == "__main__":
     from __base__ import *
 
 import httpx
+from dotenv import find_dotenv, load_dotenv
 from lib.config import ConfigLoader, ConfigT
 from lib.plugin import Plugin
 
@@ -20,12 +21,22 @@ if TYPE_CHECKING:
 
 
 class TailscaleConfigT(ConfigT):
+    TAILSCALE_HOME_DIR: Path | str
     TAILSCALE_AUTH_KEY: str | None
     TAILSCALE_UPGRADE_CHECK: bool
 
 
 class TailscaleConfig(ConfigLoader[TailscaleConfigT]):
+    def __init__(self) -> None:
+        load_dotenv(find_dotenv(".env.tailscale", usecwd=True))
+        super().__init__()
+
     def on_add_arguments(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--tailscale-home-dir",
+            dest="TAILSCALE_HOME_DIR",
+            help="Directory where Tailscale binaries are located",
+        )
         parser.add_argument(
             "--tailscale-auth-key",
             dest="TAILSCALE_AUTH_KEY",
@@ -45,18 +56,23 @@ class TailscaleConfig(ConfigLoader[TailscaleConfigT]):
             {
                 "TAILSCALE_AUTH_KEY": None,
                 "TAILSCALE_UPGRADE_CHECK": False,
+                "TAILSCALE_HOME_DIR": Path.home() / ".tailscale",
                 "NAME": "Tailscaled",
             }
         )
         return defaults
 
     @property
-    def tailscale_auth_key(self) -> str:
+    def auth_key(self) -> str:
         return self._config.get("TAILSCALE_AUTH_KEY") or ""
 
     @property
-    def tailscale_upgrade_check(self) -> bool:
+    def upgrade_check(self) -> bool:
         return self._config.get("TAILSCALE_UPGRADE_CHECK", False)
+
+    @property
+    def home_dir(self) -> Path:
+        return Path(self._config["TAILSCALE_HOME_DIR"]).expanduser().absolute()
 
 
 class Tailscaled:
@@ -428,6 +444,7 @@ class TailscaledPlugin(Plugin):
         upgrade_check = config.upgrade_check
 
         self.logger.debug("initializing with home_dir: %s", home_dir)
+        home_dir.mkdir(parents=True, exist_ok=True)
         self.tailscaled = Tailscaled(
             self.logger.getChild("tailscaled"),
             home_dir,

@@ -15,10 +15,10 @@ pm2 kill
 # because `pm2` with `--interpreter` runs the script with and forks a child process, making us lose the root privileges
 # executing the script with `sudo` directly allows us to run the script with root privileges even if pm2 forks it
 # and `-E` is needed to preserve the environment variables, otherwise the script won't be able to find the modules
-pm2 start "sudo -E python $SCRIPT_DIR/system_monitor.py" --name "root-system-monitor"
-pm2 start "sudo -E python $SCRIPT_DIR/system_server_monitor.py" --name "root-server-monitor"
-pm2 start "sudo -E python $SCRIPT_DIR/process_watch_monitor.py" --name "root-process-monitor"
-pm2 start "sudo -E python $SCRIPT_DIR/interface_monitor.py" --name "root-interface-monitor"
-pm2 start "sudo -E python $SCRIPT_DIR/tailscale/tailscale.py" --name "root-tailscale"
+pm2 start "sudo -E python $SCRIPT_DIR/system_monitor.py" --name "root-system-monitor" --cwd "$SCRIPT_DIR"
+pm2 start "sudo -E python $SCRIPT_DIR/system_server_monitor.py" --name "root-server-monitor" --cwd "$SCRIPT_DIR"
+pm2 start "sudo -E python $SCRIPT_DIR/process_watch_monitor.py" --name "root-process-monitor" --cwd "$SCRIPT_DIR"
+pm2 start "sudo -E python $SCRIPT_DIR/interface_monitor.py" --name "root-interface-monitor" --cwd "$SCRIPT_DIR"
+pm2 start "sudo -E python $SCRIPT_DIR/tailscale/tailscale.py" --name "root-tailscale" --cwd "$SCRIPT_DIR/tailscale"
 
 pm2 save

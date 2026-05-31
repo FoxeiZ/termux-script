@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import psutil
+from dotenv import find_dotenv, load_dotenv
 
 if __name__ == "__main__":
     from __base__ import *
@@ -210,6 +211,10 @@ class SystemMonitorPlugin(IntervalPlugin):
 
 
 class SystemMonitorConfig(IntervalConfigLoader[IntervalConfigT]):
+    def __init__(self) -> None:
+        load_dotenv(find_dotenv(".env.system_monitor", usecwd=True))
+        super().__init__()
+
     def get_defaults(self) -> IntervalConfigT:
         defaults = super().get_defaults()
         defaults.update(
