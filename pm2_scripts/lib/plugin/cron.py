@@ -1,0 +1,230 @@
+from __future__ import annotations
+
+import asyncio
+import contextlib
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, override
+
+from ..config import ConfigLoader, ConfigT
+from .base import Plugin
+
+if TYPE_CHECKING:
+    import argparse
+
+
+class CronConfigT(ConfigT):
+    CRON_EXPRESSION: str
+    RUN_ON_STARTUP: bool
+
+
+class CronConfigLoader[T: CronConfigT](ConfigLoader[T]):
+    @override
+    def get_defaults(self) -> T:
+        defaults = super().get_defaults()
+        defaults.update(
+            {
+                "CRON_EXPRESSION": "",
+                "RUN_ON_STARTUP": False,
+            }
+        )
+        return defaults
+
+    def on_add_arguments(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--cron_expression",
+            type=str,
+            default=None,
+            help="Cron expression defining the schedule (e.g. '*/5 * * * *' for every 5 minutes)",
+        )
+        parser.add_argument(
+            "--run_on_startup",
+            action="store_true",
+            help="Whether to run the cron job immediately on startup before waiting for the next scheduled time",
+        )
+
+    def on_init(self) -> None:
+        if not self._config["CRON_EXPRESSION"]:
+            raise ValueError("CRON_EXPRESSION must be provided either in __init__ or as class attribute")
+
+    @property
+    def cron_expression(self) -> str:
+        return self._config["CRON_EXPRESSION"]
+
+    @property
+    def run_on_startup(self) -> bool:
+        return self._config["RUN_ON_STARTUP"]
+
+
+class CronParser:
+    """Simple crontab parser that can calculate the next execution time."""
+
+    def __init__(self, cron_expression: str):
+        self.expression = cron_expression.strip()
+        self.minute, self.hour, self.day, self.month, self.weekday = self._parse_expression()
+
+    def _parse_expression(self) -> tuple[set[int], set[int], set[int], set[int], set[int]]:
+        """Parse the cron expression into sets of valid values."""
+        fields = self.expression.split()
+        if len(fields) != 5:
+            raise ValueError("Cron expression must have exactly 5 fields (minute hour day month weekday)")
+
+        return (
+            self._parse_field(fields[0], 0, 59),  # minute
+            self._parse_field(fields[1], 0, 23),  # hour
+            self._parse_field(fields[2], 1, 31),  # day
+            self._parse_field(fields[3], 1, 12),  # month
+            self._parse_field(fields[4], 0, 6),  # weekday (0=Sunday, 6=Saturday)
+        )
+
+    def _parse_field(self, field: str, min_val: int, max_val: int) -> set[int]:
+        """Parse a single cron field into a set of valid values."""
+        if field == "*":
+            return set(range(min_val, max_val + 1))
+
+        values: set[int] = set()
+
+        # Handle comma-separated values
+        for part in field.split(","):
+            if "/" in part:
+                # Handle step values like */2 or 1-10/2
+                range_part, step = part.split("/")
+                step = int(step)
+
+                if range_part == "*":
+                    start, end = min_val, max_val
+                elif "-" in range_part:
+                    start, end = map(int, range_part.split("-"))
+                else:
+                    start = end = int(range_part)
+
+                values.update(range(start, end + 1, step))
+
+            elif "-" in part:
+                # Handle ranges like 1-5
+                start, end = map(int, part.split("-"))
+                values.update(range(start, end + 1))
+
+            else:
+                # Handle single numbers
+                values.add(int(part))
+
+        # Filter values to be within valid range
+        return {v for v in values if min_val <= v <= max_val}
+
+    def next(self, from_time: datetime | None = None) -> datetime:
+        """
+        Calculate the next execution time based on the cron expression.
+
+        Args:
+            from_time: Calculate next time from this datetime. If None, uses current time.
+
+        Returns:
+            datetime: Next execution time
+        """
+        if from_time is None:
+            from_time = datetime.now()
+
+        # Start from the next minute (cron jobs run at the beginning of the minute)
+        next_time = from_time.replace(second=0, microsecond=0) + timedelta(minutes=1)
+
+        # Safety counter to prevent infinite loops
+        max_iterations = 527040  # One year worth of minutes (366 * 24 * 60)
+        iterations = 0
+
+        while iterations < max_iterations:
+            if self._matches_time(next_time):
+                return next_time
+
+            next_time += timedelta(minutes=1)
+            iterations += 1
+
+        raise RuntimeError("Could not find next execution time within reasonable timeframe")
+
+    def _matches_time(self, dt: datetime) -> bool:
+        """Check if a datetime matches the cron expression."""
+        # Convert Python weekday (0=Monday) to cron weekday (0=Sunday)
+        weekday = (dt.weekday() + 1) % 7
+
+        return (
+            dt.minute in self.minute
+            and dt.hour in self.hour
+            and dt.day in self.day
+            and dt.month in self.month
+            and weekday in self.weekday
+        )
+
+    def __str__(self) -> str:
+        return f"CronParser('{self.expression}')"
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
+    def __iter__(self):
+        """Make the parser iterable to yield successive execution times."""
+        current = datetime.now()
+        while True:
+            next_time = self.next(current)
+            yield next_time
+            current = next_time
+
+
+class CronPlugin(Plugin):
+    def __init__(self, config: CronConfigLoader[CronConfigT]) -> None:
+        super().__init__(config)
+
+        self.cron_expression: str | None = config.cron_expression
+        self.run_on_startup: bool | None = config.run_on_startup
+
+        self._cron_parser = CronParser(self.cron_expression)
+        self._last_run = None
+
+    async def wait_until_next_run(self) -> bool:
+        """Wait until the next scheduled time. Returns True if stopped, False if time to run."""
+        next_run = self._cron_parser.next()
+        now = datetime.now()
+        wait_seconds = (next_run - now).total_seconds()
+
+        if wait_seconds > 0:
+            self.logger.debug("next run scheduled for %s (in %.1f seconds)", next_run, wait_seconds)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._stop_event.wait(), timeout=wait_seconds)
+                return True
+
+        return False
+
+    def should_run_now(self) -> bool:
+        """Check if the cron job should run at the current time."""
+        now = datetime.now().replace(second=0, microsecond=0)
+
+        # Prevent running multiple times in the same minute
+        if self._last_run and self._last_run == now:
+            return False
+
+        return self._cron_parser._matches_time(now)
+
+    @override
+    async def _start(self) -> None:
+        self.logger.info("starting cron plugin with expression: %s", self.cron_expression)
+
+        while not self._stop_event.is_set():
+            if self.run_on_startup:
+                self.logger.info("running on startup as requested")
+                await self.start()
+                self._last_run = datetime.now().replace(second=0, microsecond=0)
+
+            try:
+                if await self.wait_until_next_run():
+                    break
+
+                if self.should_run_now():
+                    self.logger.debug("running scheduled job at %s", datetime.now())
+                    await self.start()
+                    self._last_run = datetime.now().replace(second=0, microsecond=0)
+                else:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(self._stop_event.wait(), timeout=5.0)
+                        break
+
+            except asyncio.CancelledError:
+                self.logger.info("cron plugin %s task was cancelled", self.name)
+                raise

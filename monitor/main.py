@@ -1,7 +1,4 @@
-# ruff: noqa: F401
-
 import asyncio
-import os
 
 from lib.config import Config
 from lib.manager import IS_TERMUX, Manager

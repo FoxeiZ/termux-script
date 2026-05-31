@@ -327,6 +327,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "colorama" },
     { name = "googletrans" },
+    { name = "httpx" },
     { name = "mutagen" },
     { name = "psutil" },
     { name = "python-dotenv" },
@@ -345,6 +346,7 @@ dev = [
 requires-dist = [
     { name = "colorama", specifier = ">=0.4.6" },
     { name = "googletrans", specifier = ">=4.0.2" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "mutagen", specifier = ">=1.47.0" },
     { name = "psutil", specifier = ">=7.2.1" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
