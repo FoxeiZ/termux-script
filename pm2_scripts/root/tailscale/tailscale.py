@@ -7,10 +7,12 @@ import signal
 from pathlib import Path
 from typing import TYPE_CHECKING, override
 
-import httpx
+if __name__ == "__main__":
+    from __base__ import *
 
-from ...lib.config import ConfigLoader, ConfigT
-from ...lib.plugin import Plugin
+import httpx
+from lib.config import ConfigLoader, ConfigT
+from lib.plugin import Plugin
 
 if TYPE_CHECKING:
     import argparse
@@ -471,7 +473,7 @@ class TailscaledPlugin(Plugin):
 
 
 if __name__ == "__main__":
-    from ...lib._runner import main
+    from lib._runner import main
 
     config = TailscaleConfig()
     plugin = TailscaledPlugin(config)
