@@ -43,7 +43,7 @@ class Plugin:
     )
 
     def __init__(self, config: ConfigLoader[ConfigT]) -> None:
-        self.logger = get_logger(config.name)
+        self.logger = get_logger(config.name, config.log_level)
         self.config = config
 
         self._task = None
