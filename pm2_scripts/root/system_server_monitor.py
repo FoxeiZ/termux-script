@@ -61,18 +61,18 @@ class SystemServerConfigLoader(IntervalConfigLoader[SystemServerConfigT]):
     @override
     def on_init(self) -> None:
         super().on_init()
-        if self._config["CPU_THRESHOLD"] <= 0:
+        if self.cpu_threshold <= 0:
             raise ValueError("CPU_THRESHOLD must be a positive integer")
-        if self._config["THRESHOLD_COUNT_MAX"] <= 0:
+        if self.threshold_count_max <= 0:
             raise ValueError("THRESHOLD_COUNT_MAX must be a positive integer")
 
     @property
     def cpu_threshold(self) -> int:
-        return self._config["CPU_THRESHOLD"]
+        return int(self._config["CPU_THRESHOLD"])
 
     @property
     def threshold_count_max(self) -> int:
-        return self._config["THRESHOLD_COUNT_MAX"]
+        return int(self._config["THRESHOLD_COUNT_MAX"])
 
 
 class SystemServerPlugin(IntervalPlugin):

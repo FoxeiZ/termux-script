@@ -135,41 +135,38 @@ class ProcessWatchConfig(IntervalConfigLoader[ProcessWatchConfigT]):
 
     def on_init(self) -> None:
         super().on_init()
-        if (
-            self._config["CPU_THRESHOLD"] < 0
-            or self._config["RAM_THRESHOLD"] < 0
-            or self._config["COMBINED_THRESHOLD"] < 0
-        ):
+        if self.cpu_threshold < 0 or self.ram_threshold < 0 or self.combined_threshold < 0:
             raise ValueError("Threshold values must be non-negative")
-        if self._config["WATCH_SECONDS"] <= 0:
+        if self.watch_seconds <= 0:
             raise ValueError("WATCH_SECONDS must be a positive integer")
-        if self._config["TOP_N"] <= 0:
+        if self.top_n <= 0:
             raise ValueError("TOP_N must be a positive integer")
-        if set(self._config["WHITELIST"] or []) & set(self._config["BLACKLIST"] or []):
+        if set(self.whitelist or []) & set(self.blacklist or []):
             raise ValueError("Process names cannot be in both whitelist and blacklist")
-        if set(self._config["WHITELIST_PIDS"] or []) & set(self._config["BLACKLIST_PIDS"] or []):
+        if set(self.whitelist_pids or []) & set(self.blacklist_pids or []):
             raise ValueError("Process IDs cannot be in both whitelist and blacklist")
 
     @property
     def cpu_threshold(self) -> float:
-        return self._config["CPU_THRESHOLD"]
+        return float(self._config["CPU_THRESHOLD"])
 
     @property
     def ram_threshold(self) -> float:
-        return self._config["RAM_THRESHOLD"]
+        return float(self._config["RAM_THRESHOLD"])
 
     @property
     def combined_threshold(self) -> float:
-        return self._config["COMBINED_THRESHOLD"]
+        return float(self._config["COMBINED_THRESHOLD"])
 
     @property
     def watch_seconds(self) -> int:
-        return self._config["WATCH_SECONDS"]
+        return int(self._config["WATCH_SECONDS"])
 
     @property
     def top_n(self) -> int:
-        return self._config["TOP_N"]
+        return int(self._config["TOP_N"])
 
+    # TODO: list parsing in env vars
     @property
     def whitelist(self) -> set[str]:
         return {str(item) for item in self._config["WHITELIST"] or []}

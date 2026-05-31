@@ -33,15 +33,19 @@ class IntervalConfigLoader[T: IntervalConfigT](ConfigLoader[T]):
             help="Interval in seconds between plugin executions",
         )
 
+    @property
+    def interval(self) -> int:
+        return int(self._config["INTERVAL"])
+
     def on_init(self) -> None:
-        if self._config["INTERVAL"] <= 0:
+        if self.interval <= 0:
             raise ValueError("INTERVAL must be a positive integer")
 
 
 class IntervalPlugin(Plugin):
     def __init__(self, config: ConfigLoader[ConfigT]) -> None:
         super().__init__(config)
-        self.interval = config["INTERVAL"]
+        self.interval = config.interval
 
     async def wait(self, timeout: float | int) -> bool:
         """Wait for the specified timeout or until the plugin is stopped.

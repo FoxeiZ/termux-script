@@ -111,9 +111,14 @@ class ConfigLoader[T: ConfigT]:
             env_value = os.environ.get(key)
             if env_value is not None:
                 if isinstance(default, bool):
-                    self._config[key] = env_value.lower() in ("1", "true", "yes")
+                    self._config[key] = self.str_to_bool(env_value)
                 else:
                     self._config[key] = env_value
+
+    def str_to_bool(self, value: str | bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        return value.lower() in ("1", "true", "yes")
 
     def __getitem__(self, key: str) -> Any:
         return self.get(key)
@@ -121,6 +126,9 @@ class ConfigLoader[T: ConfigT]:
     def __getattr__(self, key: str) -> Any:
         if key in self._config:
             return self.get(key)
+        defaults = self.get_defaults()
+        if key in defaults:
+            return defaults[key]  # type: ignore  # last resort
         raise AttributeError(f"Config has no attribute '{key}'")
 
     def get(self, key: str, default: Any = None) -> Any:
@@ -145,23 +153,23 @@ class ConfigLoader[T: ConfigT]:
 
     @property
     def log_function_call(self) -> bool:
-        return self._config.get("LOG_FUNCTION_CALL", False)
+        return self.str_to_bool(self._config.get("LOG_FUNCTION_CALL", False))
 
     @property
     def restart_on_failure(self) -> bool:
-        return self._config.get("RESTART_ON_FAILURE", False)
+        return self.str_to_bool(self._config.get("RESTART_ON_FAILURE", False))
 
     @property
     def base_delay(self) -> int:
-        return self._config.get("BASE_DELAY", 1)
+        return int(self._config.get("BASE_DELAY", 1))
 
     @property
     def max_backoff(self) -> int:
-        return self._config.get("MAX_BACKOFF", 300)
+        return int(self._config.get("MAX_BACKOFF", 300))
 
     @property
     def max_retries(self) -> int:
-        return self._config.get("MAX_RETRIES", 0)
+        return int(self._config.get("MAX_RETRIES", 0))
 
     @property
     def name(self) -> str:

@@ -51,7 +51,7 @@ class InterfaceMonitorConfig(IntervalConfigLoader[InterfaceMonitorConfigData]):
     @override
     def on_init(self) -> None:
         super().on_init()
-        if self._config["REBOOT_THRESHOLD"] <= 0:
+        if self.reboot_threshold <= 0:
             raise ValueError("REBOOT_THRESHOLD must be a positive integer")
 
     @override
@@ -78,15 +78,15 @@ class InterfaceMonitorConfig(IntervalConfigLoader[InterfaceMonitorConfigData]):
 
     @property
     def reboot(self) -> bool:
-        return self._config["REBOOT"]
+        return self.str_to_bool(self._config["REBOOT"])
 
     @property
     def reboot_threshold(self) -> int:
-        return self._config["REBOOT_THRESHOLD"]
+        return int(self._config["REBOOT_THRESHOLD"])
 
     @property
     def hotspot(self) -> bool:
-        return self._config["HOTSPOT"]
+        return self.str_to_bool(self._config["HOTSPOT"])
 
 
 class InterfaceInfo(TypedDict):

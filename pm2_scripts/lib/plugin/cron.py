@@ -52,7 +52,7 @@ class CronConfigLoader[T: CronConfigT](ConfigLoader[T]):
 
     @property
     def run_on_startup(self) -> bool:
-        return self._config["RUN_ON_STARTUP"]
+        return self.str_to_bool(self._config["RUN_ON_STARTUP"])
 
 
 class CronParser:
