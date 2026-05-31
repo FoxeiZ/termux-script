@@ -7,6 +7,7 @@ import contextlib
 import datetime
 import socket
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, override
 
 import psutil
@@ -266,8 +267,21 @@ class InterfaceMonitorPlugin(IntervalPlugin):
             return False
 
     async def perform_reboot(self) -> None:
-        # TODO: implement
-        ...  # pragma: no cover
+        reboot_script = Path(__file__).parent.parent / "reboot.sh"
+        if not reboot_script.exists():
+            await asyncio.create_subprocess_exec(
+                "sudo",
+                "reboot",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+        else:
+            await asyncio.create_subprocess_exec(
+                "sudo",
+                str(reboot_script),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
 
     async def start_wifi_hotspot(self) -> None:
         """Start WiFi hotspot when network connection is lost."""

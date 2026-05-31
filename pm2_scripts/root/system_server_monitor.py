@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, override
 
 import psutil
@@ -172,7 +173,21 @@ class SystemServerPlugin(IntervalPlugin):
             if self.notifier is not None:
                 await self.notifier.send_webhook({"embeds": [{"title": "System Server Monitor", "description": msg}]})
 
-            # TODO: add reboot
+            reboot_script = Path(__file__).parent.parent / "reboot.sh"
+            if not reboot_script.exists():
+                await asyncio.create_subprocess_exec(
+                    "sudo",
+                    "reboot",
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+            else:
+                await asyncio.create_subprocess_exec(
+                    "sudo",
+                    str(reboot_script),
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
 
 
 if __name__ == "__main__":
