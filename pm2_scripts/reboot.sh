@@ -9,10 +9,10 @@ USER_HOME="/data/data/com.termux/files/home"
 SU_CMD="sudo -E"
 
 echo "[1/4] Sending shutdown broadcast to User PM2 instances..."
-PM2_HOME="$USER_HOME/.pm2" $SU_CMD "pm2 kill"
+PM2_HOME="$USER_HOME/.pm2" $SU_CMD pm2 kill
 
 echo "[2/4] Sending shutdown broadcast to Root PM2 instances..."
-PM2_HOME="$USER_HOME/.suroot/.pm2" $SU_CMD "pm2 kill"
+PM2_HOME="$USER_HOME/.suroot/.pm2" $SU_CMD pm2 kill
 
 echo "[3/4] Waiting for processes to terminate..."
 MAX_WAIT_SECONDS=30
