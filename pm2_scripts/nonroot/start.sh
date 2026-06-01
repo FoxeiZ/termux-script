@@ -9,3 +9,5 @@ pm2 kill
 
 pm2 start "java -jar -Xmx2g /data/data/com.termux/files/home/komga/komga-1.20.0.jar" --name "komga"
 # pm2 start "java -Xmx800M -jar Lavalink.jar" --name "lavalink" --cwd "/data/data/com.termux/files/home/lavalink"
+
+pm2 save
