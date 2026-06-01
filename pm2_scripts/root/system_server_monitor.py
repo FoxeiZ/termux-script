@@ -77,8 +77,6 @@ class SystemServerConfigLoader(IntervalConfigLoader[SystemServerConfigT]):
 
 
 class SystemServerPlugin(IntervalPlugin):
-    interval = 10
-
     if TYPE_CHECKING:
         cpu_threshold: int
         threshold_count_max: int

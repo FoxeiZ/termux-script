@@ -43,7 +43,7 @@ class IntervalConfigLoader[T: IntervalConfigT](ConfigLoader[T]):
 
 
 class IntervalPlugin(Plugin):
-    def __init__(self, config: ConfigLoader[ConfigT]) -> None:
+    def __init__(self, config: IntervalConfigLoader[IntervalConfigT]) -> None:
         super().__init__(config)
         self.interval = config.interval
 
