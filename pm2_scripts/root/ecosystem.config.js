@@ -10,6 +10,7 @@ module.exports = {
       cwd: SCRIPT_DIR,
       exec_mode: "fork",
       autorestart: true,
+      interpreter: "none",
     },
     {
       name: "root-server-monitor",
@@ -18,6 +19,7 @@ module.exports = {
       cwd: SCRIPT_DIR,
       exec_mode: "fork",
       autorestart: true,
+      interpreter: "none",
     },
     {
       name: "root-process-monitor",
@@ -26,6 +28,7 @@ module.exports = {
       cwd: SCRIPT_DIR,
       exec_mode: "fork",
       autorestart: true,
+      interpreter: "none",
     },
     {
       name: "root-interface-monitor",
@@ -34,6 +37,7 @@ module.exports = {
       cwd: SCRIPT_DIR,
       exec_mode: "fork",
       autorestart: true,
+      interpreter: "none",
     },
     {
       name: "root-tailscale",
@@ -42,6 +46,7 @@ module.exports = {
       cwd: `${SCRIPT_DIR}/tailscale`,
       exec_mode: "fork",
       autorestart: true,
+      interpreter: "none",
     },
   ],
 };
