@@ -173,6 +173,7 @@ class SystemServerPlugin(IntervalPlugin):
 
             reboot_script = Path(__file__).parent.parent / "reboot.sh"
             if not reboot_script.exists():
+                self.logger.warning(f"Reboot script {reboot_script} not found. Attempting direct reboot command.")
                 await asyncio.create_subprocess_exec(
                     "sudo",
                     "reboot",
@@ -180,6 +181,7 @@ class SystemServerPlugin(IntervalPlugin):
                     stderr=asyncio.subprocess.DEVNULL,
                 )
             else:
+                self.logger.info(f"Executing reboot script: {reboot_script}")
                 await asyncio.create_subprocess_exec(
                     "sudo",
                     str(reboot_script),
