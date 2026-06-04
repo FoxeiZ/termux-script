@@ -17,6 +17,12 @@ if [ -f "$SCRIPT_DIR/.env.sslocal" ]; then
         --interpreter-args "-c" \
         --cwd "/data/data/com.termux/files/home/projects/shadowsocks/"
 fi
+if [ -f "$SCRIPT_DIR/.env.nameless" ]; then
+    source "$SCRIPT_DIR/.env.nameless"
+    pm2 start "bootstrapper.py" --cwd "/data/data/com.termux/files/home/projects/nameless-discord-bot" \
+        --name "nameless" \
+        --interpreter python
+fi
 # pm2 start "java -Xmx800M -jar Lavalink.jar" --name "lavalink" --cwd "/data/data/com.termux/files/home/lavalink"
 
 pm2 save
