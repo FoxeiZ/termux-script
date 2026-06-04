@@ -185,6 +185,8 @@ class SystemServerPlugin(IntervalPlugin):
                     str(reboot_script),
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    preexec_fn=os.setsid,
                 )
 
 
