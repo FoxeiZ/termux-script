@@ -209,7 +209,7 @@ class LyricsPluginBase:
         self.session: httpx.Client = httpx.Client(
             transport=RetryTransport(
                 Retry(
-                    max_retries=3,
+                    total=5,
                     backoff_factor=0.5,
                 )
             )
