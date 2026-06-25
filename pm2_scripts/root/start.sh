@@ -1,5 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
+# unused, kept for reference
 if [ "$EUID" -ne 0 ]; then
     exit 1
 fi

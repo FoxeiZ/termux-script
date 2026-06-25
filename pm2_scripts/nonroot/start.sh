@@ -1,5 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
+# unused, kept for reference
 BASE_DIR="/data/data/com.termux/files/home/scripts/pm2_scripts"
 SCRIPT_DIR="$BASE_DIR/nonroot"
 
