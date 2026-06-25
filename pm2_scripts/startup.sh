@@ -51,7 +51,7 @@ startup_pm2() {
     if [ "$config_changed" -eq 0 ] && [ -f "$pm2_dump" ]; then
         echo "$label PM2 dump found. Attempting to restore $label PM2 session..."
         if [ "$use_sudo" -eq 1 ]; then
-            PM2_HOME="$pm2_home" sudo -E pm2 resurrect
+            PM2_HOME="$pm2_home" sudo pm2 resurrect
         else
             PM2_HOME="$pm2_home" pm2 resurrect
         fi
@@ -72,7 +72,7 @@ startup_pm2() {
     else
         echo "Running fresh $label initialization..."
         if [ "$use_sudo" -eq 1 ]; then
-            sudo -E pm2 start "$ecosystem_config" --update-env
+            sudo pm2 start "$ecosystem_config" --update-env
         else
             pm2 start "$ecosystem_config" --update-env
         fi
