@@ -1185,6 +1185,14 @@ class EmbedLyricsMetadataPP(PostProcessor):
             elif self._jp_pattern.search(line):
                 japanese_entries.append((i, None, line))
 
+        if not japanese_entries:
+            return {
+                "combined": lyrics,
+                "original": lyrics,
+                "romaji": None,
+                "translation": None,
+            }
+
         translations: dict[int, str] = {}
         if ADD_TRANSLATION and self._translator is not None and japanese_entries:
             try:
