@@ -208,10 +208,15 @@ class LyricsPluginBase:
         self.inner_tube = InnerTubeBase()
         self.session: httpx.Client = httpx.Client(
             transport=RetryTransport(
+                httpx.HTTPTransport(
+                    http2=True,
+                    limits=httpx.Limits(max_connections=100, max_keepalive_connections=100, keepalive_expiry=60),
+                    verify=False,
+                ),
                 Retry(
                     total=5,
                     backoff_factor=0.5,
-                )
+                ),
             )
         )
         self._to_screen: Callable[[str], None] = to_screen or print
@@ -1203,10 +1208,10 @@ class EmbedLyricsMetadataPP(PostProcessor):
         self.to_screen("Fetching lyrics...")
 
         plugins: Iterable[LyricsPluginBase] = [
-            # ShazamLyricsPlugin(information, to_screen=self.to_screen),
-            # LrcLibLyricsPlugin(information, to_screen=self.to_screen),
+            ShazamLyricsPlugin(information, to_screen=self.to_screen),
+            LrcLibLyricsPlugin(information, to_screen=self.to_screen),
             MusixMatchLyricsPlugin(information, to_screen=self.to_screen),
-            # YoutubeMusicLyricsPlugin(information, to_screen=self.to_screen),
+            YoutubeMusicLyricsPlugin(information, to_screen=self.to_screen),
         ]
 
         lyrics: str | None = None
