@@ -6,7 +6,7 @@ if [ "$(id -u)" -eq 0 ]; then
     exit 1
 fi
 
-DISTRO="{$1:-alpine}"
+DISTRO="$1"
 shift
 
 proot-distro login "$DISTRO" --isolated -- "$@" &
