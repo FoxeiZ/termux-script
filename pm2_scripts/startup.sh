@@ -66,26 +66,24 @@ startup_pm2() {
         # since the pm2 startup command is conditional
         if [ $? -ne 0 ]; then
             echo "Warning: $label PM2 resurrection failed. Falling back to clean $label initialization..."
-            if [ "$use_sudo" -eq 1 ]; then
-                sudo pm2 start "$ecosystem_config" --update-env
-            else
-                pm2 start "$ecosystem_config" --update-env
-            fi
-            if [ -n "$current_hash" ]; then
-                echo "$current_hash" > "$hash_file"
-            fi
-        fi
-    else
-        echo "Running fresh $label initialization..."
-        if [ "$use_sudo" -eq 1 ]; then
-            sudo pm2 start "$ecosystem_config" --update-env
         else
-            pm2 start "$ecosystem_config" --update-env
-        fi
-        if [ -n "$current_hash" ]; then
-            echo "$current_hash" > "$hash_file"
+            echo "$label PM2 session restored successfully."
+            return 0
         fi
     fi
+
+    echo "Running fresh $label initialization..."
+    if [ "$use_sudo" -eq 1 ]; then
+        sudo pm2 start "$ecosystem_config" --update-env
+        sudo pm2 save
+    else
+        pm2 start "$ecosystem_config" --update-env
+        pm2 save
+    fi
+    if [ -n "$current_hash" ]; then
+        echo "$current_hash" > "$hash_file"
+    fi
+
 }
 
 startup_pm2 root "$PM2_HOME_ROOT"
