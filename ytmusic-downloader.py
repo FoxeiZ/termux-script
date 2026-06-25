@@ -10,7 +10,9 @@ import re
 import subprocess
 import sys
 import threading
+import traceback
 import urllib.parse
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 from functools import cache
@@ -36,7 +38,7 @@ except ImportError:
     Translator = None
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Generator, Iterable, Iterator
+    from collections.abc import Callable, Coroutine, Iterable, Iterator
     from typing import Any, ClassVar, Literal, NotRequired, TypedDict
 
 IS_TERMUX = (
@@ -271,6 +273,10 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
     name: str = "musixmatch"
     token: ClassVar[str | None] = None
 
+    def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
+        super().__init__(info, to_screen)
+        self._cache: dict[str, Any] | None = None
+
     @classmethod
     def _ensure_session(cls) -> httpx.Client:
         if cls.session is None:
@@ -310,6 +316,9 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
         title: str = "",
         renew: bool = False,
     ) -> dict[str, Any] | None:
+        if self._cache is not None and not renew:
+            return self._cache
+
         session = self._ensure_session()
         token = self._get_token(force_refresh=renew)
         if not token:
@@ -369,6 +378,7 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
             self.to_screen("Restricted lyrics.")
             return None
 
+        self._cache = body
         return body
 
     def get_unsynced(self) -> str | None:
@@ -864,56 +874,6 @@ class LrcLibLyricsPlugin(LyricsPluginBase):
             return self.lyrics_data.get("syncedLyrics", None)
 
 
-def get_lyrics(
-    info: dict[str, Any],
-    *,
-    to_screen: Callable[[str], None] | None = None,
-) -> Generator[tuple[Literal["-metadata"], str]]:
-    to_screen = to_screen or print
-
-    plugins: list[LyricsPluginBase] = [
-        ShazamLyricsPlugin(info, to_screen=to_screen),
-        LrcLibLyricsPlugin(info, to_screen=to_screen),
-        MusixMatchLyricsPlugin(info, to_screen=to_screen),
-        YoutubeMusicLyricsPlugin(info, to_screen=to_screen),
-    ]
-
-    def save(is_synced: bool, lyrics: str):
-        suffix = ".lrc" if is_synced else ".txt"
-        _filename = Path(f"{info['filepath']}").with_suffix(suffix)
-        _filename.write_text(lyrics, encoding="utf-8")
-        to_screen(f"Saved lyrics to {_filename}")
-
-    def embed(is_synced: bool, lyrics: str):
-        if is_synced:
-            tag = "lyrics"
-        tag = "lyrics" if info["ext"] == "opus" else "lyrics-eng"
-
-        yield ("-metadata", f"{tag}={lyrics}")
-
-    def process(is_synced: bool, lyrics: str) -> Generator[tuple[Literal["-metadata"], str], Any, None]:
-        if EMBED_LYRICS:
-            yield from embed(is_synced, lyrics)
-        if SAVE_LRC:
-            save(is_synced, lyrics)
-
-    for plugin in plugins if PREFER_SYNCED else []:
-        to_screen(f"Checking synced lyrics with {plugin.__class__.__name__}...")
-        synced_lyrics = plugin.get_synced()
-        if synced_lyrics:
-            to_screen("Found synced lyrics.")
-            yield from process(True, synced_lyrics)
-            return
-
-    for plugin in plugins:
-        to_screen(f"Checking unsynced lyrics with {plugin.__class__.__name__}...")
-        unsynced_lyrics = plugin.get_unsynced()
-        if unsynced_lyrics:
-            to_screen("Found unsynced lyrics.")
-            yield from process(False, unsynced_lyrics)
-            return
-
-
 @cache
 def fetch_album_info(browse_id: str | None) -> dict[str, Any]:
     if not browse_id:
@@ -1249,30 +1209,38 @@ class EmbedLyricsMetadataPP(PostProcessor):
         self.to_screen("Fetching lyrics...")
 
         plugins: Iterable[LyricsPluginBase] = [
-            ShazamLyricsPlugin(information, to_screen=self.to_screen),
-            LrcLibLyricsPlugin(information, to_screen=self.to_screen),
+            # ShazamLyricsPlugin(information, to_screen=self.to_screen),
+            # LrcLibLyricsPlugin(information, to_screen=self.to_screen),
             MusixMatchLyricsPlugin(information, to_screen=self.to_screen),
-            YoutubeMusicLyricsPlugin(information, to_screen=self.to_screen),
+            # YoutubeMusicLyricsPlugin(information, to_screen=self.to_screen),
         ]
 
         lyrics: str | None = None
         is_synced: bool = False
 
         for plugin in plugins:
-            self.to_screen(f"Checking synced lyrics with {plugin.__class__.__name__}...")
-            lyrics = plugin.get_synced()
-            if lyrics:
-                self.to_screen("Found synced lyrics.")
-                is_synced = True
-                break
+            try:
+                self.to_screen(f"Checking synced lyrics with {plugin.__class__.__name__}...")
+                lyrics = plugin.get_synced()
+                if lyrics:
+                    self.to_screen("Found synced lyrics.")
+                    is_synced = True
+                    break
+            except Exception as e:
+                self.to_screen(f"Error while checking synced lyrics with {plugin.__class__.__name__}: {e}")
+                self.to_screen(traceback.print_exc())
 
         if PREFER_SYNCED and not lyrics:
             for plugin in plugins:
-                self.to_screen(f"Checking unsynced lyrics with {plugin.__class__.__name__}...")
-                lyrics = plugin.get_unsynced()
-                if lyrics:
-                    self.to_screen("Found unsynced lyrics.")
-                    break
+                try:
+                    self.to_screen(f"Checking unsynced lyrics with {plugin.__class__.__name__}...")
+                    lyrics = plugin.get_unsynced()
+                    if lyrics:
+                        self.to_screen("Found unsynced lyrics.")
+                        break
+                except Exception as e:
+                    self.to_screen(f"Error while checking unsynced lyrics with {plugin.__class__.__name__}: {e}")
+                    self.to_screen(traceback.print_exc())
 
         return is_synced, lyrics
 
