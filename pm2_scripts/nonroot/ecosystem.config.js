@@ -57,7 +57,7 @@ module.exports = {
       name: "nameless",
       script:
         "/data/data/com.termux/files/home/scripts/pm2_scripts/nonroot/proot-wrapper.sh",
-      // cwd: "/data/data/com.termux/files/home/projects/nameless-discord-bot",
+      cwd: "/data/data/com.termux/files/home/",
       args: "alpine uv --directory nameless-discord-bot/ run python bootstrapper.py",
       exec_mode: "fork",
       autorestart: true,
