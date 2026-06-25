@@ -44,11 +44,21 @@ module.exports = {
       env: sslocalEnv,
     },
 
+    // {
+    //   name: "nameless",
+    //   script: "bootstrapper.py",
+    //   interpreter: "python",
+    //   cwd: "/data/data/com.termux/files/home/projects/nameless-discord-bot",
+    //   exec_mode: "fork",
+    //   autorestart: true,
+    //   env_file: path.join(SCRIPT_DIR, ".env.nameless"),
+    // },
     {
       name: "nameless",
-      script: "bootstrapper.py",
-      interpreter: "python",
-      cwd: "/data/data/com.termux/files/home/projects/nameless-discord-bot",
+      script:
+        "/data/data/com.termux/files/home/scripts/pm2_scripts/nonroot/proot-wrapper.sh",
+      // cwd: "/data/data/com.termux/files/home/projects/nameless-discord-bot",
+      args: "uv --directory nameless-discord-bot/ run python bootstrapper.py",
       exec_mode: "fork",
       autorestart: true,
       env_file: path.join(SCRIPT_DIR, ".env.nameless"),
@@ -61,14 +71,6 @@ module.exports = {
     //   cwd: "/data/data/com.termux/files/home/lavalink",
     //   exec_mode: "fork",
     //   autorestart: true
-    // },
-
-    // {
-    //   name: "proot-example",
-    //   script: "proot-distro",
-    //   args: "login alpine -- sh -c 'export $(cat /root/.config/app/.env 2>/dev/null | xargs) && exec python /root/app/main.py'",
-    //   exec_mode: "fork",
-    //   autorestart: true,
     // },
   ],
 };
