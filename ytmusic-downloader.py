@@ -1388,7 +1388,7 @@ ytdl_opts = {
     "extractor_args": {
         "youtube": {
             "lang": ["en"],
-            "player_client": ["web"],
+            "player_client": ["mweb"],
             "formats": "missing_pot",
         },
         "youtubepot-bgutilhttp": {"base_url": ["https://bgutil-ytdlp-pot-vercal.vercel.app"]},
