@@ -17,10 +17,8 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import requests
+import httpx
 import yt_dlp
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 from yt_dlp.postprocessor.common import PostProcessor
 from yt_dlp.postprocessor.metadataparser import MetadataParserPP
 
@@ -148,9 +146,7 @@ else:
 
 
 class InnerTubeBase:
-    if TYPE_CHECKING:
-        session: requests.Session  # type: ignore
-
+    session: httpx.Client | None = None
     _instance = None
 
     API_KEY = "AIzaSyDkZV5Q2b1e0Qf4Zc0wRjM3vW3rmpZ_mD0"
@@ -171,8 +167,8 @@ class InnerTubeBase:
     def __new__(cls):
         if not cls._instance:
             cls._instance = super().__new__(cls)
-            cls._instance.session = requests.Session()
-            cls._instance.session.headers.update(cls.HEADERS)
+            cls.session = httpx.Client()
+            cls.session.headers.update(cls.HEADERS)
         return cls._instance
 
     def fetch(self, endpoint: Literal["next", "browse"], payload: dict[str, Any]) -> dict[str, Any]:
@@ -180,6 +176,8 @@ class InnerTubeBase:
         if payload.get("context") is None:
             payload["context"] = self.CLIENT_CONTEXT
 
+        if not self.session:
+            raise RuntimeError("session not initialized")
         response = self.session.post(url, json={**payload, "context": self.CLIENT_CONTEXT})
         response.raise_for_status()
         return response.json()
@@ -271,14 +269,14 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
     }
 
-    session: ClassVar[requests.Session | None] = None
+    session: ClassVar[httpx.Client | None] = None
     name: str = "musixmatch"
     token: ClassVar[str | None] = None
 
     @classmethod
-    def _ensure_session(cls) -> requests.Session:
+    def _ensure_session(cls) -> httpx.Client:
         if cls.session is None:
-            cls.session = requests.Session()
+            cls.session = httpx.Client()
             cls.session.headers.update(cls.HEADERS)
         return cls.session
 
@@ -506,11 +504,11 @@ class ShazamLyricsPlugin(LyricsPluginBase):
         super().__init__(info, to_screen=to_screen)
         self._raw_data: tuple[str, bool, bool] | None = None
 
-    def _make_request(self, url: str) -> requests.Response | None:
+    def _make_request(self, url: str) -> httpx.Response | None:
         try:
-            response = requests.get(url, headers=self.HEADERS, allow_redirects=True, timeout=10)
+            response = httpx.get(url, headers=self.HEADERS, follow_redirects=True, timeout=10)
             response.raise_for_status()
-        except (requests.RequestException, ConnectionError) as e:
+        except (httpx.HTTPError, httpx.NetworkError) as e:
             self.to_screen(repr(e))
             return
 
@@ -783,9 +781,7 @@ class LrcLibLyricsPlugin(LyricsPluginBase):
         self.album = info.get("album") or info.get("playlist_title") or ""
         self._lyrics_data: LrcLibResponse | None = None
 
-        self.session = requests.Session()
-        retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-        self.session.mount("https://", HTTPAdapter(max_retries=retries))
+        self.session = httpx.Client()
         self.session.headers.update(self.HEADERS)
 
     def find_lyrics(
@@ -809,7 +805,7 @@ class LrcLibLyricsPlugin(LyricsPluginBase):
                 if item.get("track_name") == track_name and item.get("artist_name") == artist_name:
                     return item
             return None
-        except (requests.RequestException, ConnectionError) as e:
+        except (httpx.HTTPError, httpx.NetworkError) as e:
             self.to_screen(repr(e))
             return
 
@@ -1001,13 +997,13 @@ def is_various_artist(album_browse_id: str) -> bool:
 
 class ExtraMetadataPP(PostProcessor):
     def run(self, information: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
-        self.to_screen("Checking metadata...")
+        self.to_screen("Checking metadata...", message="")
         video_id = information["id"]
 
         chnl = information.get("channel") or information.get("uploader") or ""
         if chnl.endswith(" - Topic"):
             raw = information.get("artists") or information.get("artist", "").split(", ")
-            artists = list(dict.fromkeys(filter(None, raw)))
+            artists: list[str] = list(dict.fromkeys(filter(None, raw)))
             if not artists:
                 artists = [chnl.replace(" - Topic", "")]
             information.update(
@@ -1020,35 +1016,35 @@ class ExtraMetadataPP(PostProcessor):
             )
 
         if not information.get("playlist_id", "").startswith("OLAK5uy_"):
-            self.to_screen("Not an album context, getting metadata for album manually")
+            self.to_screen("Not an album context, getting metadata for album manually", message="")
             try:
                 information["track_number"] = get_track_num(video_id)
             except ValueError:
-                self.to_screen("Hmm, doesn't look like an album. Skipping...")
+                self.to_screen("Hmm, doesn't look like an album. Skipping...", message="")
                 return [], information
 
         try:
             information["meta_album_artist"] = get_album_artist(video_id)
         except ValueError:
-            self.to_screen("No album artist found from innertube data, trying legacy methods...")
+            self.to_screen("No album artist found from innertube data, trying legacy methods...", message="")
             try:
                 browse_id = find_album_browse_id(video_id)
                 if browse_id and is_various_artist(browse_id):
-                    self.to_screen("Album is a Various Artists compilation")
+                    self.to_screen("Album is a Various Artists compilation", message="")
                     information["meta_album_artist"] = "Various Artists"
             except ValueError:
-                self.to_screen("Hmm, doesn't look like an album. Skipping...")
+                self.to_screen("Hmm, doesn't look like an album. Skipping...", message="")
 
         if not information.get("meta_album_artist") or information.get("meta_album_artist") == "NA":
-            self.to_screen("No album artist info found, using track artist instead")
+            self.to_screen("No album artist info found, using track artist instead", message="")
             information["meta_album_artist"] = information.get("artist") or "Unknown Artist"
 
         if not information.get("meta_date"):
-            self.to_screen("No release year found, getting info from innertube album data...")
+            self.to_screen("No release year found, getting info from innertube album data...", message="")
             try:
                 information["meta_date"] = get_release_year_from_album(video_id)
             except ValueError:
-                self.to_screen("Release year not found from the album. Too bad...")
+                self.to_screen("Release year not found from the album. Too bad...", message="")
 
         return [], information
 
@@ -1157,14 +1153,14 @@ class EmbedLyricsMetadataPP(PostProcessor):
         translations: dict[int, str] = {}
         if ADD_TRANSLATION and self._translator is not None and japanese_entries:
             try:
-                self.to_screen(f"translating {len(japanese_entries)} line(s) to {TRANSLATION_LANG}...")
+                self.to_screen(f"translating {len(japanese_entries)} line(s) to {TRANSLATION_LANG}...", message="")
                 texts = [e[2] for e in japanese_entries]
                 results = self.run_coroutine_sync(self._translator.translate(texts, src="ja", dest=TRANSLATION_LANG))
                 if not isinstance(results, list):
                     results = [results]
                 translations = {e[0]: r.text for e, r in zip(japanese_entries, results, strict=True) if r.text}
             except Exception as exc:
-                self.to_screen(f"failed to translate: {exc}")
+                self.to_screen(f"failed to translate: {exc}", message="")
 
         jp_set = {e[0] for e in japanese_entries}
 
@@ -1207,7 +1203,7 @@ class EmbedLyricsMetadataPP(PostProcessor):
         }
 
     def get_lyrics(self, information: dict[str, Any]) -> tuple[bool, str | None]:
-        self.to_screen("Fetching lyrics...")
+        self.to_screen("Fetching lyrics...", message="")
 
         plugins: Iterable[LyricsPluginBase] = [
             ShazamLyricsPlugin(information, to_screen=self.to_screen),
@@ -1221,19 +1217,19 @@ class EmbedLyricsMetadataPP(PostProcessor):
 
         if PREFER_SYNCED:
             for plugin in plugins:
-                self.to_screen(f"Checking synced lyrics with {plugin.__class__.__name__}...")
+                self.to_screen(f"Checking synced lyrics with {plugin.__class__.__name__}...", message="")
                 lyrics = plugin.get_synced()
                 if lyrics:
-                    self.to_screen("Found synced lyrics.")
+                    self.to_screen("Found synced lyrics.", message="")
                     is_synced = True
                     break
 
         if not lyrics:
             for plugin in plugins:
-                self.to_screen(f"Checking unsynced lyrics with {plugin.__class__.__name__}...")
+                self.to_screen(f"Checking unsynced lyrics with {plugin.__class__.__name__}...", message="")
                 lyrics = plugin.get_unsynced()
                 if lyrics:
-                    self.to_screen("Found unsynced lyrics.")
+                    self.to_screen("Found unsynced lyrics.", message="")
                     break
 
         return is_synced, lyrics
@@ -1255,7 +1251,7 @@ class SaveLyricsToFilePP(PostProcessor):
             if lyrics:
                 _filename = base.with_suffix(suffix)
                 _filename.write_text(lyrics, encoding="utf-8")
-                self.to_screen(f"Saved lyrics to {_filename}")
+                self.to_screen(f"Saved lyrics to {_filename}", message="")
 
         return [], information
 
@@ -1269,19 +1265,19 @@ class SaveLyricsToFilePP(PostProcessor):
         if original:
             path = base.with_suffix(suffix)
             path.write_text(original, encoding="utf-8")
-            self.to_screen(f"Saved original lyrics to {path}")
+            self.to_screen(f"Saved original lyrics to {path}", message="")
 
         romaji = information.get("_lyrics_romaji")
         if romaji:
             path = base.with_suffix(f".romaji{suffix}")
             path.write_text(romaji, encoding="utf-8")
-            self.to_screen(f"Saved romaji lyrics to {path}")
+            self.to_screen(f"Saved romaji lyrics to {path}", message="")
 
         translation = information.get("_lyrics_translation")
         if translation:
             path = base.with_suffix(f".{TRANSLATION_LANG}{suffix}")
             path.write_text(translation, encoding="utf-8")
-            self.to_screen(f"Saved translated lyrics to {path}")
+            self.to_screen(f"Saved translated lyrics to {path}", message="")
 
 
 ytdl_opts = {
