@@ -1441,6 +1441,7 @@ if IS_TERMUX:
         "outtmpl": {
             "default": "/sdcard/Music/%(album|Unknown Album)s/%(track_number,playlist_index)02d %(title)s.%(ext)s"
         },
+        "overwrites": False,
     }
     ytdl_opts.update(termux_opts)
     # ytdl_opts["extractor_args"]["youtube"]["getpot_bgutil_script"] = (
