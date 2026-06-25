@@ -268,8 +268,13 @@ class YoutubeMusicLyricsPlugin(LyricsPluginBase):
                 "tabbedRenderer"
             ]["watchNextTabbedResultsRenderer"]["tabs"]
             for tab in tabs:
-                endpoint: dict[str, Any] = tab["tabRenderer"]["endpoint"]["browseEndpoint"]
-                browse_id: str = endpoint.get("browseId", "")
+                tab_renderer = tab.get("tabRenderer") or {}
+                title = tab_renderer.get("title") or ""
+                if title.lower() != "lyrics":
+                    continue
+                endpoint: dict[str, Any] = tab_renderer.get("endpoint") or {}
+                browse_endpoint: dict[str, Any] = endpoint.get("browseEndpoint") or {}
+                browse_id: str = browse_endpoint.get("browseId", "")
                 if browse_id.startswith("MPLY"):
                     return browse_id
         except (KeyError, IndexError):
@@ -1208,9 +1213,9 @@ class EmbedLyricsMetadataPP(PostProcessor):
         self.to_screen("Fetching lyrics...")
 
         plugins: Iterable[LyricsPluginBase] = [
-            ShazamLyricsPlugin(information, to_screen=self.to_screen),
-            LrcLibLyricsPlugin(information, to_screen=self.to_screen),
-            MusixMatchLyricsPlugin(information, to_screen=self.to_screen),
+            # ShazamLyricsPlugin(information, to_screen=self.to_screen),
+            # LrcLibLyricsPlugin(information, to_screen=self.to_screen),
+            # MusixMatchLyricsPlugin(information, to_screen=self.to_screen),
             YoutubeMusicLyricsPlugin(information, to_screen=self.to_screen),
         ]
 
