@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/python
 # ruff: noqa: B019, E501
-# pyright: reportUnknownVariableType=false, reportArgumentType=false, reportIndexIssue=information, reportOptionalMemberAccess=information, reportIncompatibleMethodOverride=false
+# pyright: reportUnknownVariableType=false, reportArgumentType=false, reportIndexIssue=information, reportOptionalMemberAccess=information, reportIncompatibleMethodOverride=false, reportCallIssue=false
 from __future__ import annotations
 
 import asyncio
@@ -997,7 +997,7 @@ def is_various_artist(album_browse_id: str) -> bool:
 
 class ExtraMetadataPP(PostProcessor):
     def run(self, information: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
-        self.to_screen("Checking metadata...", message="")
+        self.to_screen("Checking metadata...")
         video_id = information["id"]
 
         chnl = information.get("channel") or information.get("uploader") or ""
@@ -1016,35 +1016,35 @@ class ExtraMetadataPP(PostProcessor):
             )
 
         if not information.get("playlist_id", "").startswith("OLAK5uy_"):
-            self.to_screen("Not an album context, getting metadata for album manually", message="")
+            self.to_screen("Not an album context, getting metadata for album manually")
             try:
                 information["track_number"] = get_track_num(video_id)
             except ValueError:
-                self.to_screen("Hmm, doesn't look like an album. Skipping...", message="")
+                self.to_screen("Hmm, doesn't look like an album. Skipping...")
                 return [], information
 
         try:
             information["meta_album_artist"] = get_album_artist(video_id)
         except ValueError:
-            self.to_screen("No album artist found from innertube data, trying legacy methods...", message="")
+            self.to_screen("No album artist found from innertube data, trying legacy methods...")
             try:
                 browse_id = find_album_browse_id(video_id)
                 if browse_id and is_various_artist(browse_id):
-                    self.to_screen("Album is a Various Artists compilation", message="")
+                    self.to_screen("Album is a Various Artists compilation")
                     information["meta_album_artist"] = "Various Artists"
             except ValueError:
-                self.to_screen("Hmm, doesn't look like an album. Skipping...", message="")
+                self.to_screen("Hmm, doesn't look like an album. Skipping...")
 
         if not information.get("meta_album_artist") or information.get("meta_album_artist") == "NA":
-            self.to_screen("No album artist info found, using track artist instead", message="")
+            self.to_screen("No album artist info found, using track artist instead")
             information["meta_album_artist"] = information.get("artist") or "Unknown Artist"
 
         if not information.get("meta_date"):
-            self.to_screen("No release year found, getting info from innertube album data...", message="")
+            self.to_screen("No release year found, getting info from innertube album data...")
             try:
                 information["meta_date"] = get_release_year_from_album(video_id)
             except ValueError:
-                self.to_screen("Release year not found from the album. Too bad...", message="")
+                self.to_screen("Release year not found from the album. Too bad...")
 
         return [], information
 
@@ -1153,14 +1153,14 @@ class EmbedLyricsMetadataPP(PostProcessor):
         translations: dict[int, str] = {}
         if ADD_TRANSLATION and self._translator is not None and japanese_entries:
             try:
-                self.to_screen(f"translating {len(japanese_entries)} line(s) to {TRANSLATION_LANG}...", message="")
+                self.to_screen(f"translating {len(japanese_entries)} line(s) to {TRANSLATION_LANG}...")
                 texts = [e[2] for e in japanese_entries]
                 results = self.run_coroutine_sync(self._translator.translate(texts, src="ja", dest=TRANSLATION_LANG))
                 if not isinstance(results, list):
                     results = [results]
                 translations = {e[0]: r.text for e, r in zip(japanese_entries, results, strict=True) if r.text}
             except Exception as exc:
-                self.to_screen(f"failed to translate: {exc}", message="")
+                self.to_screen(f"failed to translate: {exc}")
 
         jp_set = {e[0] for e in japanese_entries}
 
@@ -1203,7 +1203,7 @@ class EmbedLyricsMetadataPP(PostProcessor):
         }
 
     def get_lyrics(self, information: dict[str, Any]) -> tuple[bool, str | None]:
-        self.to_screen("Fetching lyrics...", message="")
+        self.to_screen("Fetching lyrics...")
 
         plugins: Iterable[LyricsPluginBase] = [
             ShazamLyricsPlugin(information, to_screen=self.to_screen),
@@ -1217,19 +1217,19 @@ class EmbedLyricsMetadataPP(PostProcessor):
 
         if PREFER_SYNCED:
             for plugin in plugins:
-                self.to_screen(f"Checking synced lyrics with {plugin.__class__.__name__}...", message="")
+                self.to_screen(f"Checking synced lyrics with {plugin.__class__.__name__}...")
                 lyrics = plugin.get_synced()
                 if lyrics:
-                    self.to_screen("Found synced lyrics.", message="")
+                    self.to_screen("Found synced lyrics.")
                     is_synced = True
                     break
 
         if not lyrics:
             for plugin in plugins:
-                self.to_screen(f"Checking unsynced lyrics with {plugin.__class__.__name__}...", message="")
+                self.to_screen(f"Checking unsynced lyrics with {plugin.__class__.__name__}...")
                 lyrics = plugin.get_unsynced()
                 if lyrics:
-                    self.to_screen("Found unsynced lyrics.", message="")
+                    self.to_screen("Found unsynced lyrics.")
                     break
 
         return is_synced, lyrics
@@ -1251,7 +1251,7 @@ class SaveLyricsToFilePP(PostProcessor):
             if lyrics:
                 _filename = base.with_suffix(suffix)
                 _filename.write_text(lyrics, encoding="utf-8")
-                self.to_screen(f"Saved lyrics to {_filename}", message="")
+                self.to_screen(f"Saved lyrics to {_filename}")
 
         return [], information
 
@@ -1265,19 +1265,19 @@ class SaveLyricsToFilePP(PostProcessor):
         if original:
             path = base.with_suffix(suffix)
             path.write_text(original, encoding="utf-8")
-            self.to_screen(f"Saved original lyrics to {path}", message="")
+            self.to_screen(f"Saved original lyrics to {path}")
 
         romaji = information.get("_lyrics_romaji")
         if romaji:
             path = base.with_suffix(f".romaji{suffix}")
             path.write_text(romaji, encoding="utf-8")
-            self.to_screen(f"Saved romaji lyrics to {path}", message="")
+            self.to_screen(f"Saved romaji lyrics to {path}")
 
         translation = information.get("_lyrics_translation")
         if translation:
             path = base.with_suffix(f".{TRANSLATION_LANG}{suffix}")
             path.write_text(translation, encoding="utf-8")
-            self.to_screen(f"Saved translated lyrics to {path}", message="")
+            self.to_screen(f"Saved translated lyrics to {path}")
 
 
 ytdl_opts = {
