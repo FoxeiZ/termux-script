@@ -179,6 +179,8 @@ class SystemServerPlugin(IntervalPlugin):
                     "reboot",
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    preexec_fn=os.setsid,
                 )
             else:
                 self.logger.info(f"Executing reboot script: {reboot_script}")

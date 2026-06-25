@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import datetime
+import os
 import socket
 import time
 from pathlib import Path
@@ -274,6 +275,8 @@ class InterfaceMonitorPlugin(IntervalPlugin):
                 "reboot",
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
+                stdin=asyncio.subprocess.DEVNULL,
+                preexec_fn=os.setsid,
             )
         else:
             await asyncio.create_subprocess_exec(
@@ -281,6 +284,8 @@ class InterfaceMonitorPlugin(IntervalPlugin):
                 str(reboot_script),
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
+                stdin=asyncio.subprocess.DEVNULL,
+                preexec_fn=os.setsid,
             )
 
     async def start_wifi_hotspot(self) -> None:
