@@ -272,6 +272,7 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
     }
 
     session: ClassVar[requests.Session | None] = None
+    name: str = "musixmatch"
     token: ClassVar[str | None] = None
 
     @classmethod
@@ -281,14 +282,11 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
             cls.session.headers.update(cls.HEADERS)
         return cls.session
 
-    @classmethod
-    def _get_token(cls, force_refresh: bool = False) -> str | None:
-        cls._ensure_session()
+    def _get_token(self, force_refresh: bool = False) -> str | None:
+        if not force_refresh and self.token:
+            return self.token
 
-        if not force_refresh and cls.token:
-            return cls.token
-
-        return cls._refresh_token()
+        return self._refresh_token()
 
     @classmethod
     def _refresh_token(cls) -> str | None:
@@ -297,12 +295,13 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
             response = session.get(
                 "https://apic-desktop.musixmatch.com/ws/1.1/token.get",
                 params={"app_id": "web-desktop-app-v1.0"},
-                timeout=10,
+                # timeout=10,
             )
             response.raise_for_status()
             data = response.json()
             if data["message"]["header"]["status_code"] == 200:
                 cls.token = data["message"]["body"]["user_token"]
+                return cls.token
         except Exception as e:
             print(f"Error fetching MusixMatch token: {e}")
         return None
@@ -317,7 +316,6 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
     ) -> dict[str, Any] | None:
         session = self._ensure_session()
         token = self._get_token(force_refresh=renew)
-
         if not token:
             self.to_screen("Could not obtain MusixMatch token.")
             return None
@@ -335,11 +333,12 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
 
         try:
             response = session.get(
-                "https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get", params=params, timeout=10
+                "https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get",
+                params=params,
             )
             response.raise_for_status()
-        except (requests.RequestException, ConnectionError) as e:
-            self.to_screen(repr(e))
+        except Exception as e:
+            self.to_screen(f"Error fetching MusixMatch lyrics: {e}")
             return None
 
         r = response.json()
@@ -376,7 +375,7 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
 
         return body
 
-    def get_unsynced(self):
+    def get_unsynced(self) -> str | None:
         body = self.find_lyrics(artist=self.artist, title=self.title)
         if body is None:
             return None
@@ -391,7 +390,7 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
 
         return None
 
-    def get_synced(self):
+    def get_synced(self) -> str | None:
         body = self.find_lyrics(artist=self.artist, title=self.title)
         if body is None:
             return None
