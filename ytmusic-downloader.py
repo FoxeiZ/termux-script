@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import yt_dlp
+from httpx_retries import Retry, RetryTransport
 from slugify import slugify
 from yt_dlp.postprocessor.common import PostProcessor
 from yt_dlp.postprocessor.metadataparser import MetadataParserPP
@@ -205,6 +206,14 @@ class LyricsPluginBase:
         self._raw_info = info
 
         self.inner_tube = InnerTubeBase()
+        self.session: httpx.Client = httpx.Client(
+            transport=RetryTransport(
+                Retry(
+                    max_retries=3,
+                    backoff_factor=0.5,
+                )
+            )
+        )
         self._to_screen: Callable[[str], None] = to_screen or print
 
     def to_screen(self, message: str):
@@ -269,32 +278,22 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
     }
 
-    session: ClassVar[httpx.Client | None] = None
     name: str = "musixmatch"
     token: ClassVar[str | None] = None
 
     def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
         super().__init__(info, to_screen)
         self._cache: dict[str, Any] | None = None
-
-    @classmethod
-    def _ensure_session(cls) -> httpx.Client:
-        if cls.session is None:
-            cls.session = httpx.Client()
-            cls.session.headers.update(cls.HEADERS)
-        return cls.session
+        self.session.headers.update(self.HEADERS)
 
     def _get_token(self, force_refresh: bool = False) -> str | None:
         if not force_refresh and self.token:
             return self.token
-
         return self._refresh_token()
 
-    @classmethod
-    def _refresh_token(cls) -> str | None:
+    def _refresh_token(self) -> str | None:
         try:
-            session = cls._ensure_session()
-            response = session.get(
+            response = self.session.get(
                 "https://apic-desktop.musixmatch.com/ws/1.1/token.get",
                 params={"app_id": "web-desktop-app-v1.0"},
                 # timeout=10,
@@ -302,8 +301,8 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
             response.raise_for_status()
             data = response.json()
             if data["message"]["header"]["status_code"] == 200:
-                cls.token = data["message"]["body"]["user_token"]
-                return cls.token
+                self.__class__.token = data["message"]["body"]["user_token"]
+                return self.token
         except Exception as e:
             print(f"Error fetching MusixMatch token: {e}")
         return None
@@ -319,7 +318,6 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
         if self._cache is not None and not renew:
             return self._cache
 
-        session = self._ensure_session()
         token = self._get_token(force_refresh=renew)
         if not token:
             self.to_screen("Could not obtain MusixMatch token.")
@@ -337,7 +335,7 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
         }
 
         try:
-            response = session.get(
+            response = self.session.get(
                 "https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get",
                 params=params,
             )
@@ -500,7 +498,6 @@ if TYPE_CHECKING:
 class ShazamLyricsPlugin(LyricsPluginBase):
     name: str = "shazam"
     cache: tuple[str, bool, bool] | None = None
-    session: ClassVar[httpx.Client | None] = None
     # BASE_URL = "https://www.shazam.com/services/search/v3/en-US/GB/web/search?query={query}&numResults=3&offset=0&types=songs"
     HEADERS: ClassVar[dict[str, str]] = {
         "X-Shazam-Platform": "IPHONE",
@@ -517,17 +514,14 @@ class ShazamLyricsPlugin(LyricsPluginBase):
         "_bszm": "2",
     }
 
-    @classmethod
-    def _ensure_session(cls) -> httpx.Client:
-        if cls.session is None:
-            cls.session = httpx.Client()
-            cls.session.headers.update(cls.HEADERS)
-            cls.session.cookies.update(cls.COOKIES)
-        return cls.session
+    def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
+        super().__init__(info, to_screen)
+        self.session.headers.update(self.HEADERS)
+        self.session.cookies.update(self.COOKIES)
 
     def _make_request(self, url: str) -> httpx.Response | None:
         try:
-            response = self._ensure_session().get(
+            response = self.session.get(
                 url,
                 headers=self.HEADERS,
                 cookies=self.COOKIES,
