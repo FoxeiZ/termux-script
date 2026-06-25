@@ -11,8 +11,10 @@ dependencies = [
     "psutil>=7.2.1",
     "pykakasi>=2.3.0",
     "python-dotenv>=1.2.2",
+    "python-slugify[unidecode]>=8.0.4",
     "telethon>=1.42.0",
     "yt-dlp>=2025.12.8",
+    "yt-dlp-ejs>=0.8.0",
 ]
 
 [dependency-groups]

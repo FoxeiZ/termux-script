@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import yt_dlp
+from slugify import slugify
 from yt_dlp.postprocessor.common import PostProcessor
 from yt_dlp.postprocessor.metadataparser import MetadataParserPP
 
@@ -192,17 +193,14 @@ class InnerTubeBase:
 
 
 class LyricsPluginBase:
-    if TYPE_CHECKING:
-        video_id: str
-        title: str | None
-        artist: str | None
-
     def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
         self.video_id = info.get("id") or ""
-        self.title = info.get("title")
+        self.title = info.get("title") or info.get("track") or ""
         self.artist = (info.get("artists") or info.get("creators") or [info.get("uploader", "")])[
             0
         ]  # always pick the first artist to avoid issues
+        self.album = info.get("album") or info.get("playlist_title") or ""
+        self._raw_info = info
 
         self.inner_tube = InnerTubeBase()
         self._to_screen: Callable[[str], None] = to_screen or print
@@ -581,21 +579,38 @@ class ShazamLyricsPlugin(LyricsPluginBase):
                 short_circuit=short_circuit,
             )
 
-        for song in data.get("results", {}).get("songs", {}).get("data", []):
-            sz_name = song["attributes"]["name"]
+        def _match_title(title1: str, title2: str, threshold: float = 0.7) -> bool:
             sm = SequenceMatcher(
                 lambda x: x in ("-", "_"),
-                self.title.lower(),
-                sz_name.lower(),
+                title1.lower(),
+                title2.lower(),
             )
             ratio = round(sm.ratio(), 2)
-            if ratio >= 0.7:
+            return ratio >= threshold
+
+        for song in data.get("results", {}).get("songs", {}).get("data", []):
+            if _match_title(self.title, song["attributes"]["name"]):
                 return (
                     song["id"],
                     song["attributes"]["name"],
                     song["attributes"]["hasLyrics"],
                     song["attributes"]["hasTimeSyncedLyrics"],
                 )
+
+        # eng title might be in `tags`
+        tags = self._raw_info.get("tags", [])
+        if not tags:
+            raise ValueError("No matching song found")
+
+        for tag in tags:
+            for song in data.get("results", {}).get("songs", {}).get("data", []):
+                if _match_title(tag, song["attributes"]["name"]):
+                    return (
+                        song["id"],
+                        song["attributes"]["name"],
+                        song["attributes"]["hasLyrics"],
+                        song["attributes"]["hasTimeSyncedLyrics"],
+                    )
 
         raise ValueError("No matching song found")
 
@@ -613,8 +628,7 @@ class ShazamLyricsPlugin(LyricsPluginBase):
         return None
 
     def _clean_title(self, title: str) -> str:
-        title = re.sub(r"(?: \(feat\.?|\[feat\.?)", " ", title)
-        title = re.sub(r"(?: \(ft\.?|\[ft\.?)", " ", title)
+        title = re.sub(r"\s*([(\[])(?:feat|ft)\.?\s+[^)\]]+([)\]])", "", title, flags=re.IGNORECASE)
         return title.strip()
 
     def _deep_search_all(self, data: dict[str, Any] | list[Any] | Any, target_key: str) -> Iterator[Any]:
@@ -726,7 +740,6 @@ class ShazamLyricsPlugin(LyricsPluginBase):
             return None
         return "\n".join(lines)
 
-    @property
     def raw_data(self) -> tuple[str, bool, bool]:
         if not self.cache:
             self.cache = self._get_data()
@@ -736,13 +749,13 @@ class ShazamLyricsPlugin(LyricsPluginBase):
         return self.cache
 
     def page_content(self) -> str:
-        return self.raw_data[0]
+        return self.raw_data()[0]
 
     def has_lyrics(self) -> bool:
-        return self.raw_data[1]
+        return self.raw_data()[1]
 
     def has_synced_lyrics(self) -> bool:
-        return self.raw_data[2]
+        return self.raw_data()[2]
 
     def _get_data(self) -> tuple[str, bool, bool] | None:
         track_id: str = ""
@@ -750,11 +763,12 @@ class ShazamLyricsPlugin(LyricsPluginBase):
         has_lyrics: bool = False
         has_synced_lyrics: bool = False
 
-        assert self.title is not None
         query = f"{self.artist} {self._clean_title(self.title)}" if self.artist else self._clean_title(self.title)
         for language in ["GB", "JP"]:
             try:
                 track_id, track_name, has_lyrics, has_synced_lyrics = self._search_for_id(query, language)
+                if track_id and track_name:
+                    break
             except ValueError as e:
                 self.to_screen(repr(e))
                 continue
@@ -763,7 +777,7 @@ class ShazamLyricsPlugin(LyricsPluginBase):
             self.to_screen("No matching track found on Shazam.")
             return None
 
-        song_url = self._get_real_page(track_id, self._clean_title(track_name))
+        song_url = self._get_real_page(track_id, slugify(track_name))
         if not song_url:
             self.to_screen("Failed to retrieve the song page.")
             return None
@@ -1236,16 +1250,15 @@ class EmbedLyricsMetadataPP(PostProcessor):
         lyrics: str | None = None
         is_synced: bool = False
 
-        if PREFER_SYNCED:
-            for plugin in plugins:
-                self.to_screen(f"Checking synced lyrics with {plugin.__class__.__name__}...")
-                lyrics = plugin.get_synced()
-                if lyrics:
-                    self.to_screen("Found synced lyrics.")
-                    is_synced = True
-                    break
+        for plugin in plugins:
+            self.to_screen(f"Checking synced lyrics with {plugin.__class__.__name__}...")
+            lyrics = plugin.get_synced()
+            if lyrics:
+                self.to_screen("Found synced lyrics.")
+                is_synced = True
+                break
 
-        if not lyrics:
+        if PREFER_SYNCED and not lyrics:
             for plugin in plugins:
                 self.to_screen(f"Checking unsynced lyrics with {plugin.__class__.__name__}...")
                 lyrics = plugin.get_unsynced()
