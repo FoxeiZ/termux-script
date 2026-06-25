@@ -1213,9 +1213,9 @@ class EmbedLyricsMetadataPP(PostProcessor):
         self.to_screen("Fetching lyrics...")
 
         plugins: Iterable[LyricsPluginBase] = [
-            # ShazamLyricsPlugin(information, to_screen=self.to_screen),
-            # LrcLibLyricsPlugin(information, to_screen=self.to_screen),
-            # MusixMatchLyricsPlugin(information, to_screen=self.to_screen),
+            ShazamLyricsPlugin(information, to_screen=self.to_screen),
+            LrcLibLyricsPlugin(information, to_screen=self.to_screen),
+            MusixMatchLyricsPlugin(information, to_screen=self.to_screen),
             YoutubeMusicLyricsPlugin(information, to_screen=self.to_screen),
         ]
 
