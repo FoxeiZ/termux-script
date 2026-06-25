@@ -612,6 +612,11 @@ class ShazamLyricsPlugin(LyricsPluginBase):
             return match.group(1)
         return None
 
+    def _clean_title(self, title: str) -> str:
+        title = re.sub(r"(?: \(feat\.?|\[feat\.?)", " ", title)
+        title = re.sub(r"(?: \(ft\.?|\[ft\.?)", " ", title)
+        return title.strip()
+
     def _deep_search_all(self, data: dict[str, Any] | list[Any] | Any, target_key: str) -> Iterator[Any]:
         if isinstance(data, dict):
             if target_key in data:
@@ -746,7 +751,7 @@ class ShazamLyricsPlugin(LyricsPluginBase):
         has_synced_lyrics: bool = False
 
         assert self.title is not None
-        query = f"{self.artist} {self.title}" if self.artist else self.title
+        query = f"{self.artist} {self._clean_title(self.title)}" if self.artist else self._clean_title(self.title)
         for language in ["GB", "JP"]:
             try:
                 track_id, track_name, has_lyrics, has_synced_lyrics = self._search_for_id(query, language)
@@ -758,7 +763,7 @@ class ShazamLyricsPlugin(LyricsPluginBase):
             self.to_screen("No matching track found on Shazam.")
             return None
 
-        song_url = self._get_real_page(track_id, track_name)
+        song_url = self._get_real_page(track_id, self._clean_title(track_name))
         if not song_url:
             self.to_screen("Failed to retrieve the song page.")
             return None
