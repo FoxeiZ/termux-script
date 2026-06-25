@@ -48,6 +48,12 @@ startup_pm2() {
         config_changed=1
     fi
 
+    if [ "$use_sudo" -eq 1 ]; then
+        sudo pm2 kill
+    else
+        pm2 kill
+    fi
+
     if [ "$config_changed" -eq 0 ] && [ -f "$pm2_dump" ]; then
         echo "$label PM2 dump found. Attempting to restore $label PM2 session..."
         if [ "$use_sudo" -eq 1 ]; then
