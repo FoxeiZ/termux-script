@@ -45,4 +45,4 @@ if [ $ELAPSED -eq $MAX_WAIT_SECONDS ]; then
     pgrep -f "python.*(_monitor|tailscale|\.py)" | grep -v $$ | xargs kill -9 2>/dev/null
 fi
 
-reboot || /system/bin/reboot || svc power reboot
+su -c 'reboot' || su -c 'svc power reboot' || reboot || /system/bin/reboot
