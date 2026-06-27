@@ -700,8 +700,28 @@ class ShazamPlugin(MetadataPluginBase):
                 self._clean_title(t2), self._clean_title(t1), threshold
             )
 
+        def _get_artists_set(artist_str: str) -> set[str]:
+            normalized = artist_str.lower()
+            for delim in (" & ", " feat. ", " feat ", " ft. ", " ft ", " x ", " + ", " with ", " and "):
+                normalized = normalized.replace(delim, ", ")
+            return {a.strip() for a in normalized.split(",") if a.strip()}
+
+        def _match_artists(a1: str, a2: str) -> bool:
+            if _fuzzy_match(a1, a2, 0.7):
+                return True
+            s1 = _get_artists_set(a1)
+            s2 = _get_artists_set(a2)
+            for x1 in s1:
+                for x2 in s2:
+                    if x1 in x2 or x2 in x1:
+                        return True
+                    sm = SequenceMatcher(None, x1, x2)
+                    if sm.ratio() >= 0.8:
+                        return True
+            return False
+
         for song in data.get("results", {}).get("songs", {}).get("data", []):
-            if not _fuzzy_match(self.artist, song["attributes"]["artistName"]):
+            if not _match_artists(self.artist, song["attributes"]["artistName"]):
                 continue
 
             if _fuzzy_match(self.title, song["attributes"]["name"]):
@@ -714,7 +734,7 @@ class ShazamPlugin(MetadataPluginBase):
 
         for tag in tags:
             for song in data.get("results", {}).get("songs", {}).get("data", []):
-                if not _fuzzy_match(self.artist, song["attributes"]["artistName"]):
+                if not _match_artists(self.artist, song["attributes"]["artistName"]):
                     continue
 
                 if _fuzzy_match(tag, song["attributes"]["name"]):
