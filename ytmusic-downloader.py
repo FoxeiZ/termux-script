@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import httpx
 import yt_dlp
@@ -39,7 +39,7 @@ except ImportError:
     Translator = None
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Iterable, Iterator
+    from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
     from typing import Any, ClassVar, Literal, NotRequired, TypedDict
 
 IS_TERMUX = (
@@ -195,18 +195,15 @@ class InnerTubeBase:
         return self.fetch("browse", {"browseId": browse_id})
 
 
-class LyricsPluginBase:
-    def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
-        self.video_id = info.get("id") or ""
-        self.title = info.get("title") or info.get("track") or ""
-        self.artist = (info.get("artists") or info.get("creators") or [info.get("uploader", "")])[
-            0
-        ]  # always pick the first artist to avoid issues
-        self.album = info.get("album") or info.get("playlist_title") or ""
-        self._raw_info = info
+class MetadataPluginBase:
+    HEADERS: ClassVar[dict[str, str]] = {}
+    COOKIES: ClassVar[dict[str, str]] = {}
 
-        self.inner_tube = InnerTubeBase()
-        self.session: httpx.Client = httpx.Client(
+    _instance: ClassVar[dict[str, MetadataPluginBase]] = {}
+
+    @staticmethod
+    def get_session() -> httpx.Client:
+        return httpx.Client(
             transport=RetryTransport(
                 httpx.HTTPTransport(
                     http2=True,
@@ -219,25 +216,66 @@ class LyricsPluginBase:
                 ),
             )
         )
+
+    def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
+        self.video_id = info.get("id") or ""
+        self.title = info.get("title") or info.get("track") or ""
+        # always pick the first artist to avoid issues
+        self.artist = (info.get("artists") or info.get("creators") or [info.get("uploader", "")])[0]
+        self.album = info.get("album") or info.get("playlist_title") or ""
+        self._raw_info = info
+
+        self.inner_tube = InnerTubeBase()
+        self.session: httpx.Client = self.get_session()
         self._to_screen: Callable[[str], None] = to_screen or print
 
     def to_screen(self, message: str):
         self._to_screen(f"{self.__class__.__name__}: {message}")
 
+    def _make_request(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        cookies: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
+        timeout: float = 10,
+    ) -> httpx.Response | None:
+        req_headers = (self.HEADERS if hasattr(self, "HEADERS") else {}).copy()
+        if headers:
+            req_headers.update(headers)
+        req_cookies = (self.COOKIES if hasattr(self, "COOKIES") else {}).copy()
+        if cookies:
+            req_cookies.update(cookies)
+
+        try:
+            response = self.session.get(
+                url,
+                headers=req_headers,
+                cookies=req_cookies,
+                params=params,
+                timeout=timeout,
+                follow_redirects=True,
+            )
+            response.raise_for_status()
+            return response
+        except Exception as e:
+            self.to_screen(f"Connection error while making request to {url}: {e}")
+            return None
+
     def get_synced(self) -> str | None:
-        raise NotImplementedError("Subclasses must implement this method")
+        return None
 
     def get_unsynced(self) -> str | None:
-        raise NotImplementedError("Subclasses must implement this method")
+        return None
+
+    def enrich_track_data(self) -> dict[str, Any]:
+        return {}
 
 
-class YoutubeMusicLyricsPlugin(LyricsPluginBase):
-    def get_synced(self) -> None:
-        return
-
-    def get_unsynced(self):
+class YoutubeMusicPlugin(MetadataPluginBase):
+    def get_unsynced(self) -> str | None:
         if not self.video_id:
-            return
+            return None
 
         data = self.inner_tube.fetch_next(self.video_id)
         browse_id = self.extract_lyrics_browse_id(data)
@@ -281,7 +319,7 @@ class YoutubeMusicLyricsPlugin(LyricsPluginBase):
             return None
 
 
-class MusixMatchLyricsPlugin(LyricsPluginBase):
+class MusixMatchPlugin(MetadataPluginBase):
     HEADERS: ClassVar = {
         "authority": "apic-desktop.musixmatch.com",
         "cookie": "mxm_bab=AB",
@@ -290,11 +328,10 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
 
     name: str = "musixmatch"
     token: ClassVar[str | None] = None
+    _lyrics_cache: ClassVar[dict[str, dict[str, Any]]] = {}
 
     def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
         super().__init__(info, to_screen)
-        self._cache: dict[str, Any] | None = None
-        self.session.headers.update(self.HEADERS)
 
     def _get_token(self, force_refresh: bool = False) -> str | None:
         if not force_refresh and self.token:
@@ -303,12 +340,12 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
 
     def _refresh_token(self) -> str | None:
         try:
-            response = self.session.get(
+            response = self._make_request(
                 "https://apic-desktop.musixmatch.com/ws/1.1/token.get",
                 params={"app_id": "web-desktop-app-v1.0"},
-                # timeout=10,
             )
-            response.raise_for_status()
+            if response is None:
+                return None
             data = response.json()
             if data["message"]["header"]["status_code"] == 200:
                 self.__class__.token = data["message"]["body"]["user_token"]
@@ -325,8 +362,9 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
         title: str = "",
         renew: bool = False,
     ) -> dict[str, Any] | None:
-        if self._cache is not None and not renew:
-            return self._cache
+        cache_key = f"{artist}:{title}:{album}"
+        if cache_key in self._lyrics_cache and not renew:
+            return self._lyrics_cache[cache_key]
 
         token = self._get_token(force_refresh=renew)
         if not token:
@@ -342,14 +380,16 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
             "format": "json",
             "namespace": "lyrics_richsynched",
             "subtitle_format": "mxm",
+            "part": "track_lyrics_translation_status,lyrics_crowd,user,subtitle_translated,lyrics_translated,attribution,itunes_commontrack_ids,lyrics_verified_by,labels,track_structure,artist,artist_list,file_upladed_list,uploaded_file_list,artist_image_tagged,artist_image,lyrics_lens,ugc_lyrics_lens,track_performer_tagging",
         }
 
         try:
-            response = self.session.get(
+            response = self._make_request(
                 "https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get",
                 params=params,
             )
-            response.raise_for_status()
+            if response is None:
+                return None
         except Exception as e:
             self.to_screen(f"Error fetching MusixMatch lyrics: {e}")
             return None
@@ -386,7 +426,7 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
             self.to_screen("Restricted lyrics.")
             return None
 
-        self._cache = body
+        self._lyrics_cache[cache_key] = body
         return body
 
     def get_unsynced(self) -> str | None:
@@ -428,6 +468,53 @@ class MusixMatchLyricsPlugin(LyricsPluginBase):
 
         return None
 
+    def enrich_track_data(self) -> dict[str, Any]:
+        body = self.find_lyrics(album=self.album, artist=self.artist, title=self.title)
+        if not body:
+            return {}
+
+        track = body.get("matcher.track.get", {}).get("message", {}).get("body", {}).get("track")
+        if not track:
+            return {}
+
+        enriched = {}
+        if "track_name" in track:
+            enriched["title"] = track["track_name"]
+        if "artist_name" in track:
+            enriched["artist"] = track["artist_name"]
+        if "album_name" in track:
+            enriched["album"] = track["album_name"]
+        if "track_isrc" in track:
+            enriched["isrc"] = track["track_isrc"]
+
+        pub_date = track.get("first_release_date")
+        if pub_date and len(pub_date) >= 4:
+            year_str = pub_date[:4]
+            if year_str.isdigit():
+                enriched["release_year"] = int(year_str)
+            enriched["meta_date"] = year_str
+
+        raw_genre_list = track.get("primary_genres", {}).get("music_genre_list", [])
+        if raw_genre_list:
+            genre_list: list[str] = []
+            for item in raw_genre_list:
+                genre_name = item.get("music_genre", {}).get("music_genre_name")
+                if genre_name:
+                    genre_list.append(genre_name)
+            enriched["genre"] = ", ".join(genre_list)
+
+        artist_list = track.get("artist_credits", {}).get("artist_list", [])
+        artists = [
+            item["artist"]["artist_name"]
+            for item in artist_list
+            if "artist" in item and "artist_name" in item["artist"]
+        ]
+        if artists:
+            enriched["artists"] = artists
+            enriched["creators"] = artists
+
+        return enriched
+
 
 if TYPE_CHECKING:
     # albumName: "Splash!!"
@@ -447,9 +534,20 @@ if TYPE_CHECKING:
     # isrc: "JPQ891600122"
     # name: "Extreme Music School (feat. Nanahira)"
     class ShazamSongAttributes(TypedDict):
+        albumName: str
+        artistName: str
+        audioLocale: str
+        composerName: str
+        discNumber: int
+        durationInMillis: int
         hasLyrics: bool
         hasTimeSyncedLyrics: bool
+        isrc: str | None
         name: str
+        genreNames: list[str]
+        releaseDate: str
+        trackNumber: int
+        url: str
 
     class ShazamSongData(TypedDict):
         attributes: ShazamSongAttributes
@@ -505,10 +603,12 @@ if TYPE_CHECKING:
     )
 
 
-class ShazamLyricsPlugin(LyricsPluginBase):
+class ShazamPlugin(MetadataPluginBase):
     name: str = "shazam"
     cache: tuple[str, bool, bool] | None = None
-    # BASE_URL = "https://www.shazam.com/services/search/v3/en-US/GB/web/search?query={query}&numResults=3&offset=0&types=songs"
+    _search_cache: ClassVar[dict[str, ShazamSongData]] = {}
+    _page_cache: ClassVar[dict[str, tuple[str, bool, bool]]] = {}
+
     HEADERS: ClassVar[dict[str, str]] = {
         "X-Shazam-Platform": "IPHONE",
         "X-Shazam-AppVersion": "14.1.0",
@@ -526,24 +626,7 @@ class ShazamLyricsPlugin(LyricsPluginBase):
 
     def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
         super().__init__(info, to_screen)
-        self.session.headers.update(self.HEADERS)
-        self.session.cookies.update(self.COOKIES)
-
-    def _make_request(self, url: str) -> httpx.Response | None:
-        try:
-            response = self.session.get(
-                url,
-                headers=self.HEADERS,
-                cookies=self.COOKIES,
-                follow_redirects=True,
-                # timeout=10,
-            )
-            response.raise_for_status()
-        except Exception as e:
-            self.to_screen(f"Connection error while making request to {url}: {e}")
-            return None
-
-        return response
+        self._cached_song_attr: ShazamSongAttributes | None = None
 
     def handle_error_responses(
         self,
@@ -567,14 +650,17 @@ class ShazamLyricsPlugin(LyricsPluginBase):
             if short_circuit:
                 raise ValueError(f"Invalid parameter: {param!r}")
 
-            return self._search_for_id(query, language, short_circuit=True)
+            return self._search_song(query, language, short_circuit=True)
 
         details = ", ".join(f"{key}={value!r}" for key, value in data.items())
         raise ValueError(f"Shazam API error: {details}")
 
-    def _search_for_id(
-        self, query: str, language: str = "GB", *, short_circuit: bool = False
-    ) -> tuple[str, str, bool, bool]:
+    def _search_song(self, query: str, language: str = "GB", *, short_circuit: bool = False) -> ShazamSongData | None:
+        cache_key = f"{query}:{language}"
+        if cache_key in self._search_cache:
+            self.to_screen(f"Using cached search result for query: {query!r} (language: {language})")
+            return self._search_cache[cache_key]
+
         resp = self._make_request(
             f"https://www.shazam.com/services/amapi/v1/catalog/{language}/search?types=songs&term={urllib.parse.quote(query)}&limit=3"
         )
@@ -593,38 +679,42 @@ class ShazamLyricsPlugin(LyricsPluginBase):
                 short_circuit=short_circuit,
             )
 
-        def _match_title(title1: str, title2: str, threshold: float = 0.7) -> bool:
+        def _match_title(t1: str, t2: str, threshold: float = 0.7) -> bool:
             sm = SequenceMatcher(
                 lambda x: x in ("-", "_"),
-                title1.lower(),
-                title2.lower(),
+                t1.lower(),
+                t2.lower(),
             )
             ratio = round(sm.ratio(), 2)
             return ratio >= threshold
 
-        for song in data.get("results", {}).get("songs", {}).get("data", []):
-            if _match_title(self.title, song["attributes"]["name"]):
-                return (
-                    song["id"],
-                    song["attributes"]["name"],
-                    song["attributes"]["hasLyrics"],
-                    song["attributes"]["hasTimeSyncedLyrics"],
-                )
+        def _fuzzy_match(t1: str, t2: str, threshold: float = 0.7) -> bool:
+            if _match_title(t1, t2, threshold) or _match_title(t2, t1, threshold):
+                return True
+            return _match_title(self._clean_title(t1), self._clean_title(t2), threshold) or _match_title(
+                self._clean_title(t2), self._clean_title(t1), threshold
+            )
 
-        # eng title might be in `tags`
+        for song in data.get("results", {}).get("songs", {}).get("data", []):
+            if not _fuzzy_match(self.artist, song["attributes"]["artistName"]):
+                continue
+
+            if _fuzzy_match(self.title, song["attributes"]["name"]):
+                self._search_cache[cache_key] = song
+                return cast("ShazamSongData", song)
+
         tags = self._raw_info.get("tags", [])
         if not tags:
             raise ValueError("No matching song found")
 
         for tag in tags:
             for song in data.get("results", {}).get("songs", {}).get("data", []):
-                if _match_title(tag, song["attributes"]["name"]):
-                    return (
-                        song["id"],
-                        song["attributes"]["name"],
-                        song["attributes"]["hasLyrics"],
-                        song["attributes"]["hasTimeSyncedLyrics"],
-                    )
+                if not _fuzzy_match(self.artist, song["attributes"]["artistName"]):
+                    continue
+
+                if _fuzzy_match(tag, song["attributes"]["name"]):
+                    self._search_cache[cache_key] = song
+                    return cast("ShazamSongData", song)
 
         raise ValueError("No matching song found")
 
@@ -660,11 +750,11 @@ class ShazamLyricsPlugin(LyricsPluginBase):
                 yield from self._deep_search_all(item, target_key)
 
     def get_unsynced(self) -> str | None:
-        if not self.has_lyrics():
+        if not self._has_lyrics():
             return None
 
         pattern = r'<script type="application/ld\+json">(.*?)</script>'
-        match = re.search(pattern, self.page_content(), re.DOTALL)
+        match = re.search(pattern, self._page_content(), re.DOTALL)
         if not match:
             self.to_screen("Failed to find lyrics data in the song page.")
             return None
@@ -680,7 +770,7 @@ class ShazamLyricsPlugin(LyricsPluginBase):
 
     def _get_synced_lyrics(self) -> Iterator[str]:
         pattern = r"self\.__next_f\.push\(\[\s*1,\s*\"..?:(.*?)\"\]\)"
-        match = re.finditer(pattern, self.page_content(), re.DOTALL)
+        match = re.finditer(pattern, self._page_content(), re.DOTALL)
         if not match:
             self.to_screen("Failed to find synced lyrics data in the song page.")
             return
@@ -698,12 +788,8 @@ class ShazamLyricsPlugin(LyricsPluginBase):
             self.to_screen("No synced lyrics found for this track.")
             return
 
-        # annoying double escape sequences in the JS string, need to decode properly
         lyrics_block_js_string = (
-            lyrics_block_js_string.encode()
-            .decode("unicode_escape")  # for removing double escape sequences
-            .encode("latin-1")  # for correct byte representation
-            .decode("utf-8")  # final decode to utf-8
+            lyrics_block_js_string.encode().decode("unicode_escape").encode("latin-1").decode("utf-8")
         )
 
         lyrics_data = json.loads(lyrics_block_js_string)
@@ -711,7 +797,6 @@ class ShazamLyricsPlugin(LyricsPluginBase):
             self.to_screen("No synced lyrics data could be parsed.")
             return
 
-        # lyrics_data[-1]["children"][-1]["children"][-1]["children"][-1][0][-1]["children"][-1][-1]["lyrics"]["lyricLines"]
         lyric_lines_gen = self._deep_search_all(lyrics_data, "lyricLines")
         if TYPE_CHECKING:
             lyric_lines_gen: Iterator[list[dict[str, Any]]]
@@ -746,7 +831,7 @@ class ShazamLyricsPlugin(LyricsPluginBase):
                     yield f"[{start_time}] {text}"
 
     def get_synced(self) -> str | None:
-        if not self.has_synced_lyrics():
+        if not self._has_synced_lyrics():
             return None
         lines = list(self._get_synced_lyrics())
         if not lines:
@@ -756,40 +841,46 @@ class ShazamLyricsPlugin(LyricsPluginBase):
 
     def raw_data(self) -> tuple[str, bool, bool]:
         if not self.cache:
-            self.cache = self._get_data()
+            self.cache = self._get_page_data()
 
         if self.cache is None:
             return "", False, False
         return self.cache
 
-    def page_content(self) -> str:
+    def _page_content(self) -> str:
         return self.raw_data()[0]
 
-    def has_lyrics(self) -> bool:
+    def _has_lyrics(self) -> bool:
         return self.raw_data()[1]
 
-    def has_synced_lyrics(self) -> bool:
+    def _has_synced_lyrics(self) -> bool:
         return self.raw_data()[2]
 
-    def _get_data(self) -> tuple[str, bool, bool] | None:
-        track_id: str = ""
-        track_name: str = ""
-        has_lyrics: bool = False
-        has_synced_lyrics: bool = False
-
+    def _get_page_data(self) -> tuple[str, bool, bool] | None:
+        matched_song = None
         query = f"{self.artist} {self._clean_title(self.title)}" if self.artist else self._clean_title(self.title)
         for language in ["GB", "JP"]:
             try:
-                track_id, track_name, has_lyrics, has_synced_lyrics = self._search_for_id(query, language)
-                if track_id and track_name:
+                matched_song = self._search_song(query, language)
+                if matched_song:
                     break
             except ValueError as e:
                 self.to_screen(repr(e))
                 continue
 
-        if not track_id or not track_name:
+        if not matched_song:
             self.to_screen("No matching track found on Shazam.")
             return None
+
+        self._cached_song_attr = matched_song["attributes"]
+        track_id = matched_song["id"]
+
+        if track_id in self._page_cache:
+            return self._page_cache[track_id]
+
+        track_name = matched_song["attributes"]["name"]
+        has_lyrics = matched_song["attributes"]["hasLyrics"]
+        has_synced_lyrics = matched_song["attributes"]["hasTimeSyncedLyrics"]
 
         song_url = self._get_real_page(track_id, slugify(track_name))
         if not song_url:
@@ -801,7 +892,45 @@ class ShazamLyricsPlugin(LyricsPluginBase):
             self.to_screen("Failed to retrieve the song page content.")
             return None
 
-        return song_page.text, has_lyrics, has_synced_lyrics
+        res = (song_page.text, has_lyrics, has_synced_lyrics)
+        self._page_cache[track_id] = res
+        return res
+
+    def enrich_track_data(self) -> dict[str, Any]:
+        if not self._cached_song_attr:
+            self.raw_data()
+
+        if not self._cached_song_attr:
+            return {}
+
+        song_attr = self._cached_song_attr
+        enriched = {}
+        # maybe use this later for more accurate metadata, but for now, we rely on the original info
+        if "name" in song_attr:
+            enriched["track"] = song_attr["name"]
+        if "artistName" in song_attr:
+            enriched["artist"] = song_attr["artistName"]
+            artists = [a.strip() for a in re.split(r"[&,]|feat\.?", song_attr["artistName"]) if a.strip()]
+            if artists:
+                enriched["artists"] = artists
+                enriched["creators"] = artists
+        if "albumName" in song_attr:
+            enriched["album"] = song_attr["albumName"]
+        if song_attr.get("genreNames"):
+            enriched["genre"] = ", ".join(song_attr["genreNames"])
+        if "composerName" in song_attr:
+            enriched["composer"] = song_attr["composerName"]
+        if "isrc" in song_attr:
+            enriched["isrc"] = song_attr["isrc"]
+
+        pub_date = song_attr.get("releaseDate") or song_attr.get("datePublished")
+        if pub_date and len(pub_date) >= 4:
+            year_str = pub_date[:4]
+            if year_str.isdigit():
+                enriched["release_year"] = int(year_str)
+            enriched["meta_date"] = year_str
+
+        return enriched
 
 
 if TYPE_CHECKING:
@@ -818,7 +947,7 @@ if TYPE_CHECKING:
         syncedLyrics: str
 
 
-class LrcLibLyricsPlugin(LyricsPluginBase):
+class LrcLibPlugin(MetadataPluginBase):
     BASE_URL = "https://lrclib.net/api"
     HEADERS: ClassVar = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -829,9 +958,6 @@ class LrcLibLyricsPlugin(LyricsPluginBase):
         super().__init__(info, to_screen=to_screen)
         self.album = info.get("album") or info.get("playlist_title") or ""
         self._lyrics_data: LrcLibResponse | None = None
-
-        self.session = httpx.Client()
-        self.session.headers.update(self.HEADERS)
 
     def find_lyrics(
         self,
@@ -848,15 +974,16 @@ class LrcLibLyricsPlugin(LyricsPluginBase):
             "album_name": album_name,
         }
         try:
-            response = self.session.get(self.BASE_URL + "/search", params=params, timeout=10)
-            response.raise_for_status()
+            response = self._make_request(self.BASE_URL + "/search", params=params)
+            if response is None:
+                return None
             for item in response.json():
                 if item.get("track_name") == track_name and item.get("artist_name") == artist_name:
                     return item
             return None
-        except (httpx.HTTPError, httpx.NetworkError) as e:
+        except Exception as e:
             self.to_screen(repr(e))
-            return
+            return None
 
     @property
     def lyrics_data(self) -> LrcLibResponse | None:
@@ -1014,7 +1141,7 @@ class ExtraMetadataPP(PostProcessor):
                 }
             )
 
-        if not information.get("playlist_id", "").startswith("OLAK5uy_"):
+        if not (information.get("playlist_id") or "").startswith("OLAK5uy_"):
             self.to_screen("Not an album context, getting metadata for album manually")
             try:
                 information["track_number"] = get_track_num(video_id)
@@ -1044,6 +1171,23 @@ class ExtraMetadataPP(PostProcessor):
                 information["meta_date"] = get_release_year_from_album(video_id)
             except ValueError:
                 self.to_screen("Release year not found from the album. Too bad...")
+
+        plugins: Sequence[MetadataPluginBase] = [
+            MusixMatchPlugin(information, to_screen=self.to_screen),
+            ShazamPlugin(information, to_screen=self.to_screen),
+        ]
+        for plugin in plugins:
+            try:
+                enriched = plugin.enrich_track_data()
+                if enriched:
+                    self.to_screen(f"Enriched metadata from {plugin.__class__.__name__}: {list(enriched.keys())}")
+                    # information.update(enriched)
+                    if "genre" in enriched:
+                        information["genre"] = enriched["genre"]
+                        information["meta_genre"] = enriched["genre"]
+                        break  # extend this to other metadata if needed, but for now, we only care about genre
+            except Exception as e:
+                self.to_screen(f"Failed to enrich track metadata from {plugin.__class__.__name__}: {e}")
 
         return [], information
 
@@ -1212,11 +1356,11 @@ class EmbedLyricsMetadataPP(PostProcessor):
     def get_lyrics(self, information: dict[str, Any]) -> tuple[bool, str | None]:
         self.to_screen("Fetching lyrics...")
 
-        plugins: Iterable[LyricsPluginBase] = [
-            ShazamLyricsPlugin(information, to_screen=self.to_screen),
-            LrcLibLyricsPlugin(information, to_screen=self.to_screen),
-            MusixMatchLyricsPlugin(information, to_screen=self.to_screen),
-            YoutubeMusicLyricsPlugin(information, to_screen=self.to_screen),
+        plugins: Iterable[MetadataPluginBase] = [
+            ShazamPlugin(information, to_screen=self.to_screen),
+            LrcLibPlugin(information, to_screen=self.to_screen),
+            MusixMatchPlugin(information, to_screen=self.to_screen),
+            YoutubeMusicPlugin(information, to_screen=self.to_screen),
         ]
 
         lyrics: str | None = None
