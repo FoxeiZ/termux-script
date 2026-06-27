@@ -125,7 +125,9 @@ if IS_TERMUX:
         }
 
         cmd.extend([key for key, value in flags.items() if value])
-        cmd.extend([f"{key} {value}" for key, value in options.items() if value])
+        for key, value in options.items():
+            if value:
+                cmd.extend([key, str(value)])
 
         try:
             subprocess.run(
