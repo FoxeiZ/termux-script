@@ -39,7 +39,7 @@ except ImportError:
     Translator = None
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
+    from collections.abc import Callable, Coroutine, Iterator, Sequence
     from typing import Any, ClassVar, Literal, NotRequired, TypedDict
 
 IS_TERMUX = (
@@ -200,22 +200,25 @@ class MetadataPluginBase:
     COOKIES: ClassVar[dict[str, str]] = {}
 
     _instance: ClassVar[dict[str, MetadataPluginBase]] = {}
+    _session: ClassVar[httpx.Client | None] = None
 
-    @staticmethod
-    def get_session() -> httpx.Client:
-        return httpx.Client(
-            transport=RetryTransport(
-                httpx.HTTPTransport(
-                    http2=True,
-                    limits=httpx.Limits(max_connections=100, max_keepalive_connections=100, keepalive_expiry=60),
-                    verify=False,
-                ),
-                Retry(
-                    total=5,
-                    backoff_factor=0.5,
-                ),
+    @classmethod
+    def get_session(cls) -> httpx.Client:
+        if MetadataPluginBase._session is None:
+            MetadataPluginBase._session = httpx.Client(
+                transport=RetryTransport(
+                    httpx.HTTPTransport(
+                        http2=True,
+                        limits=httpx.Limits(max_connections=100, max_keepalive_connections=100, keepalive_expiry=60),
+                        verify=False,
+                    ),
+                    Retry(
+                        total=5,
+                        backoff_factor=0.5,
+                    ),
+                )
             )
-        )
+        return MetadataPluginBase._session
 
     def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
         self.video_id = info.get("id") or ""
@@ -1356,38 +1359,40 @@ class EmbedLyricsMetadataPP(PostProcessor):
     def get_lyrics(self, information: dict[str, Any]) -> tuple[bool, str | None]:
         self.to_screen("Fetching lyrics...")
 
-        plugins: Iterable[MetadataPluginBase] = [
-            ShazamPlugin(information, to_screen=self.to_screen),
-            LrcLibPlugin(information, to_screen=self.to_screen),
-            MusixMatchPlugin(information, to_screen=self.to_screen),
-            YoutubeMusicPlugin(information, to_screen=self.to_screen),
+        plugin_classes: list[type[MetadataPluginBase]] = [
+            ShazamPlugin,
+            LrcLibPlugin,
+            MusixMatchPlugin,
+            YoutubeMusicPlugin,
         ]
 
         lyrics: str | None = None
         is_synced: bool = False
 
-        for plugin in plugins:
+        for plugin_cls in plugin_classes:
             try:
-                self.to_screen(f"Checking synced lyrics with {plugin.__class__.__name__}...")
+                self.to_screen(f"Checking synced lyrics with {plugin_cls.__name__}...")
+                plugin = plugin_cls(information, to_screen=self.to_screen)
                 lyrics = plugin.get_synced()
                 if lyrics:
                     self.to_screen("Found synced lyrics.")
                     is_synced = True
                     break
             except Exception as e:
-                self.to_screen(f"Error while checking synced lyrics with {plugin.__class__.__name__}: {e}")
+                self.to_screen(f"Error while checking synced lyrics with {plugin_cls.__name__}: {e}")
                 self.to_screen(traceback.print_exc())
 
         if PREFER_SYNCED and not lyrics:
-            for plugin in plugins:
+            for plugin_cls in plugin_classes:
                 try:
-                    self.to_screen(f"Checking unsynced lyrics with {plugin.__class__.__name__}...")
+                    self.to_screen(f"Checking unsynced lyrics with {plugin_cls.__name__}...")
+                    plugin = plugin_cls(information, to_screen=self.to_screen)
                     lyrics = plugin.get_unsynced()
                     if lyrics:
                         self.to_screen("Found unsynced lyrics.")
                         break
                 except Exception as e:
-                    self.to_screen(f"Error while checking unsynced lyrics with {plugin.__class__.__name__}: {e}")
+                    self.to_screen(f"Error while checking unsynced lyrics with {plugin_cls.__name__}: {e}")
                     self.to_screen(traceback.print_exc())
 
         return is_synced, lyrics
