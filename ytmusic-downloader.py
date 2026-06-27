@@ -793,9 +793,10 @@ class ShazamPlugin(MetadataPluginBase):
             self.to_screen("No synced lyrics found for this track.")
             return
 
-        lyrics_block_js_string = (
-            lyrics_block_js_string.encode().decode("unicode_escape").encode("latin-1").decode("utf-8")
-        )
+        # lyrics_block_js_string = (
+        #     lyrics_block_js_string.encode().decode("unicode_escape").encode("latin-1").decode("utf-8")
+        # )
+        lyrics_block_js_string = json.loads(f'"{lyrics_block_js_string}"')
 
         lyrics_data = json.loads(lyrics_block_js_string)
         if not lyrics_data:
@@ -814,7 +815,7 @@ class ShazamPlugin(MetadataPluginBase):
                         time_float = float(time_raw)
                         minutes = int(time_float // 60)
                         seconds = int(time_float % 60)
-                        hundredths = int((time_float - int(time_float)) * 100)
+                        hundredths = round((time_float % 1) * 100)
                         start_time = f"{minutes:02d}:{seconds:02d}.{hundredths:02d}"
                     except ValueError:
                         parts = time_raw.split(":")
