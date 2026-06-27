@@ -1197,7 +1197,6 @@ class ExtraMetadataPP(PostProcessor):
 
 class EmbedLyricsMetadataPP(PostProcessor):
     _kks = pykakasi.kakasi() if ADD_ROMAJI and pykakasi else None
-    _translator = Translator() if ADD_TRANSLATION and Translator else None
     _timestamp_pattern = re.compile(r"^(\[[\d:.]+\])(.*)$")
     _jp_pattern = re.compile(r"[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]")
 
@@ -1243,7 +1242,7 @@ class EmbedLyricsMetadataPP(PostProcessor):
 
         is_synced, lyrics = self.get_lyrics(information)
         if lyrics:
-            if ADD_ROMAJI:
+            if ADD_ROMAJI or ADD_TRANSLATION:
                 result = self._process_lyrics(lyrics, is_synced)
                 if SPLIT_LYRICS:
                     information["_lyrics_original"] = result["original"]
@@ -1305,11 +1304,12 @@ class EmbedLyricsMetadataPP(PostProcessor):
             }
 
         translations: dict[int, str] = {}
-        if ADD_TRANSLATION and self._translator is not None and japanese_entries:
+        if ADD_TRANSLATION and Translator is not None and japanese_entries:
             try:
                 self.to_screen(f"translating {len(japanese_entries)} line(s) to {TRANSLATION_LANG}...")
                 texts = [e[2] for e in japanese_entries]
-                results = self.run_coroutine_sync(self._translator.translate(texts, src="ja", dest=TRANSLATION_LANG))
+                translator = Translator()
+                results = self.run_coroutine_sync(translator.translate(texts, src="ja", dest=TRANSLATION_LANG))
                 if not isinstance(results, list):
                     results = [results]
                 translations = {e[0]: r.text for e, r in zip(japanese_entries, results, strict=True) if r.text}
@@ -1327,21 +1327,27 @@ class EmbedLyricsMetadataPP(PostProcessor):
             if i in jp_set:
                 if is_synced:
                     timestamp, content = cached_matches[i]
-                    romaji_text = self._to_romaji(content)
-                    combined_lines.append(f"{timestamp} {romaji_text}")
-                    romaji_lines.append(f"{timestamp} {romaji_text}")
-                    if i in translations:
-                        combined_lines.append(f"{timestamp} {translations[i]}")
-                        translation_lines.append(f"{timestamp} {translations[i]}")
-                    else:
-                        translation_lines.append(f"{timestamp}")
+                    if ADD_ROMAJI:
+                        romaji_text = self._to_romaji(content)
+                        combined_lines.append(f"{timestamp} {romaji_text}")
+                        romaji_lines.append(f"{timestamp} {romaji_text}")
+                    if ADD_TRANSLATION:
+                        if i in translations:
+                            combined_lines.append(f"{timestamp} {translations[i]}")
+                            translation_lines.append(f"{timestamp} {translations[i]}")
+                        else:
+                            translation_lines.append(f"{timestamp}")
                 else:
-                    romaji_text = self._to_romaji(line)
-                    combined_lines.append(romaji_text)
-                    romaji_lines.append(romaji_text)
-                    if i in translations:
-                        combined_lines.append(translations[i])
-                        translation_lines.append(translations[i])
+                    if ADD_ROMAJI:
+                        romaji_text = self._to_romaji(line)
+                        combined_lines.append(romaji_text)
+                        romaji_lines.append(romaji_text)
+                    if ADD_TRANSLATION:
+                        if i in translations:
+                            combined_lines.append(translations[i])
+                            translation_lines.append(translations[i])
+                        else:
+                            translation_lines.append("")
             else:
                 # non-japanese lines go into romaji/translation as-is
                 romaji_lines.append(line)
@@ -1352,8 +1358,8 @@ class EmbedLyricsMetadataPP(PostProcessor):
         return {
             "combined": "\n".join(combined_lines),
             "original": lyrics,
-            "romaji": "\n".join(romaji_lines) if romaji_lines else None,
-            "translation": "\n".join(translation_lines) if translations else None,
+            "romaji": "\n".join(romaji_lines) if ADD_ROMAJI and romaji_lines else None,
+            "translation": "\n".join(translation_lines) if ADD_TRANSLATION and translations else None,
         }
 
     def get_lyrics(self, information: dict[str, Any]) -> tuple[bool, str | None]:
