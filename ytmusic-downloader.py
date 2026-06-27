@@ -1194,7 +1194,6 @@ class ExtraMetadataPP(PostProcessor):
                 information["track_number"] = get_track_num(video_id)
             except ValueError:
                 self.to_screen("Hmm, doesn't look like an album. Skipping...")
-                return [], information
 
         try:
             information["meta_album_artist"] = get_album_artist(video_id)
