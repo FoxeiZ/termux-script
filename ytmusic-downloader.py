@@ -230,7 +230,11 @@ class MetadataPluginBase:
         self.title = info.get("title") or info.get("track") or ""
         # always pick the first artist to avoid issues
         artists = info.get("artists") or info.get("creators")
-        artists_list = [artists] if isinstance(artists, str) else (artists or [info.get("artist") or info.get("creator") or info.get("uploader", "")])
+        artists_list = (
+            [artists]
+            if isinstance(artists, str)
+            else (artists or [info.get("artist") or info.get("creator") or info.get("uploader", "")])
+        )
         self.artist = artists_list[0] if artists_list else ""
         self.album = info.get("album") or info.get("playlist_title") or ""
         self._raw_info = info
@@ -826,11 +830,14 @@ class ShazamPlugin(MetadataPluginBase):
         # lyrics_block_js_string = (
         #     lyrics_block_js_string.encode().decode("unicode_escape").encode("latin-1").decode("utf-8")
         # )
-        lyrics_block_js_string = json.loads(f'"{lyrics_block_js_string}"')
-
-        lyrics_data = json.loads(lyrics_block_js_string)
-        if not lyrics_data:
-            self.to_screen("No synced lyrics data could be parsed.")
+        try:
+            lyrics_block_js_string = json.loads(f'"{lyrics_block_js_string}"')
+            lyrics_data = json.loads(lyrics_block_js_string)
+            if not lyrics_data:
+                self.to_screen("No synced lyrics data could be parsed.")
+                return
+        except (json.JSONDecodeError, ValueError, TypeError):
+            self.to_screen("Failed to parse synced lyrics JSON.")
             return
 
         lyric_lines_gen = self._deep_search_all(lyrics_data, "lyricLines")
@@ -843,9 +850,10 @@ class ShazamPlugin(MetadataPluginBase):
                     time_raw: str = line.get("startTimeInSeconds", "0")
                     try:
                         time_float = float(time_raw)
-                        minutes = int(time_float // 60)
-                        seconds = int(time_float % 60)
-                        hundredths = round((time_float % 1) * 100)
+                        total_hundredths = round(time_float * 100)
+                        minutes = total_hundredths // 6000
+                        seconds = (total_hundredths // 100) % 60
+                        hundredths = total_hundredths % 100
                         start_time = f"{minutes:02d}:{seconds:02d}.{hundredths:02d}"
                     except ValueError:
                         parts = time_raw.split(":")
