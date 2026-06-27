@@ -1351,8 +1351,14 @@ class EmbedLyricsMetadataPP(PostProcessor):
             try:
                 self.to_screen(f"translating {len(japanese_entries)} line(s) to {TRANSLATION_LANG}...")
                 texts = [e[2] for e in japanese_entries]
-                translator = Translator()
-                results = self.run_coroutine_sync(translator.translate(texts, src="ja", dest=TRANSLATION_LANG))
+
+                async def _do_translate():
+                    if not Translator:
+                        raise ImportError("googletrans is required for translation")
+                    translator = Translator()
+                    return await translator.translate(texts, src="ja", dest=TRANSLATION_LANG)
+
+                results = self.run_coroutine_sync(_do_translate())
                 if not isinstance(results, list):
                     results = [results]
                 translations = {e[0]: r.text for e, r in zip(japanese_entries, results, strict=True) if r.text}
@@ -1408,41 +1414,38 @@ class EmbedLyricsMetadataPP(PostProcessor):
     def get_lyrics(self, information: dict[str, Any]) -> tuple[bool, str | None]:
         self.to_screen("Fetching lyrics...")
 
-        plugin_classes: list[type[MetadataPluginBase]] = [
-            ShazamPlugin,
-            LrcLibPlugin,
-            MusixMatchPlugin,
-            YoutubeMusicPlugin,
-        ]
-
         lyrics: str | None = None
         is_synced: bool = False
+        plugins = [
+            ShazamPlugin(information, to_screen=self.to_screen),
+            LrcLibPlugin(information, to_screen=self.to_screen),
+            MusixMatchPlugin(information, to_screen=self.to_screen),
+            YoutubeMusicPlugin(information, to_screen=self.to_screen),
+        ]
 
-        for plugin_cls in plugin_classes:
+        for plugin in plugins:
             try:
-                self.to_screen(f"Checking synced lyrics with {plugin_cls.__name__}...")
-                plugin = plugin_cls(information, to_screen=self.to_screen)
+                self.to_screen(f"Checking synced lyrics with {plugin.__class__.__name__}...")
                 lyrics = plugin.get_synced()
                 if lyrics:
                     self.to_screen("Found synced lyrics.")
                     is_synced = True
                     break
             except Exception as e:
-                self.to_screen(f"Error while checking synced lyrics with {plugin_cls.__name__}: {e}")
-                self.to_screen(traceback.print_exc())
+                self.to_screen(f"Error while checking synced lyrics with {plugin.__class__.__name__}: {e}")
+                self.to_screen(traceback.format_exc())
 
         if PREFER_SYNCED and not lyrics:
-            for plugin_cls in plugin_classes:
+            for plugin in plugins:
                 try:
-                    self.to_screen(f"Checking unsynced lyrics with {plugin_cls.__name__}...")
-                    plugin = plugin_cls(information, to_screen=self.to_screen)
+                    self.to_screen(f"Checking unsynced lyrics with {plugin.__class__.__name__}...")
                     lyrics = plugin.get_unsynced()
                     if lyrics:
                         self.to_screen("Found unsynced lyrics.")
                         break
                 except Exception as e:
-                    self.to_screen(f"Error while checking unsynced lyrics with {plugin_cls.__name__}: {e}")
-                    self.to_screen(traceback.print_exc())
+                    self.to_screen(f"Error while checking unsynced lyrics with {plugin.__class__.__name__}: {e}")
+                    self.to_screen(traceback.format_exc())
 
         return is_synced, lyrics
 
