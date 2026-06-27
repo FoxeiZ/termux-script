@@ -515,7 +515,10 @@ class MusixMatchPlugin(MetadataPluginBase):
                 genre_name = item.get("music_genre", {}).get("music_genre_name")
                 if genre_name:
                     genre_list.append(genre_name)
-            enriched["genre"] = ", ".join(genre_list)
+            # enriched["genre"] = ", ".join(genre_list)
+            # use the first genre for now, I haven't figured out how to handle multiple genres in the metadata yet
+            # and usually all the player I try don't support multiple genres anyway
+            enriched["genre"] = genre_list[0] if genre_list else ""
 
         artist_list = track.get("artist_credits", {}).get("artist_list", [])
         artists = [
@@ -961,7 +964,8 @@ class ShazamPlugin(MetadataPluginBase):
         if "albumName" in song_attr:
             enriched["album"] = song_attr["albumName"]
         if song_attr.get("genreNames"):
-            enriched["genre"] = ", ".join(song_attr["genreNames"])
+            # enriched["genre"] = ", ".join(song_attr["genreNames"])
+            enriched["genre"] = song_attr["genreNames"][0]
         if "composerName" in song_attr:
             enriched["composer"] = song_attr["composerName"]
         if "isrc" in song_attr:
