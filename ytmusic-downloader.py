@@ -229,7 +229,9 @@ class MetadataPluginBase:
         self.video_id = info.get("id") or ""
         self.title = info.get("title") or info.get("track") or ""
         # always pick the first artist to avoid issues
-        self.artist = (info.get("artists") or info.get("creators") or [info.get("uploader", "")])[0]
+        artists = info.get("artists") or info.get("creators")
+        artists_list = [artists] if isinstance(artists, str) else (artists or [info.get("artist") or info.get("creator") or info.get("uploader", "")])
+        self.artist = artists_list[0] if artists_list else ""
         self.album = info.get("album") or info.get("playlist_title") or ""
         self._raw_info = info
 
@@ -716,8 +718,13 @@ class ShazamPlugin(MetadataPluginBase):
             s2 = _get_artists_set(a2)
             for x1 in s1:
                 for x2 in s2:
-                    if x1 in x2 or x2 in x1:
+                    if x1 == x2:
                         return True
+                    if len(x1) >= 2 and len(x2) >= 2:
+                        pattern1 = r"\b" + re.escape(x1) + r"\b"
+                        pattern2 = r"\b" + re.escape(x2) + r"\b"
+                        if re.search(pattern1, x2) or re.search(pattern2, x1):
+                            return True
                     sm = SequenceMatcher(None, x1, x2)
                     if sm.ratio() >= 0.8:
                         return True
