@@ -184,9 +184,12 @@ class InnerTubeBase:
 
         if not self.session:
             raise RuntimeError("session not initialized")
-        response = self.session.post(url, json={**payload, "context": self.CLIENT_CONTEXT})
-        response.raise_for_status()
-        return response.json()
+        try:
+            response = self.session.post(url, json={**payload, "context": self.CLIENT_CONTEXT})
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPError as e:
+            raise ValueError(f"InnerTube API request failed: {e}") from e
 
     @cache
     def fetch_next(self, video_id: str) -> dict[str, Any]:
@@ -1052,6 +1055,7 @@ def fetch_album_info(browse_id: str | None) -> dict[str, Any]:
         return album_info
 
 
+@cache
 def find_album_browse_id(video_id: str) -> str | None:
     data = InnerTubeBase().fetch_next(video_id)
 
@@ -1142,7 +1146,9 @@ def is_various_artist(album_browse_id: str) -> bool:
     if not album_info:
         raise ValueError("Failed to get data from album")
 
-    entries = album_info["entries"]
+    entries = album_info.get("entries", [])
+    if not entries:
+        return False
     first_channel = entries[0].get("channel_id")
     return any(entry.get("channel_id") != first_channel for entry in entries[1:])
 
