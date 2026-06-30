@@ -287,6 +287,7 @@ class Tailscaled:
                 line_str = line_bytes.decode("utf-8", errors="surrogateescape").strip()
                 if line_str:
                     self.logger.debug(line_str)
+                    self.logger.info(f"connected_pattern: {connected_pattern.pattern}, line_str: {line_str[:10]}")
                     if not self.connected_event.is_set() and connected_pattern.search(line_str):
                         self.connected_event.set()
             except asyncio.CancelledError:
