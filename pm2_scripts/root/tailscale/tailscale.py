@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 import re
 import signal
@@ -25,6 +26,7 @@ class TailscaleConfigT(ConfigT):
     TAILSCALE_HOME_DIR: Path | str
     TAILSCALE_AUTH_KEY: str | None
     TAILSCALE_UPGRADE_CHECK: bool
+    DEBUG: bool
 
 
 class TailscaleConfig(ConfigLoader[TailscaleConfigT]):
@@ -49,6 +51,12 @@ class TailscaleConfig(ConfigLoader[TailscaleConfigT]):
             action="store_true",
             help="Check for a newer tailscale version and auto-upgrade local binaries",
         )
+        parser.add_argument(
+            "--debug",
+            dest="DEBUG",
+            action="store_true",
+            help="Enable debug logging",
+        )
 
     @override
     def get_defaults(self) -> TailscaleConfigT:
@@ -59,6 +67,7 @@ class TailscaleConfig(ConfigLoader[TailscaleConfigT]):
                 "TAILSCALE_UPGRADE_CHECK": False,
                 "TAILSCALE_HOME_DIR": Path.home() / ".tailscale",
                 "NAME": "Tailscaled",
+                "DEBUG": False,
             }
         )
         return defaults
@@ -75,6 +84,10 @@ class TailscaleConfig(ConfigLoader[TailscaleConfigT]):
     def home_dir(self) -> Path:
         return Path(self._config["TAILSCALE_HOME_DIR"]).expanduser().absolute()
 
+    @property
+    def debug(self) -> bool:
+        return self._config.get("DEBUG", False)
+
 
 class Tailscaled:
     def __init__(
@@ -83,8 +96,11 @@ class Tailscaled:
         home_dir: Path | str,
         auth_key: str = "",
         upgrade_check: bool = False,
+        debug: bool = False,
     ):
         self.logger = logger
+        logging_level = logging.DEBUG if debug else logging.INFO
+        self.logger.setLevel(logging_level)
         self.home_dir = Path(home_dir).absolute()
         self.auth_key = auth_key
         self.upgrade_check = upgrade_check
