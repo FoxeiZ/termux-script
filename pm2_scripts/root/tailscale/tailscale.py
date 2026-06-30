@@ -274,6 +274,7 @@ class Tailscaled:
 
     async def stdout_reader(self):
         self.logger.debug("starting output reader task")
+        connected_pattern = re.compile(r"^magicsock:.*connected")
         if not self.process or not self.process.stdout:
             return
 
@@ -286,13 +287,13 @@ class Tailscaled:
                 line_str = line_bytes.decode("utf-8", errors="surrogateescape").strip()
                 if line_str:
                     self.logger.debug(line_str)
-
-                    if "bootstrap dial succeeded" in line_str:
+                    if not self.connected_event.is_set() and connected_pattern.search(line_str):
                         self.connected_event.set()
             except asyncio.CancelledError:
                 self.logger.debug("output reader task cancelled")
                 break
             except Exception:
+                self.logger.exception("error reading tailscaled output")
                 break
 
         self.logger.debug("output reader task stopped")
