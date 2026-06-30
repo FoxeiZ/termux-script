@@ -274,7 +274,7 @@ class Tailscaled:
 
     async def stdout_reader(self):
         self.logger.debug("starting output reader task")
-        connected_pattern = re.compile(r"^magicsock:.*connected")
+        connected_pattern = re.compile(r"magicsock:.*connected")
         if not self.process or not self.process.stdout:
             return
 
@@ -287,9 +287,6 @@ class Tailscaled:
                 line_str = line_bytes.decode("utf-8", errors="surrogateescape").strip()
                 if line_str:
                     self.logger.debug(line_str)
-                    self.logger.info(
-                        f"connected_pattern: {connected_pattern.search(line_str)}, line_str: {line_str[:40]}"
-                    )
                     if not self.connected_event.is_set() and connected_pattern.search(line_str):
                         self.connected_event.set()
             except asyncio.CancelledError:
