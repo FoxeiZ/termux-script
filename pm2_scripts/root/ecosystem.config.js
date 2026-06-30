@@ -53,6 +53,7 @@ module.exports = {
       script: "sudo",
       args: `-E dnsmasq -p 53 --listen-address=::1 --no-resolv --server=1.1.1.1 --no-daemon`,
       exec_mode: "fork",
+      interpreter: "none",
     },
   ],
 };
