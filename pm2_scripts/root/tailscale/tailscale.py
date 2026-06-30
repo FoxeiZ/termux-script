@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import re
 import signal
 from pathlib import Path
@@ -259,12 +260,15 @@ class Tailscaled:
             "--outbound-http-proxy-listen=localhost:1055",
         ]
 
+        env = os.environ.copy()
+        env["SSL_CERT_FILE"] = "/data/data/com.termux/files/usr/etc/tls/cert.pem"
         self.process = await asyncio.create_subprocess_exec(
             *args,
             start_new_session=True,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=self.home_dir,
+            env=env,
         )
         self.logger.debug("tailscaled initialized successfully")
 
