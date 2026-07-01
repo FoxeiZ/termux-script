@@ -42,6 +42,58 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Iterator, Sequence
     from typing import Any, ClassVar, Literal, NotRequired, TypedDict
 
+
+if TYPE_CHECKING:
+
+    class EnrichTrackData(TypedDict):
+        title: NotRequired[str]
+        album: NotRequired[str]
+        genre: NotRequired[str]
+        genres: NotRequired[list[str]]
+        release_year: NotRequired[int]
+        isrc: NotRequired[str]
+        artist: NotRequired[str]
+        artists: NotRequired[list[str]]
+        creator: NotRequired[str]
+        creators: NotRequired[list[str]]
+
+
+JP_CHAR_PATTERN = re.compile(r"[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]")
+
+
+def should_replace_text(original: str, enriched: str) -> bool:
+    if not original or not enriched:
+        return False
+    if original == enriched:
+        return False
+    return bool(JP_CHAR_PATTERN.search(original)) or not JP_CHAR_PATTERN.search(enriched)
+
+
+def update_enriched_metadata(information: dict[str, Any], enriched: EnrichTrackData) -> None:
+    for field in ["title", "album", "artist"]:  # expand this later?
+        if field in enriched:
+            original_val = information.get(field)
+            if not original_val:
+                information[field] = enriched[field]
+                continue
+
+            if should_replace_text(str(original_val), str(enriched[field])):
+                print(f"Replacing {field} from {original_val!r} to {enriched[field]!r}")
+                information[field] = enriched[field]
+
+    if "genre" in enriched:
+        information["meta_genre"] = enriched["genre"]
+    if isrc := enriched.get("isrc"):
+        information["meta_isrc"] = isrc
+
+
+def clean_album_name(album_name: str) -> str:
+    if not album_name:
+        return ""
+    album_name = re.sub(r"[-]?\s?(single|album)", "", album_name, flags=re.IGNORECASE)
+    return album_name.strip()
+
+
 IS_TERMUX = (
     "com.termux" in os.environ.get("SHELL", "") or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr"
 )
@@ -71,7 +123,7 @@ PREFER_SYNCED = True
 
 if IS_TERMUX:
 
-    def notify(  # type: ignore
+    def notify(  # type: ignore[reportRedeclaration]
         title: str,
         content: str,
         *,
@@ -282,7 +334,7 @@ class MetadataPluginBase:
     def get_unsynced(self) -> str | None:
         return None
 
-    def enrich_track_data(self) -> dict[str, Any]:
+    def enrich_track_data(self) -> EnrichTrackData:
         return {}
 
 
@@ -482,7 +534,7 @@ class MusixMatchPlugin(MetadataPluginBase):
 
         return None
 
-    def enrich_track_data(self) -> dict[str, Any]:
+    def enrich_track_data(self) -> EnrichTrackData:
         body = self.find_lyrics(album=self.album, artist=self.artist, title=self.title)
         if not body:
             return {}
@@ -491,13 +543,13 @@ class MusixMatchPlugin(MetadataPluginBase):
         if not track:
             return {}
 
-        enriched = {}
+        enriched: EnrichTrackData = {}
         if "track_name" in track:
             enriched["title"] = track["track_name"]
         if "artist_name" in track:
             enriched["artist"] = track["artist_name"]
         if "album_name" in track:
-            enriched["album"] = track["album_name"]
+            enriched["album"] = clean_album_name(track["album_name"])
         if "track_isrc" in track:
             enriched["isrc"] = track["track_isrc"]
 
@@ -506,7 +558,6 @@ class MusixMatchPlugin(MetadataPluginBase):
             year_str = pub_date[:4]
             if year_str.isdigit():
                 enriched["release_year"] = int(year_str)
-            enriched["meta_date"] = year_str
 
         raw_genre_list = track.get("primary_genres", {}).get("music_genre_list", [])
         if raw_genre_list:
@@ -515,10 +566,12 @@ class MusixMatchPlugin(MetadataPluginBase):
                 genre_name = item.get("music_genre", {}).get("music_genre_name")
                 if genre_name:
                     genre_list.append(genre_name)
-            # enriched["genre"] = ", ".join(genre_list)
             # use the first genre for now, I haven't figured out how to handle multiple genres in the metadata yet
             # and usually all the player I try don't support multiple genres anyway
-            enriched["genre"] = genre_list[0] if genre_list else ""
+            # enriched["genre"] = ", ".join(genre_list)
+            if genre_list:
+                enriched["genre"] = genre_list[0]
+                enriched["genres"] = genre_list
 
         artist_list = track.get("artist_credits", {}).get("artist_list", [])
         artists = [
@@ -943,7 +996,7 @@ class ShazamPlugin(MetadataPluginBase):
         self._page_cache[track_id] = res
         return res
 
-    def enrich_track_data(self) -> dict[str, Any]:
+    def enrich_track_data(self) -> EnrichTrackData:
         if not self._cached_song_attr:
             self.raw_data()
 
@@ -951,10 +1004,9 @@ class ShazamPlugin(MetadataPluginBase):
             return {}
 
         song_attr = self._cached_song_attr
-        enriched = {}
-        # maybe use this later for more accurate metadata, but for now, we rely on the original info
+        enriched: EnrichTrackData = {}
         if "name" in song_attr:
-            enriched["track"] = song_attr["name"]
+            enriched["title"] = song_attr["name"]
         if "artistName" in song_attr:
             enriched["artist"] = song_attr["artistName"]
             artists = [a.strip() for a in re.split(r"[&,]|feat\.?", song_attr["artistName"]) if a.strip()]
@@ -962,21 +1014,21 @@ class ShazamPlugin(MetadataPluginBase):
                 enriched["artists"] = artists
                 enriched["creators"] = artists
         if "albumName" in song_attr:
-            enriched["album"] = song_attr["albumName"]
+            enriched["album"] = clean_album_name(song_attr["albumName"])
         if song_attr.get("genreNames"):
             # enriched["genre"] = ", ".join(song_attr["genreNames"])
+            enriched["genres"] = song_attr["genreNames"]
             enriched["genre"] = song_attr["genreNames"][0]
-        if "composerName" in song_attr:
-            enriched["composer"] = song_attr["composerName"]
+        # if "composerName" in song_attr:
+        #     enriched["composer"] = song_attr["composerName"]
         if "isrc" in song_attr:
-            enriched["isrc"] = song_attr["isrc"]
+            enriched["isrc"] = song_attr["isrc"] or ""
 
         pub_date = song_attr.get("releaseDate") or song_attr.get("datePublished")
         if pub_date and len(pub_date) >= 4:
             year_str = pub_date[:4]
             if year_str.isdigit():
                 enriched["release_year"] = int(year_str)
-            enriched["meta_date"] = year_str
 
         return enriched
 
@@ -1231,11 +1283,7 @@ class ExtraMetadataPP(PostProcessor):
                 enriched = plugin.enrich_track_data()
                 if enriched:
                     self.to_screen(f"Enriched metadata from {plugin.__class__.__name__}: {list(enriched.keys())}")
-                    # information.update(enriched)
-                    if "genre" in enriched:
-                        information["genre"] = enriched["genre"]
-                        information["meta_genre"] = enriched["genre"]
-                        break  # extend this to other metadata if needed, but for now, we only care about genre
+                    update_enriched_metadata(information, enriched)
             except Exception as e:
                 self.to_screen(f"Failed to enrich track metadata from {plugin.__class__.__name__}: {e}")
 
