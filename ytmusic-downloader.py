@@ -70,7 +70,7 @@ def should_replace_text(original: str, enriched: str) -> bool:
 
 
 def update_enriched_metadata(information: dict[str, Any], enriched: EnrichTrackData) -> None:
-    for field in ["title", "album", "artist"]:  # expand this later?
+    for field in ["title"]:  # expand this later?
         if field in enriched:
             original_val = information.get(field)
             if not original_val:
