@@ -1471,7 +1471,7 @@ class EmbedLyricsMetadataPP(PostProcessor):
         plugins = [
             ShazamPlugin(information, to_screen=self.to_screen),
             LrcLibPlugin(information, to_screen=self.to_screen),
-            MusixMatchPlugin(information, to_screen=self.to_screen),
+            # MusixMatchPlugin(information, to_screen=self.to_screen),
             YoutubeMusicPlugin(information, to_screen=self.to_screen),
         ]
 
