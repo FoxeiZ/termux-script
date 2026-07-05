@@ -2,9 +2,28 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { parseEnv } = require("node:util");
 
+/**
+ * @typedef {{ [key: string]: string }} EnvObject
+ *
+ * @typedef {Object} AppConfig
+ * @property {string} name
+ * @property {string} script
+ * @property {string | ((env: EnvObject) => string)} [args]
+ * @property {string} [cwd]
+ * @property {string} [exec_mode]
+ * @property {boolean} [autorestart]
+ * @property {EnvObject} [env]
+ * @property {string} [env_file]
+ * @property {string} [interpreter]
+ */
+
 const BASE_DIR = "/data/data/com.termux/files/home/scripts/pm2_scripts";
 const SCRIPT_DIR = path.join(BASE_DIR, "nonroot");
 
+/**
+ * @param {string} filePath
+ * @returns {EnvObject}
+ */
 function readEnvFile(filePath) {
   if (fs.existsSync(filePath)) {
     try {
@@ -22,55 +41,128 @@ function readEnvFile(filePath) {
   }
 }
 
-const sslocalEnv = readEnvFile(path.join(SCRIPT_DIR, ".env.sslocal"));
+/**
+ * @param {Object} options
+ * @param {AppConfig[]} options.appsConfig
+ * @param {AppConfig} options.appConfig
+ * @param {string} options.envFilePath
+ * @param {boolean} [options.skipOnMissing=false]
+ * @param {boolean} [options.warnOnMissing=true]
+ * @param {function(EnvObject): boolean} [options.checkCallback]
+ */
+function addWithEnvFile({
+  appsConfig,
+  appConfig,
+  envFilePath,
+  skipOnMissing = false,
+  warnOnMissing = true,
+  checkCallback,
+}) {
+  const exists = fs.existsSync(envFilePath);
+  if (!exists) {
+    if (warnOnMissing) {
+      console.warn(`Environment file ${envFilePath} not found.`);
+    }
+    if (skipOnMissing) return;
+  }
+
+  const env = exists ? readEnvFile(envFilePath) : {};
+  if (checkCallback && !checkCallback(env)) {
+    if (warnOnMissing) {
+      console.warn(
+        `Validation failed for ${appConfig.name || "unnamed app"}. Skipping.`,
+      );
+    }
+    return;
+  }
+
+  const resolvedConfig = { ...appConfig };
+  if (typeof resolvedConfig.args === "function") {
+    resolvedConfig.args = resolvedConfig.args(env);
+  }
+
+  resolvedConfig.env = env;
+  appsConfig.push(resolvedConfig);
+}
+
+/**
+ * @type {AppConfig[]}
+ */
+const apps = [];
+
+addWithEnvFile({
+  appsConfig: apps,
+  appConfig: {
+    name: "nameless",
+    script:
+      "/data/data/com.termux/files/home/scripts/pm2_scripts/nonroot/proot-wrapper.sh",
+    cwd: "/data/data/com.termux/files/home/",
+    args: "alpine /root/.local/bin/uv --directory nameless-discord-bot/ run python bootstrapper.py",
+    exec_mode: "fork",
+    autorestart: true,
+  },
+  envFilePath: path.join(SCRIPT_DIR, ".env.nameless"),
+  skipOnMissing: true,
+  warnOnMissing: false,
+});
+
+addWithEnvFile({
+  appsConfig: apps,
+  appConfig: {
+    name: "sslocal",
+    script: "sslocal",
+    args: (env) =>
+      `-b 127.0.0.1:8071 -s \"${env.SS_HOST}\" -m aes-256-cfb -k \"${env.SS_PASS}\" -vvv`,
+    cwd: "/data/data/com.termux/files/home/projects/shadowsocks/",
+    exec_mode: "fork",
+    autorestart: false,
+  },
+  envFilePath: path.join(SCRIPT_DIR, ".env.sslocal"),
+  skipOnMissing: true,
+  warnOnMissing: false,
+  checkCallback: (env) => !!(env.SS_HOST && env.SS_PASS),
+});
+
+const KOMGA_DIR = "/data/data/com.termux/files/home/komga/";
+try {
+  if (fs.existsSync(KOMGA_DIR)) {
+    const files = fs.readdirSync(KOMGA_DIR);
+    const matchedFile = files.find(
+      (file) => file.startsWith("komga") && file.endsWith(".jar"),
+    );
+
+    if (matchedFile) {
+      apps.push({
+        name: "komga",
+        script: "java",
+        args: `-jar -Xmx2g ${path.join(KOMGA_DIR, matchedFile)}`,
+        exec_mode: "fork",
+        autorestart: true,
+      });
+    } else {
+      console.warn(`No 'komga*.jar' file found in ${KOMGA_DIR}.`);
+    }
+  }
+} catch (err) {
+  console.error("Error occurred resolving Komga target:", err.message);
+}
+
+const NAVIDROME_CONFIG =
+  "/data/data/com.termux/files/home/.config/navidrome/navidrome.toml";
+try {
+  if (fs.existsSync(NAVIDROME_CONFIG)) {
+    apps.push({
+      name: "navidrome",
+      script: "navidrome",
+      args: `--configfile ${NAVIDROME_CONFIG}`,
+      exec_mode: "fork",
+      autorestart: true,
+    });
+  }
+} catch (err) {
+  console.error("Error occurred resolving Navidrome config:", err.message);
+}
 
 module.exports = {
-  apps: [
-    {
-      name: "komga",
-      script: "java",
-      args: "-jar -Xmx2g /data/data/com.termux/files/home/komga/komga-1.20.0.jar",
-      exec_mode: "fork",
-      autorestart: true,
-    },
-
-    {
-      name: "sslocal",
-      script: "sslocal",
-      args: `-b 127.0.0.1:8071 -s \"${sslocalEnv.SS_HOST || ""}\" -m aes-256-cfb -k \"${sslocalEnv.SS_PASS || ""}\" -vvv`,
-      cwd: "/data/data/com.termux/files/home/projects/shadowsocks/",
-      exec_mode: "fork",
-      autorestart: false,
-      env: sslocalEnv,
-    },
-
-    // {
-    //   name: "nameless",
-    //   script: "bootstrapper.py",
-    //   interpreter: "python",
-    //   cwd: "/data/data/com.termux/files/home/projects/nameless-discord-bot",
-    //   exec_mode: "fork",
-    //   autorestart: true,
-    //   env_file: path.join(SCRIPT_DIR, ".env.nameless"),
-    // },
-    {
-      name: "nameless",
-      script:
-        "/data/data/com.termux/files/home/scripts/pm2_scripts/nonroot/proot-wrapper.sh",
-      cwd: "/data/data/com.termux/files/home/",
-      args: "alpine /root/.local/bin/uv --directory nameless-discord-bot/ run python bootstrapper.py",
-      exec_mode: "fork",
-      autorestart: true,
-      env_file: path.join(SCRIPT_DIR, ".env.nameless"),
-    },
-
-    // {
-    //   name: "lavalink",
-    //   script: "java",
-    //   args: "-Xmx800M -jar Lavalink.jar",
-    //   cwd: "/data/data/com.termux/files/home/lavalink",
-    //   exec_mode: "fork",
-    //   autorestart: true
-    // },
-  ],
+  apps: apps,
 };

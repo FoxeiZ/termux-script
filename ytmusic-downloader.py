@@ -256,7 +256,7 @@ class MetadataPluginBase:
     HEADERS: ClassVar[dict[str, str]] = {}
     COOKIES: ClassVar[dict[str, str]] = {}
 
-    _instance: ClassVar[dict[str, MetadataPluginBase]] = {}
+    # _instance: ClassVar[dict[str, MetadataPluginBase]] = {}
     _session: ClassVar[httpx.Client | None] = None
 
     @classmethod
