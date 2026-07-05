@@ -113,7 +113,7 @@ addWithEnvFile({
     script:
       "/data/data/com.termux/files/home/scripts/pm2_scripts/nonroot/proot-wrapper.sh",
     cwd: "/data/data/com.termux/files/home/",
-    args: "alpine /root/.local/bin/uv run fastapi run --host 0.0.0.0 --port 25601",
+    args: "alpine /root/.local/bin/uv run --no-dev fastapi run --host 0.0.0.0 --port 25601",
     exec_mode: "fork",
     autorestart: true,
   },
