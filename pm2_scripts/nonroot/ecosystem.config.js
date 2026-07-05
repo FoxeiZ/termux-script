@@ -102,8 +102,8 @@ addWithEnvFile({
     autorestart: true,
   },
   envFilePath: path.join(SCRIPT_DIR, ".env.nameless"),
-  skipOnMissing: true,
-  warnOnMissing: false,
+  skipOnMissing: false,
+  warnOnMissing: true,
 });
 
 addWithEnvFile({
