@@ -109,6 +109,22 @@ addWithEnvFile({
 addWithEnvFile({
   appsConfig: apps,
   appConfig: {
+    name: "nhentai2komga",
+    script:
+      "/data/data/com.termux/files/home/scripts/pm2_scripts/nonroot/proot-wrapper.sh",
+    cwd: "/data/data/com.termux/files/home/",
+    args: "alpine /root/.local/bin/uv run fastapi run --host 0.0.0.0 --port 25601",
+    exec_mode: "fork",
+    autorestart: true,
+  },
+  envFilePath: path.join(SCRIPT_DIR, ".env.nhentai2komga"),
+  skipOnMissing: true,
+  warnOnMissing: false,
+});
+
+addWithEnvFile({
+  appsConfig: apps,
+  appConfig: {
     name: "sslocal",
     script: "sslocal",
     args: (env) =>
