@@ -127,9 +127,11 @@ const KOMGA_DIR = "/data/data/com.termux/files/home/komga/";
 try {
   if (fs.existsSync(KOMGA_DIR)) {
     const files = fs.readdirSync(KOMGA_DIR);
-    const matchedFile = files.find(
-      (file) => file.startsWith("komga") && file.endsWith(".jar"),
-    );
+    const matchedFile = files
+      .filter((file) => file.startsWith("komga") && file.endsWith(".jar"))
+      .sort((a, b) =>
+        b.localeCompare(a, undefined, { numeric: true, sensitivity: "base" }),
+      )[0];
 
     if (matchedFile) {
       apps.push({
