@@ -26,17 +26,48 @@ from slugify import slugify
 from yt_dlp.postprocessor.common import PostProcessor
 from yt_dlp.postprocessor.metadataparser import MetadataParserPP
 
-try:
-    import pykakasi
-except ImportError:
-    print("warning: pykakasi not found, Romaji conversion will be disabled.")
-    pykakasi = None
+IS_TERMUX = (
+    "com.termux" in os.environ.get("SHELL", "") or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr"
+)
 
-try:
-    from googletrans import Translator
-except ImportError:
-    print("warning: googletrans not found, translation features will be disabled.")
-    Translator = None
+###  _____              __ _
+### /  __ \            / _(_)
+### | /  \/ ___  _ __ | |_ _  __ _
+### | |    / _ \| '_ \|  _| |/ _` |
+### | \__/\ (_) | | | | | | | (_| |
+###  \____/\___/|_| |_|_| |_|\__, |
+###                           __/ |
+###                          |___/
+# Save lyrics as .lrc file
+SAVE_LRC = True
+# Add Romaji lyrics (requires pykakasi)
+ADD_ROMAJI = True
+# Add English translation via Google Translate (requires googletrans)
+ADD_TRANSLATION = True
+# Translation target language code (used for both API and filename suffix)
+TRANSLATION_LANG = "en"
+# Split lyrics into separate files (original, romaji, translation)
+# If False, all lyrics are combined into a single file
+SPLIT_LYRICS = True
+# Embed lyrics into audio file metadata
+EMBED_LYRICS = True
+PREFER_SYNCED = True
+
+pykakasi = None
+if ADD_ROMAJI:
+    try:
+        import pykakasi
+    except ImportError:
+        print("warning: pykakasi not found, Romaji conversion will be disabled.")
+        ADD_ROMAJI = False  # pyright: ignore[reportConstantRedefinition]
+
+Translator = None
+if ADD_TRANSLATION:
+    try:
+        from googletrans import Translator
+    except ImportError:
+        print("warning: googletrans not found, translation features will be disabled.")
+        ADD_TRANSLATION = False  # pyright: ignore[reportConstantRedefinition]
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Iterator, Mapping, Sequence
@@ -141,33 +172,6 @@ def clean_album_name(album_name: str) -> str:
     album_name = re.sub(r"[-]?\s?(single|album)", "", album_name, flags=re.IGNORECASE)
     return album_name.strip()
 
-
-IS_TERMUX = (
-    "com.termux" in os.environ.get("SHELL", "") or os.environ.get("PREFIX", "") == "/data/data/com.termux/files/usr"
-)
-
-###  _____              __ _
-### /  __ \            / _(_)
-### | /  \/ ___  _ __ | |_ _  __ _
-### | |    / _ \| '_ \|  _| |/ _` |
-### | \__/\ (_) | | | | | | | (_| |
-###  \____/\___/|_| |_|_| |_|\__, |
-###                           __/ |
-###                          |___/
-# Save lyrics as .lrc file
-SAVE_LRC = True
-# Add Romaji lyrics (requires pykakasi)
-ADD_ROMAJI = True
-# Add English translation via Google Translate (requires googletrans)
-ADD_TRANSLATION = True
-# Translation target language code (used for both API and filename suffix)
-TRANSLATION_LANG = "en"
-# Split lyrics into separate files (original, romaji, translation)
-# If False, all lyrics are combined into a single file
-SPLIT_LYRICS = True
-# Embed lyrics into audio file metadata
-EMBED_LYRICS = True
-PREFER_SYNCED = True
 
 if IS_TERMUX:
 
@@ -1742,7 +1746,7 @@ elif os.name == "nt":
     win_opts = {
         "js_runtimes": {"node": {}},
         "remote_components": {"ejs:github"},
-        # "cookiesfrombrowser": ("firefox",),
+        "cookiesfrombrowser": ("firefox",),
         "extractor_args": {
             "youtube": {
                 "player_js_variant": ("tv",),
