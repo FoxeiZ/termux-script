@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/python
-# ruff: noqa: B019, E501
+# ruff: noqa: B019, E501, S105
 # pyright: reportUnknownVariableType=false, reportArgumentType=false, reportIndexIssue=information, reportOptionalMemberAccess=information, reportIncompatibleMethodOverride=false, reportCallIssue=false
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ import sys
 import threading
 import traceback
 import urllib.parse
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 from functools import cache
+from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -39,7 +39,7 @@ except ImportError:
     Translator = None
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Iterator, Sequence
+    from collections.abc import Callable, Coroutine, Iterator, Mapping, Sequence
     from typing import Any, ClassVar, Literal, NotRequired, TypedDict
 
 
@@ -61,12 +61,60 @@ if TYPE_CHECKING:
 JP_CHAR_PATTERN = re.compile(r"[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]")
 
 
+def clean_title(title: str) -> str:
+    title = re.sub(r"\s*([(\[])(?:feat|ft)\.?\s+[^)\]]+([)\]])", "", title, flags=re.IGNORECASE)
+    return title.strip()
+
+
+def match_title(t1: str, t2: str, threshold: float = 0.7, tags: list[str] | None = None) -> bool:
+    def _match_str(s1: str, s2: str) -> bool:
+        sm = SequenceMatcher(lambda x: x in ("-", "_", " "), s1.lower(), s2.lower())
+        return round(sm.ratio(), 2) >= threshold
+
+    if _match_str(t1, t2) or _match_str(t2, t1):
+        return True
+    c1, c2 = clean_title(t1), clean_title(t2)
+    if _match_str(c1, c2) or _match_str(c2, c1):
+        return True
+    if tags:
+        for tag in tags:
+            if _match_str(tag, t2) or _match_str(t2, tag):
+                return True
+    return False
+
+
+def match_artists(a1: str, a2: str, threshold: float = 0.7) -> bool:
+    sm = SequenceMatcher(lambda x: x in ("-", "_", " "), a1.lower(), a2.lower())
+    if round(sm.ratio(), 2) >= threshold:
+        return True
+
+    delims = (" & ", " feat. ", " feat ", " ft. ", " ft ", " x ", " + ", " with ", " and ")
+
+    def _get_artists_set(artist_str: str) -> set[str]:
+        normalized = artist_str.lower()
+        for delim in delims:
+            normalized = normalized.replace(delim, ", ")
+        return {a.strip() for a in normalized.split(",") if a.strip()}
+
+    s1, s2 = _get_artists_set(a1), _get_artists_set(a2)
+    for x1 in s1:
+        for x2 in s2:
+            if x1 == x2:
+                return True
+            if len(x1) >= 2 and len(x2) >= 2:
+                p1 = r"\b" + re.escape(x1) + r"\b"
+                p2 = r"\b" + re.escape(x2) + r"\b"
+                if re.search(p1, x2) or re.search(p2, x1):
+                    return True
+            if SequenceMatcher(None, x1, x2).ratio() >= 0.8:
+                return True
+    return False
+
+
 def should_replace_text(original: str, enriched: str) -> bool:
-    if not original or not enriched:
+    if not original or not enriched or original == enriched:
         return False
-    if original == enriched:
-        return False
-    return bool(JP_CHAR_PATTERN.search(original)) or not JP_CHAR_PATTERN.search(enriched)
+    return match_title(original, enriched)
 
 
 def update_enriched_metadata(information: dict[str, Any], enriched: EnrichTrackData) -> None:
@@ -420,7 +468,7 @@ class MusixMatchPlugin(MetadataPluginBase):
             print(f"Error fetching MusixMatch token: {e}")
         return None
 
-    def find_lyrics(
+    def find_lyrics(  # noqa: PLR0911
         self,
         *,
         album: str = "",
@@ -485,6 +533,20 @@ class MusixMatchPlugin(MetadataPluginBase):
                 self.to_screen("Timed out or auth error.")
             else:
                 self.to_screen(f"Matcher error: {body['matcher.track.get']['message']['header']}")
+            return None
+
+        track = body.get("matcher.track.get", {}).get("message", {}).get("body", {}).get("track")
+        if not track:
+            return None
+
+        track_artist = track.get("artist_name", "")
+        track_title = track.get("track_name", "")
+        # reject fallback matches when artist or title does not match
+        if artist and not match_artists(artist, track_artist):
+            self.to_screen(f"Artist mismatch: expected {artist!r}, got {track_artist!r}")
+            return None
+        if title and not match_title(title, track_title, tags=self._raw_info.get("tags", [])):
+            self.to_screen(f"Title mismatch: expected {title!r}, got {track_title!r}")
             return None
 
         lyrics_msg = body["track.lyrics.get"]["message"]
@@ -675,28 +737,43 @@ if TYPE_CHECKING:
 
 class ShazamPlugin(MetadataPluginBase):
     name: str = "shazam"
-    cache: tuple[str, bool, bool] | None = None
+    cache: tuple[str, bool] | None = None
+    _page_cache: ClassVar[dict[str, tuple[str, bool]]] = {}
     _search_cache: ClassVar[dict[str, ShazamSongData]] = {}
-    _page_cache: ClassVar[dict[str, tuple[str, bool, bool]]] = {}
-
-    HEADERS: ClassVar[dict[str, str]] = {
-        "X-Shazam-Platform": "IPHONE",
-        "X-Shazam-AppVersion": "14.1.0",
-        "accept": "*/*",
-        "accept-language": "en-US",
-        "cache-control": "no-cache",
-        "pragma": "no-cache",
-        "sec-ch-ua": '"Not;A=Brand";v="8", "Chromium";v="150", "Brave";v="150"',
-        "user-agent": "Mozilla/5.0",
-    }
-    COOKIES: ClassVar[dict[str, str]] = {
-        "geoip_country": "GB",
-        "_bszm": "2",
-    }
+    _developer_token: ClassVar[str | None] = (
+        "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiIsImtpZCI6IldlYlBsYXlLaWQifQ.eyJpc3MiOiJBTVBXZWJQbGF5IiwiaWF0IjoxNzg2NjMyOTI0LCJleHAiOjE3OTI2ODA5MjQsInJvb3RfaHR0cHNfb3JpZ2luIjpbImFwcGxlLmNvbSJdfQ.hBgj61sZf-y7bmuvT-joXAUAcf7TVJ51732xnH5vFkLHOmsQHxVqGMYUuI4h8c0-RX3fRY3moylhLW8fewFJyw"
+    )
 
     def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
         super().__init__(info, to_screen)
         self._cached_song_attr: ShazamSongAttributes | None = None
+
+    def _get_developer_token(self, force_refresh: bool = False) -> str | None:
+        if not force_refresh and self._developer_token:
+            return self._developer_token
+        return self._refresh_developer_token()
+
+    def _refresh_developer_token(self) -> str | None:
+        try:
+            r = self.session.get(
+                "https://music.apple.com/us/browse",
+                headers={"User-Agent": "Mozilla/5.0"},
+                follow_redirects=True,
+            )
+            scripts: list[str] = re.findall(r'src="([^"]+/assets/index~[^"]+\.js)"', r.text)
+            for s in scripts:
+                if not s.startswith("http"):
+                    s = "https://music.apple.com" + s  # noqa: PLW2901
+                res = self.session.get(s, headers={"User-Agent": "Mozilla/5.0"}, follow_redirects=True)
+                m = re.search(r'(?:const|let|var)\s+\$c\s*=\s*"([^"]+)"', res.text) or re.search(
+                    r'\$c\s*=\s*"([^"]+)"', res.text
+                )
+                if m:
+                    ShazamPlugin._developer_token = m.group(1)
+                    return ShazamPlugin._developer_token
+        except Exception as e:
+            self.to_screen(f"Error fetching Apple Music token: {e}")
+        return self._developer_token
 
     def handle_error_responses(
         self,
@@ -731,9 +808,25 @@ class ShazamPlugin(MetadataPluginBase):
             self.to_screen(f"Using cached search result for query: {query!r} (language: {language})")
             return self._search_cache[cache_key]
 
+        country = language.lower()
+        token = self._get_developer_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Origin": "https://music.apple.com",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        }
         resp = self._make_request(
-            f"https://www.shazam.com/services/amapi/v1/catalog/{language}/search?types=songs&term={urllib.parse.quote(query)}&limit=3"
+            f"https://api.music.apple.com/v1/catalog/{country}/search?types=songs&term={urllib.parse.quote(query)}&limit=3",
+            headers=headers,
         )
+        if resp is None:
+            token = self._get_developer_token(force_refresh=True)
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+                resp = self._make_request(
+                    f"https://api.music.apple.com/v1/catalog/{country}/search?types=songs&term={urllib.parse.quote(query)}&limit=3",
+                    headers=headers,
+                )
         if resp is None:
             raise ValueError("Failed to fetch data")
 
@@ -749,52 +842,11 @@ class ShazamPlugin(MetadataPluginBase):
                 short_circuit=short_circuit,
             )
 
-        def _match_title(t1: str, t2: str, threshold: float = 0.7) -> bool:
-            sm = SequenceMatcher(
-                lambda x: x in ("-", "_"),
-                t1.lower(),
-                t2.lower(),
-            )
-            ratio = round(sm.ratio(), 2)
-            return ratio >= threshold
-
-        def _fuzzy_match(t1: str, t2: str, threshold: float = 0.7) -> bool:
-            if _match_title(t1, t2, threshold) or _match_title(t2, t1, threshold):
-                return True
-            return _match_title(self._clean_title(t1), self._clean_title(t2), threshold) or _match_title(
-                self._clean_title(t2), self._clean_title(t1), threshold
-            )
-
-        def _get_artists_set(artist_str: str) -> set[str]:
-            normalized = artist_str.lower()
-            for delim in (" & ", " feat. ", " feat ", " ft. ", " ft ", " x ", " + ", " with ", " and "):
-                normalized = normalized.replace(delim, ", ")
-            return {a.strip() for a in normalized.split(",") if a.strip()}
-
-        def _match_artists(a1: str, a2: str) -> bool:
-            if _fuzzy_match(a1, a2, 0.7):
-                return True
-            s1 = _get_artists_set(a1)
-            s2 = _get_artists_set(a2)
-            for x1 in s1:
-                for x2 in s2:
-                    if x1 == x2:
-                        return True
-                    if len(x1) >= 2 and len(x2) >= 2:
-                        pattern1 = r"\b" + re.escape(x1) + r"\b"
-                        pattern2 = r"\b" + re.escape(x2) + r"\b"
-                        if re.search(pattern1, x2) or re.search(pattern2, x1):
-                            return True
-                    sm = SequenceMatcher(None, x1, x2)
-                    if sm.ratio() >= 0.8:
-                        return True
-            return False
-
         for song in data.get("results", {}).get("songs", {}).get("data", []):
-            if not _match_artists(self.artist, song["attributes"]["artistName"]):
+            if not match_artists(self.artist, song["attributes"]["artistName"]):
                 continue
 
-            if _fuzzy_match(self.title, song["attributes"]["name"]):
+            if match_title(self.title, song["attributes"]["name"]):
                 self._search_cache[cache_key] = song
                 return cast("ShazamSongData", song)
 
@@ -804,45 +856,20 @@ class ShazamPlugin(MetadataPluginBase):
 
         for tag in tags:
             for song in data.get("results", {}).get("songs", {}).get("data", []):
-                if not _match_artists(self.artist, song["attributes"]["artistName"]):
+                if not match_artists(self.artist, song["attributes"]["artistName"]):
                     continue
 
-                if _fuzzy_match(tag, song["attributes"]["name"]):
+                if match_title(tag, song["attributes"]["name"]):
                     self._search_cache[cache_key] = song
                     return cast("ShazamSongData", song)
 
-        raise ValueError("No matching song found")
+        raise ValueError(f"No matching song found for query: {query!r} (language: {language})")
 
-    def _get_real_page(self, track_id: str, track_name: str) -> str | None:
-        song_page = self._make_request(
-            f"https://www.shazam.com/song/{track_id}/{urllib.parse.quote(track_name.replace(' ', '-'))}"
-        )
-        if song_page is None:
-            return None
+    def _page_content(self) -> str:
+        return self.raw_data()[0]
 
-        regex = r"<link\s+rel=\"canonical\"\s+href=\"([^\"]+)"
-        match = re.search(regex, song_page.text, re.NOFLAG)
-        if match:
-            return match.group(1)
-        return None
-
-    def _clean_title(self, title: str) -> str:
-        title = re.sub(r"\s*([(\[])(?:feat|ft)\.?\s+[^)\]]+([)\]])", "", title, flags=re.IGNORECASE)
-        return title.strip()
-
-    def _deep_search_all(self, data: dict[str, Any] | list[Any] | Any, target_key: str) -> Iterator[Any]:
-        if isinstance(data, dict):
-            if target_key in data:
-                yield data[target_key]
-
-            for value in data.values():
-                if TYPE_CHECKING:
-                    value: Any
-                yield from self._deep_search_all(value, target_key)
-
-        elif isinstance(data, list):
-            for item in data:
-                yield from self._deep_search_all(item, target_key)
+    def _has_lyrics(self) -> bool:
+        return self.raw_data()[1]
 
     def get_unsynced(self) -> str | None:
         if not self._has_lyrics():
@@ -863,8 +890,22 @@ class ShazamPlugin(MetadataPluginBase):
 
         return lyrics_data["text"]
 
+    def _deep_search_all(self, data: dict[str, Any] | list[Any] | Any, target_key: str) -> Iterator[Any]:
+        if isinstance(data, dict):
+            if target_key in data:
+                yield data[target_key]
+
+            for value in data.values():
+                if TYPE_CHECKING:
+                    value: Any
+                yield from self._deep_search_all(value, target_key)
+
+        elif isinstance(data, list):
+            for item in data:
+                yield from self._deep_search_all(item, target_key)
+
     def _get_synced_lyrics(self) -> Iterator[str]:
-        pattern = r"self\.__next_f\.push\(\[\s*1,\s*\"..?:(.*?)\"\]\)"
+        pattern = r'self\.__next_f\.push\(\[\s*1\s*,\s*"([0-9a-fA-F]+:)?((?:[^"\\]|\\.)*)"\s*\]\)'
         match = re.finditer(pattern, self._page_content(), re.DOTALL)
         if not match:
             self.to_screen("Failed to find synced lyrics data in the song page.")
@@ -874,7 +915,7 @@ class ShazamPlugin(MetadataPluginBase):
         for m in match:
             if not m:
                 continue
-            content = m.group(1)
+            content = m.group(2)
             if "startTimeInSeconds" in content or "endTimeInSeconds" in content:
                 lyrics_block_js_string = content
                 break
@@ -931,34 +972,40 @@ class ShazamPlugin(MetadataPluginBase):
                     yield f"[{start_time}] {text}"
 
     def get_synced(self) -> str | None:
-        if not self._has_synced_lyrics():
+        if not self._has_lyrics():
             return None
-        lines = list(self._get_synced_lyrics())
-        if not lines:
+
+        line_iter = self._get_synced_lyrics()
+        line = next(line_iter, None)
+        if not line:
             self.to_screen("No synced lyrics lines could be extracted.")
             return None
-        return "\n".join(lines)
+        return "\n".join(chain([line], line_iter))
 
-    def raw_data(self) -> tuple[str, bool, bool]:
+    def raw_data(self) -> tuple[str, bool]:
         if not self.cache:
             self.cache = self._get_page_data()
 
         if self.cache is None:
-            return "", False, False
+            return "", False
         return self.cache
 
-    def _page_content(self) -> str:
-        return self.raw_data()[0]
+    def _get_real_page(self, track_id: str, track_name: str) -> str | None:
+        song_page = self._make_request(
+            f"https://www.shazam.com/song/{track_id}/{urllib.parse.quote(track_name.replace(' ', '-'))}"
+        )
+        if song_page is None:
+            return None
 
-    def _has_lyrics(self) -> bool:
-        return self.raw_data()[1]
+        regex = r"<link\s+rel=\"canonical\"\s+href=\"([^\"]+)"
+        match = re.search(regex, song_page.text, re.NOFLAG)
+        if match:
+            return match.group(1)
+        return None
 
-    def _has_synced_lyrics(self) -> bool:
-        return self.raw_data()[2]
-
-    def _get_page_data(self) -> tuple[str, bool, bool] | None:
+    def _get_page_data(self) -> tuple[str, bool] | None:
         matched_song = None
-        query = f"{self.artist} {self._clean_title(self.title)}" if self.artist else self._clean_title(self.title)
+        query = f"{self.artist} {clean_title(self.title)}" if self.artist else clean_title(self.title)
         for language in ["GB", "JP"]:
             try:
                 matched_song = self._search_song(query, language)
@@ -978,9 +1025,8 @@ class ShazamPlugin(MetadataPluginBase):
         if track_id in self._page_cache:
             return self._page_cache[track_id]
 
-        track_name = matched_song["attributes"]["name"]
-        has_lyrics = matched_song["attributes"]["hasLyrics"]
-        has_synced_lyrics = matched_song["attributes"]["hasTimeSyncedLyrics"]
+        track_name = self._cached_song_attr["name"]
+        has_lyrics = self._cached_song_attr.get("hasLyrics") or False
 
         song_url = self._get_real_page(track_id, slugify(track_name))
         if not song_url:
@@ -992,7 +1038,7 @@ class ShazamPlugin(MetadataPluginBase):
             self.to_screen("Failed to retrieve the song page content.")
             return None
 
-        res = (song_page.text, has_lyrics, has_synced_lyrics)
+        res = (song_page.text, has_lyrics)
         self._page_cache[track_id] = res
         return res
 
@@ -1016,11 +1062,8 @@ class ShazamPlugin(MetadataPluginBase):
         if "albumName" in song_attr:
             enriched["album"] = clean_album_name(song_attr["albumName"])
         if song_attr.get("genreNames"):
-            # enriched["genre"] = ", ".join(song_attr["genreNames"])
             enriched["genres"] = song_attr["genreNames"]
             enriched["genre"] = song_attr["genreNames"][0]
-        # if "composerName" in song_attr:
-        #     enriched["composer"] = song_attr["composerName"]
         if "isrc" in song_attr:
             enriched["isrc"] = song_attr["isrc"] or ""
 
@@ -1106,7 +1149,7 @@ class LrcLibPlugin(MetadataPluginBase):
 
 
 @cache
-def fetch_album_info(browse_id: str | None) -> dict[str, Any]:
+def fetch_album_info(browse_id: str | None) -> Mapping[str, Any]:
     if not browse_id:
         raise ValueError("Invalid browse ID")
 
@@ -1152,7 +1195,7 @@ def find_album_browse_id(video_id: str) -> str | None:
 
 
 @cache
-def find_album_info(video_id: str) -> dict[str, Any]:
+def find_album_info(video_id: str) -> Mapping[str, Any]:
     """Find album info from the music URL or video ID."""
 
     album_browse_id = find_album_browse_id(video_id)
@@ -1655,7 +1698,7 @@ ytdl_opts = {
     "extractor_args": {
         "youtube": {
             "lang": ["en"],
-            "player_client": ["mweb"],
+            "player_client": ["default", "-web_safari"],
             "formats": "missing_pot",
         },
         "youtubepot-bgutilhttp": {"base_url": ["https://bgutil-ytdlp-pot-vercal.vercel.app"]},
@@ -1665,6 +1708,16 @@ ytdl_opts = {
     "verbose": True,
     "writethumbnail": True,
 }
+
+
+def deep_merge(target: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
+    for key, val in source.items():
+        if isinstance(val, dict) and isinstance(target.get(key), dict):
+            deep_merge(target[key], val)
+        else:
+            target[key] = val
+    return target
+
 
 if IS_TERMUX:
     termux_opts = {
@@ -1676,7 +1729,7 @@ if IS_TERMUX:
         },
         "overwrites": False,
     }
-    ytdl_opts.update(termux_opts)
+    deep_merge(ytdl_opts, termux_opts)
     # ytdl_opts["extractor_args"]["youtube"]["getpot_bgutil_script"] = (
     #     "$HOME/projects/bgutil-ytdlp-pot-provider/server/build/generate_once.js",
     # )
@@ -1704,12 +1757,15 @@ elif os.name == "nt":
     win_opts = {
         "js_runtimes": {"node": {}},
         "remote_components": {"ejs:github"},
-        "cookiesfrombrowser": ("firefox",),
+        # "cookiesfrombrowser": ("firefox",),
         "extractor_args": {
-            "youtube": {"player_js_variant": ("tv",)},
+            "youtube": {
+                "player_js_variant": ("tv",),
+                "player_client": ["default", "-web_safari"],
+            },
         },
     }
-    ytdl_opts.update(win_opts)
+    deep_merge(ytdl_opts, win_opts)
 
 
 def download(url: str, extra_options: dict[str, Any] | None = None):
