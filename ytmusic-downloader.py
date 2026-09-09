@@ -735,6 +735,24 @@ if TYPE_CHECKING:
     )
 
 
+def _format_lrc_time(time_raw: str | float | int) -> str:
+    try:
+        if isinstance(time_raw, (int, float)):
+            total_sec = float(time_raw)
+        else:
+            parts = str(time_raw).strip().split(":")
+            total_sec = 0.0
+            for part in parts:
+                total_sec = total_sec * 60.0 + float(part)
+        total_hundredths = max(0, round(total_sec * 100))
+        minutes = total_hundredths // 6000
+        seconds = (total_hundredths // 100) % 60
+        hundredths = total_hundredths % 100
+        return f"{minutes:02d}:{seconds:02d}.{hundredths:02d}"
+    except (ValueError, TypeError):
+        return "00:00.00"
+
+
 class ShazamPlugin(MetadataPluginBase):
     name: str = "shazam"
     cache: tuple[str, bool] | None = None
@@ -747,6 +765,7 @@ class ShazamPlugin(MetadataPluginBase):
     def __init__(self, info: dict[str, Any], to_screen: Callable[[str], None] | None = None):
         super().__init__(info, to_screen)
         self._cached_song_attr: ShazamSongAttributes | None = None
+        self._cached_track_id: str | None = None
 
     def _get_developer_token(self, force_refresh: bool = False) -> str | None:
         if not force_refresh and self._developer_token:
@@ -881,14 +900,20 @@ class ShazamPlugin(MetadataPluginBase):
             self.to_screen("Failed to find lyrics data in the song page.")
             return None
 
-        json_data = match.group(1).strip()
-        data: ShazamPageMusicRecordingCompact = json.loads(json_data)
-        lyrics_data = data["recordingOf"]["lyrics"]
-        if not lyrics_data:
-            self.to_screen("No lyrics found for this track.")
+        try:
+            data = json.loads(match.group(1).strip())
+            recording_of = data.get("recordingOf")
+            if not isinstance(recording_of, dict):
+                self.to_screen("No lyrics metadata found for this track.")
+                return None
+            lyrics_data = recording_of.get("lyrics")
+            if not isinstance(lyrics_data, dict):
+                self.to_screen("No lyrics found for this track.")
+                return None
+            return lyrics_data.get("text")
+        except (json.JSONDecodeError, TypeError):
+            self.to_screen("Failed to parse plain lyrics JSON.")
             return None
-
-        return lyrics_data["text"]
 
     def _deep_search_all(self, data: dict[str, Any] | list[Any] | Any, target_key: str) -> Iterator[Any]:
         if isinstance(data, dict):
@@ -896,8 +921,6 @@ class ShazamPlugin(MetadataPluginBase):
                 yield data[target_key]
 
             for value in data.values():
-                if TYPE_CHECKING:
-                    value: Any
                 yield from self._deep_search_all(value, target_key)
 
         elif isinstance(data, list):
@@ -905,71 +928,44 @@ class ShazamPlugin(MetadataPluginBase):
                 yield from self._deep_search_all(item, target_key)
 
     def _get_synced_lyrics(self) -> Iterator[str]:
-        pattern = r'self\.__next_f\.push\(\[\s*1\s*,\s*"([0-9a-fA-F]+:)?((?:[^"\\]|\\.)*)"\s*\]\)'
-        match = re.finditer(pattern, self._page_content(), re.DOTALL)
-        if not match:
+        pattern = r'self\.__next_f\.push\(\[\s*1\s*,\s*"((?:[^"\\]|\\.)*)"\s*\]\)'
+        matches = list(re.finditer(pattern, self._page_content(), re.DOTALL))
+        if not matches:
             self.to_screen("Failed to find synced lyrics data in the song page.")
             return
 
-        lyrics_block_js_string = None
-        for m in match:
-            if not m:
+        found_any = False
+        seen_lines: set[tuple[str, str]] = set()
+
+        for m in matches:
+            content = m.group(1)
+            if "startTimeInSeconds" not in content and "endTimeInSeconds" not in content:
                 continue
-            content = m.group(2)
-            if "startTimeInSeconds" in content or "endTimeInSeconds" in content:
-                lyrics_block_js_string = content
-                break
 
-        if not lyrics_block_js_string:
+            try:
+                unescaped = json.loads(f'"{content}"')
+                clean_json = re.sub(r"^[a-zA-Z0-9_$]+:", "", unescaped)
+                lyrics_data = json.loads(clean_json)
+            except (json.JSONDecodeError, ValueError, TypeError):
+                continue
+
+            for lyric_lines in self._deep_search_all(lyrics_data, "lyricLines"):
+                if isinstance(lyric_lines, list):
+                    for line in lyric_lines:
+                        if not isinstance(line, dict):
+                            continue
+                        time_raw = line.get("startTimeInSeconds", "0")
+                        start_time = _format_lrc_time(time_raw)
+                        text = line.get("content") or "♪"
+                        line_key = (start_time, text)
+                        if line_key in seen_lines:
+                            continue
+                        seen_lines.add(line_key)
+                        found_any = True
+                        yield f"[{start_time}] {text}"
+
+        if not found_any:
             self.to_screen("No synced lyrics found for this track.")
-            return
-
-        # lyrics_block_js_string = (
-        #     lyrics_block_js_string.encode().decode("unicode_escape").encode("latin-1").decode("utf-8")
-        # )
-        try:
-            lyrics_block_js_string = json.loads(f'"{lyrics_block_js_string}"')
-            lyrics_data = json.loads(lyrics_block_js_string)
-            if not lyrics_data:
-                self.to_screen("No synced lyrics data could be parsed.")
-                return
-        except (json.JSONDecodeError, ValueError, TypeError):
-            self.to_screen("Failed to parse synced lyrics JSON.")
-            return
-
-        lyric_lines_gen = self._deep_search_all(lyrics_data, "lyricLines")
-        if TYPE_CHECKING:
-            lyric_lines_gen: Iterator[list[dict[str, Any]]]
-
-        for lyric_lines in lyric_lines_gen:
-            if len(lyric_lines) > 0:
-                for line in lyric_lines:
-                    time_raw: str = line.get("startTimeInSeconds", "0")
-                    try:
-                        time_float = float(time_raw)
-                        total_hundredths = round(time_float * 100)
-                        minutes = total_hundredths // 6000
-                        seconds = (total_hundredths // 100) % 60
-                        hundredths = total_hundredths % 100
-                        start_time = f"{minutes:02d}:{seconds:02d}.{hundredths:02d}"
-                    except ValueError:
-                        parts = time_raw.split(":")
-                        if len(parts) == 3:
-                            hours = int(parts[0])
-                            minutes = int(parts[1])
-                            seconds = float(parts[2])
-                            if hours > 0:
-                                minutes += hours * 60
-                            start_time = f"{minutes:02d}:{seconds:05.2f}"
-                        elif len(parts) == 2:
-                            minutes = int(parts[0])
-                            seconds = float(parts[1])
-                            start_time = f"{minutes:02d}:{seconds:05.2f}"
-                        else:
-                            start_time = "00:00.000"
-
-                    text = line.get("content", "♪")
-                    yield f"[{start_time}] {text}"
 
     def get_synced(self) -> str | None:
         if not self._has_lyrics():
@@ -977,7 +973,7 @@ class ShazamPlugin(MetadataPluginBase):
 
         line_iter = self._get_synced_lyrics()
         line = next(line_iter, None)
-        if not line:
+        if line is None:
             self.to_screen("No synced lyrics lines could be extracted.")
             return None
         return "\n".join(chain([line], line_iter))
@@ -990,48 +986,37 @@ class ShazamPlugin(MetadataPluginBase):
             return "", False
         return self.cache
 
-    def _get_real_page(self, track_id: str, track_name: str) -> str | None:
-        song_page = self._make_request(
-            f"https://www.shazam.com/song/{track_id}/{urllib.parse.quote(track_name.replace(' ', '-'))}"
-        )
-        if song_page is None:
-            return None
+    def _ensure_song_attributes(self) -> ShazamSongAttributes | None:
+        if self._cached_song_attr:
+            return self._cached_song_attr
 
-        regex = r"<link\s+rel=\"canonical\"\s+href=\"([^\"]+)"
-        match = re.search(regex, song_page.text, re.NOFLAG)
-        if match:
-            return match.group(1)
-        return None
-
-    def _get_page_data(self) -> tuple[str, bool] | None:
-        matched_song = None
         query = f"{self.artist} {clean_title(self.title)}" if self.artist else clean_title(self.title)
         for language in ["GB", "JP"]:
             try:
                 matched_song = self._search_song(query, language)
                 if matched_song:
-                    break
-            except ValueError as e:
-                self.to_screen(repr(e))
+                    self._cached_song_attr = matched_song["attributes"]
+                    self._cached_track_id = str(matched_song["id"])
+                    return self._cached_song_attr
+            except ValueError:
                 continue
 
-        if not matched_song:
-            self.to_screen("No matching track found on Shazam.")
+        self.to_screen("No matching track found on Shazam.")
+        return None
+
+    def _get_page_data(self) -> tuple[str, bool] | None:
+        song_attr = self._ensure_song_attributes()
+        if not song_attr or not self._cached_track_id:
             return None
 
-        self._cached_song_attr = matched_song["attributes"]
-        track_id = matched_song["id"]
-
+        track_id = self._cached_track_id
         if track_id in self._page_cache:
             return self._page_cache[track_id]
 
-        track_name = self._cached_song_attr["name"]
-        has_lyrics = self._cached_song_attr.get("hasLyrics") or False
-
-        song_url = self._get_real_page(track_id, slugify(track_name))
-        if not song_url:
-            self.to_screen("Failed to retrieve the song page.")
-            return None
+        track_name = song_attr.get("name", "")
+        has_lyrics = song_attr.get("hasLyrics") or False
+        slug = slugify(track_name) or "_"
+        song_url = f"https://www.shazam.com/song/{track_id}/{urllib.parse.quote(slug)}"
 
         song_page = self._make_request(song_url)
         if song_page is None:
@@ -1044,7 +1029,7 @@ class ShazamPlugin(MetadataPluginBase):
 
     def enrich_track_data(self) -> EnrichTrackData:
         if not self._cached_song_attr:
-            self.raw_data()
+            self._ensure_song_attributes()
 
         if not self._cached_song_attr:
             return {}
