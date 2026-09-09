@@ -90,62 +90,279 @@ if TYPE_CHECKING:
 
 
 JP_CHAR_PATTERN = re.compile(r"[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]")
+_KKS = None
+
+
+def _get_kks() -> Any:
+    global _KKS
+    if _KKS is None and pykakasi:
+        _KKS = pykakasi.kakasi()  # pyright: ignore[reportConstantRedefinition]
+    return _KKS
+
+
+def _to_romaji(text: str) -> str:
+    kks = _get_kks()
+    if not kks or not JP_CHAR_PATTERN.search(text):
+        return text
+    out = ""
+    for item in kks.convert(text):
+        word = item["hepburn"]
+        if not word:
+            continue
+        if not out or out[-1].isspace() or word[0].isspace():
+            out += word
+        else:
+            out += " " + word
+    return out
+
+
+class TrackMatcher:
+    NOISE_PATTERNS: ClassVar[tuple[str, ...]] = (
+        r"\[\s*(?:official\s+)?(?:music\s+)?(?:video|audio|mv|visualizer|lyric\s+video|audio\s+video|4k|hd|remastered)\s*\]",
+        r"\(\s*(?:official\s+)?(?:music\s+)?(?:video|audio|mv|visualizer|lyric\s+video|audio\s+video|4k|hd|remastered)\s*\)",
+        r"【\s*(?:official\s+)?(?:music\s+)?(?:video|audio|mv|visualizer|lyric\s+video|オリジナル楽曲|オリジナル曲|オリジナル|歌ってみた)\s*】",
+        r"\[\s*(?:tv\s*size|short\s*ver\.?|full\s*ver\.?|cover)\s*\]",
+        r"\(\s*(?:tv\s*size|short\s*ver\.?|full\s*ver\.?|cover)\s*\)",
+    )
+    FEAT_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"\s*([(\[])(?:feat|ft)\.?\s+[^)\]]+([)\]])", re.IGNORECASE)
+    JP_QUOTES_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"[「『]([^」』]+)[」』]")
+    ARTIST_DELIMS: ClassVar[tuple[str, ...]] = (
+        " & ",
+        " feat. ",
+        " feat ",
+        " ft. ",
+        " ft ",
+        " x ",
+        " × ",
+        " + ",
+        " with ",
+        " and ",
+        ", ",
+    )
+
+    @classmethod
+    def clean_title(cls, title: str, expected_artist: str = "") -> str:
+        cleaned = title
+        for pattern in cls.NOISE_PATTERNS:
+            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
+        cleaned = cls.FEAT_PATTERN.sub("", cleaned)
+
+        # check for japanese quotes
+        m = cls.JP_QUOTES_PATTERN.search(cleaned)
+        if m:
+            quote_content = m.group(1).strip()
+            rest = cls.JP_QUOTES_PATTERN.sub("", cleaned).strip()
+            if (expected_artist and cls.score_artist(expected_artist, rest) >= 0.7) or (
+                len(quote_content) >= 2 and len(rest) <= len(quote_content)
+            ):
+                cleaned = quote_content
+
+        parts = re.split(r"\s*[-–—|/]\s*", cleaned, maxsplit=1)
+        if len(parts) == 2:
+            p0, p1 = parts[0].strip(), parts[1].strip()
+            if expected_artist:
+                if cls.score_artist(expected_artist, p0) >= 0.7:
+                    cleaned = p1
+                elif cls.score_artist(expected_artist, p1) >= 0.7:
+                    cleaned = p0
+
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" -_–—|/\"'")
+        return cleaned or title
+
+    @classmethod
+    def _split_artists(cls, artist_str: str) -> list[str]:
+        norm = artist_str
+        for d in cls.ARTIST_DELIMS:
+            norm = norm.replace(d, ", ")
+        return [a.strip() for a in norm.split(",") if a.strip()]
+
+    @classmethod
+    def score_artist(cls, expected: str, candidate: str, extra_hints: list[str] | None = None) -> float:
+        if not expected or not candidate:
+            return 0.0
+
+        e_clean = expected.strip().lower()
+        c_clean = candidate.strip().lower()
+        if e_clean == c_clean:
+            return 1.0
+
+        e_romaji = _to_romaji(expected).strip().lower()
+        c_romaji = _to_romaji(candidate).strip().lower()
+        if e_romaji in (c_romaji, c_clean) or e_clean == c_romaji:
+            return 0.95
+
+        sm = SequenceMatcher(lambda x: x in ("-", "_", " ", "."), e_clean, c_clean)
+        if sm.ratio() >= 0.90:
+            return 0.90
+
+        # overlap check
+        e_tokens = set(re.findall(r"\w+", e_romaji))
+        c_tokens = set(re.findall(r"\w+", c_romaji))
+        common = e_tokens & c_tokens
+        if common and any(len(t) >= 3 for t in common):
+            return 0.85
+
+        # check extra hints
+        if extra_hints:
+            for hint in extra_hints:
+                if not hint:
+                    continue
+                hint_clean = hint.strip().lower()
+                hint_romaji = _to_romaji(hint).strip().lower()
+                if c_clean in hint_clean or c_romaji in hint_romaji:
+                    return 0.85
+
+        e_list = cls._split_artists(expected)
+        c_list = cls._split_artists(candidate)
+        if not e_list or not c_list:
+            return 0.0
+
+        # check primary artist match
+        p_e, p_c = e_list[0].lower(), c_list[0].lower()
+        p_e_romaji = _to_romaji(e_list[0]).lower()
+        p_c_romaji = _to_romaji(c_list[0]).lower()
+
+        if p_e in (p_c, p_c_romaji) or p_e_romaji in (p_c_romaji, p_c):
+            return 1.0 if len(e_list) == len(c_list) else 0.90
+
+        if (
+            SequenceMatcher(None, p_e, p_c).ratio() >= 0.85
+            or SequenceMatcher(None, p_e_romaji, p_c_romaji).ratio() >= 0.85
+        ):
+            return 0.90
+
+        # check other meta overlap
+        max_overlap = 0.0
+        for a_e in e_list:
+            ae_low = a_e.lower()
+            ae_rom = _to_romaji(a_e).lower()
+            for a_c in c_list:
+                ac_low = a_c.lower()
+                ac_rom = _to_romaji(a_c).lower()
+                if ae_low in (ac_low, ac_rom) or ae_rom in (ac_rom, ac_low):
+                    max_overlap = max(max_overlap, 0.85)
+                elif SequenceMatcher(None, ae_low, ac_low).ratio() >= 0.85:
+                    max_overlap = max(max_overlap, 0.75)
+                elif len(ae_low) >= 3 and len(ac_low) >= 3 and (ae_low in ac_low or ac_low in ae_low):
+                    max_overlap = max(max_overlap, 0.70)
+
+        return max_overlap
+
+    @classmethod
+    def score_title(
+        cls,
+        expected: str,
+        candidate: str,
+        tags: list[str] | None = None,
+        expected_artist: str = "",
+    ) -> float:
+        if not expected or not candidate:
+            return 0.0
+
+        c1 = cls.clean_title(expected, expected_artist)
+        c2 = cls.clean_title(candidate)
+
+        def _cmp(s1: str, s2: str) -> float:
+            if not s1 or not s2:
+                return 0.0
+            s1_l = s1.strip().lower()
+            s2_l = s2.strip().lower()
+            if s1_l == s2_l:
+                return 1.0
+            r1 = _to_romaji(s1).strip().lower()
+            r2 = _to_romaji(s2).strip().lower()
+            if r1 in (r2, s2_l) or s1_l == r2:
+                return 0.98
+            ratio1 = SequenceMatcher(lambda x: x in ("-", "_", " ", "'", '"'), s1_l, s2_l).ratio()
+            ratio2 = SequenceMatcher(lambda x: x in ("-", "_", " ", "'", '"'), r1, r2).ratio()
+            base = max(ratio1, ratio2)
+            if len(s1_l) >= 4 and len(s2_l) >= 4:
+                if s1_l in s2_l or s2_l in s1_l:
+                    base = max(base, 0.85)
+                if r1 in r2 or r2 in r1:
+                    base = max(base, 0.85)
+            return base
+
+        best_score = max(_cmp(expected, candidate), _cmp(c1, c2), _cmp(c1, candidate), _cmp(expected, c2))
+        if tags:
+            for tag in tags:
+                best_score = max(best_score, _cmp(tag, candidate), _cmp(tag, c2))
+
+        return round(best_score, 3)
+
+    @classmethod
+    def score_duration(cls, expected_sec: float | None, candidate_sec: float | None) -> tuple[bool, float]:
+        if expected_sec is None or candidate_sec is None or expected_sec <= 0 or candidate_sec <= 0:
+            return True, 1.0
+
+        diff = abs(expected_sec - candidate_sec)
+        if diff <= 4.0:
+            return True, 1.0
+        if diff > 30.0:
+            return False, 0.0
+
+        score = max(0.2, 1.0 - ((diff - 4.0) / 26.0) * 0.8)
+        return True, round(score, 3)
+
+    @classmethod
+    def evaluate_candidate(
+        cls,
+        expected_title: str,
+        expected_artist: str,
+        expected_duration: float | None,
+        candidate_title: str,
+        candidate_artist: str,
+        candidate_duration: float | None,
+        tags: list[str] | None = None,
+        extra_artist_hints: list[str] | None = None,
+        threshold: float = 0.75,
+    ) -> tuple[bool, float, dict[str, float]]:
+        # artist overlap
+        artist_score = cls.score_artist(expected_artist, candidate_artist, extra_hints=extra_artist_hints)
+        if artist_score <= 0.0:
+            return False, 0.0, {"artist": 0.0, "title": 0.0, "duration": 0.0}
+
+        # title threshold
+        title_score = cls.score_title(expected_title, candidate_title, tags=tags, expected_artist=expected_artist)
+        if title_score < 0.60:
+            return False, 0.0, {"artist": artist_score, "title": title_score, "duration": 0.0}
+
+        # uration
+        dur_pass, duration_score = cls.score_duration(expected_duration, candidate_duration)
+        if not dur_pass:
+            return False, 0.0, {"artist": artist_score, "title": title_score, "duration": 0.0}
+
+        if (
+            expected_duration is not None
+            and candidate_duration is not None
+            and expected_duration > 0
+            and candidate_duration > 0
+        ):
+            composite = 0.50 * title_score + 0.35 * artist_score + 0.15 * duration_score
+        else:
+            composite = 0.60 * title_score + 0.40 * artist_score
+
+        composite = round(composite, 3)
+        passed = composite >= threshold
+        return passed, composite, {"artist": artist_score, "title": title_score, "duration": duration_score}
 
 
 def clean_title(title: str) -> str:
-    title = re.sub(r"\s*([(\[])(?:feat|ft)\.?\s+[^)\]]+([)\]])", "", title, flags=re.IGNORECASE)
-    return title.strip()
+    return TrackMatcher.clean_title(title)
 
 
 def match_title(t1: str, t2: str, threshold: float = 0.7, tags: list[str] | None = None) -> bool:
-    def _match_str(s1: str, s2: str) -> bool:
-        sm = SequenceMatcher(lambda x: x in ("-", "_", " "), s1.lower(), s2.lower())
-        return round(sm.ratio(), 2) >= threshold
-
-    if _match_str(t1, t2) or _match_str(t2, t1):
-        return True
-    c1, c2 = clean_title(t1), clean_title(t2)
-    if _match_str(c1, c2) or _match_str(c2, c1):
-        return True
-    if tags:
-        for tag in tags:
-            if _match_str(tag, t2) or _match_str(t2, tag):
-                return True
-    return False
+    return TrackMatcher.score_title(t1, t2, tags=tags) >= threshold
 
 
 def match_artists(a1: str, a2: str, threshold: float = 0.7) -> bool:
-    sm = SequenceMatcher(lambda x: x in ("-", "_", " "), a1.lower(), a2.lower())
-    if round(sm.ratio(), 2) >= threshold:
-        return True
-
-    delims = (" & ", " feat. ", " feat ", " ft. ", " ft ", " x ", " + ", " with ", " and ")
-
-    def _get_artists_set(artist_str: str) -> set[str]:
-        normalized = artist_str.lower()
-        for delim in delims:
-            normalized = normalized.replace(delim, ", ")
-        return {a.strip() for a in normalized.split(",") if a.strip()}
-
-    s1, s2 = _get_artists_set(a1), _get_artists_set(a2)
-    for x1 in s1:
-        for x2 in s2:
-            if x1 == x2:
-                return True
-            if len(x1) >= 2 and len(x2) >= 2:
-                p1 = r"\b" + re.escape(x1) + r"\b"
-                p2 = r"\b" + re.escape(x2) + r"\b"
-                if re.search(p1, x2) or re.search(p2, x1):
-                    return True
-            if SequenceMatcher(None, x1, x2).ratio() >= 0.8:
-                return True
-    return False
+    return TrackMatcher.score_artist(a1, a2) >= threshold
 
 
 def should_replace_text(original: str, enriched: str) -> bool:
     if not original or not enriched or original == enriched:
         return False
-    return match_title(original, enriched)
+    return TrackMatcher.score_title(original, enriched) >= 0.75
 
 
 def update_enriched_metadata(information: dict[str, Any], enriched: EnrichTrackData) -> None:
@@ -340,7 +557,11 @@ class MetadataPluginBase:
             else (artists or [info.get("artist") or info.get("creator") or info.get("uploader", "")])
         )
         self.artist = artists_list[0] if artists_list else ""
+        self.artists = artists_list
         self.album = info.get("album") or info.get("playlist_title") or ""
+        self.duration: float | None = float(info["duration"]) if info.get("duration") else None
+        self.tags: list[str] = info.get("tags") or []
+        self.uploader: str = info.get("uploader") or info.get("channel") or ""
         self._raw_info = info
 
         self.inner_tube = InnerTubeBase()
@@ -545,12 +766,23 @@ class MusixMatchPlugin(MetadataPluginBase):
 
         track_artist = track.get("artist_name", "")
         track_title = track.get("track_name", "")
-        # reject fallback matches when artist or title does not match
-        if artist and not match_artists(artist, track_artist):
-            self.to_screen(f"Artist mismatch: expected {artist!r}, got {track_artist!r}")
-            return None
-        if title and not match_title(title, track_title, tags=self._raw_info.get("tags", [])):
-            self.to_screen(f"Title mismatch: expected {title!r}, got {track_title!r}")
+        track_dur = float(track["track_length"]) if track.get("track_length") else None
+
+        passed, score, details = TrackMatcher.evaluate_candidate(
+            expected_title=title or self.title,
+            expected_artist=artist or self.artist,
+            expected_duration=self.duration,
+            candidate_title=track_title,
+            candidate_artist=track_artist,
+            candidate_duration=track_dur,
+            tags=self.tags,
+            extra_artist_hints=[self.uploader],
+        )
+        if not passed:
+            self.to_screen(
+                f"Candidate rejected (score: {score:.2f}, details: {details}): "
+                f"expected {self.artist!r} - {self.title!r}, got {track_artist!r} - {track_title!r}"
+            )
             return None
 
         lyrics_msg = body["track.lyrics.get"]["message"]
@@ -839,7 +1071,7 @@ class ShazamPlugin(MetadataPluginBase):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
         }
         resp = self._make_request(
-            f"https://api.music.apple.com/v1/catalog/{country}/search?types=songs&term={urllib.parse.quote(query)}&limit=3",
+            f"https://api.music.apple.com/v1/catalog/{country}/search?types=songs&term={urllib.parse.quote(query)}&limit=5",
             headers=headers,
         )
         if resp is None:
@@ -847,7 +1079,7 @@ class ShazamPlugin(MetadataPluginBase):
             if token:
                 headers["Authorization"] = f"Bearer {token}"
                 resp = self._make_request(
-                    f"https://api.music.apple.com/v1/catalog/{country}/search?types=songs&term={urllib.parse.quote(query)}&limit=3",
+                    f"https://api.music.apple.com/v1/catalog/{country}/search?types=songs&term={urllib.parse.quote(query)}&limit=5",
                     headers=headers,
                 )
         if resp is None:
@@ -865,26 +1097,37 @@ class ShazamPlugin(MetadataPluginBase):
                 short_circuit=short_circuit,
             )
 
-        for song in data.get("results", {}).get("songs", {}).get("data", []):
-            if not match_artists(self.artist, song["attributes"]["artistName"]):
-                continue
+        songs = data.get("results", {}).get("songs", {}).get("data", [])
+        if not songs:
+            raise ValueError(f"No matching song found for query: {query!r} (language: {language})")
 
-            if match_title(self.title, song["attributes"]["name"]):
-                self._search_cache[cache_key] = song
-                return cast("ShazamSongData", song)
+        best_song = None
+        best_score = 0.0
 
-        tags = self._raw_info.get("tags", [])
-        if not tags:
-            raise ValueError("No matching song found")
+        for song in songs:
+            attr = song.get("attributes", {})
+            candidate_title = attr.get("name", "")
+            candidate_artist = attr.get("artistName", "")
+            candidate_dur_ms = attr.get("durationInMillis")
+            candidate_duration = (candidate_dur_ms / 1000.0) if candidate_dur_ms else None
 
-        for tag in tags:
-            for song in data.get("results", {}).get("songs", {}).get("data", []):
-                if not match_artists(self.artist, song["attributes"]["artistName"]):
-                    continue
+            passed, score, _ = TrackMatcher.evaluate_candidate(
+                expected_title=self.title,
+                expected_artist=self.artist,
+                expected_duration=self.duration,
+                candidate_title=candidate_title,
+                candidate_artist=candidate_artist,
+                candidate_duration=candidate_duration,
+                tags=self.tags,
+                extra_artist_hints=[self.uploader],
+            )
+            if passed and score > best_score:
+                best_score = score
+                best_song = song
 
-                if match_title(tag, song["attributes"]["name"]):
-                    self._search_cache[cache_key] = song
-                    return cast("ShazamSongData", song)
+        if best_song:
+            self._search_cache[cache_key] = best_song
+            return cast("ShazamSongData", best_song)
 
         raise ValueError(f"No matching song found for query: {query!r} (language: {language})")
 
@@ -1109,10 +1352,33 @@ class LrcLibPlugin(MetadataPluginBase):
             response = self._make_request(self.BASE_URL + "/search", params=params)
             if response is None:
                 return None
-            for item in response.json():
-                if item.get("track_name") == track_name and item.get("artist_name") == artist_name:
-                    return item
-            return None
+            items = response.json()
+            if not isinstance(items, list):
+                return None
+
+            best_item = None
+            best_score = 0.0
+
+            for item in items:
+                candidate_title = item.get("trackName") or item.get("track_name") or item.get("name") or ""
+                candidate_artist = item.get("artistName") or item.get("artist_name") or ""
+                candidate_dur = float(item["duration"]) if item.get("duration") else None
+
+                passed, score, _ = TrackMatcher.evaluate_candidate(
+                    expected_title=track_name or self.title,
+                    expected_artist=artist_name or self.artist,
+                    expected_duration=self.duration,
+                    candidate_title=candidate_title,
+                    candidate_artist=candidate_artist,
+                    candidate_duration=candidate_dur,
+                    tags=self.tags,
+                    extra_artist_hints=[self.uploader],
+                )
+                if passed and score > best_score:
+                    best_score = score
+                    best_item = item
+
+            return best_item
         except Exception as e:
             self.to_screen(repr(e))
             return None
@@ -1120,11 +1386,16 @@ class LrcLibPlugin(MetadataPluginBase):
     @property
     def lyrics_data(self) -> LrcLibResponse | None:
         if self._lyrics_data is None:
+            cleaned_title = TrackMatcher.clean_title(self.title or "", self.artist or "")
             self._lyrics_data = self.find_lyrics(
-                track_name=self.title or "",
+                track_name=cleaned_title,
                 artist_name=self.artist or "",
                 album_name=self.album,
             )
+            if self._lyrics_data is None:
+                self._lyrics_data = self.find_lyrics(
+                    q=f"{self.artist} {cleaned_title}".strip(),
+                )
 
         return self._lyrics_data
 
