@@ -109,15 +109,15 @@ addWithEnvFile({
 addWithEnvFile({
   appsConfig: apps,
   appConfig: {
-    name: "nhentai2komga",
+    name: "n2k",
     script:
       "/data/data/com.termux/files/home/scripts/pm2_scripts/nonroot/proot-wrapper.sh",
     cwd: "/data/data/com.termux/files/home/",
-    args: "alpine /root/.local/bin/uv --directory nhentai2komga run --no-dev fastapi run --host 0.0.0.0 --port 25601",
+    args: "alpine /root/.local/bin/uv --directory n2k run --no-dev fastapi run --host 0.0.0.0 --port 25601",
     exec_mode: "fork",
     autorestart: true,
   },
-  envFilePath: path.join(SCRIPT_DIR, ".env.nhentai2komga"),
+  envFilePath: path.join(SCRIPT_DIR, ".env.n2k"),
   skipOnMissing: true,
   warnOnMissing: false,
 });
