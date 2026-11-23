@@ -27,22 +27,6 @@ get_descendants() {
     done
 }
 
-wait_for_guest() {
-    local limit=50
-    local count=0
-    while [ $count -lt $limit ]; do
-        if ! kill -0 "$PROOT_PID" 2>/dev/null; then
-            return 1
-        fi
-        if [ -n "$(get_descendants "$PROOT_PID")" ]; then
-            return 0
-        fi
-        sleep 0.1
-        count=$((count + 1))
-    done
-    return 1
-}
-
 # shellcheck disable=SC2329
 forward_signal() {
     local sig=$1
@@ -50,16 +34,13 @@ forward_signal() {
     descendants=$(get_descendants "$PROOT_PID")
     for pid in $descendants; do
         if kill -0 "$pid" 2>/dev/null; then
-            kill -s "$sig" "$pid"
+            kill -s "$sig" "$pid" 2>/dev/null
         fi
     done
+    if kill -0 "$PROOT_PID" 2>/dev/null; then
+        kill -s "$sig" "$PROOT_PID" 2>/dev/null
+    fi
 }
-
-if ! wait_for_guest; then
-    kill "$PROOT_PID" 2>/dev/null
-    wait "$PROOT_PID" 2>/dev/null
-    exit 1
-fi
 
 trap 'forward_signal INT' INT
 trap 'forward_signal TERM' TERM

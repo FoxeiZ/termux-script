@@ -97,7 +97,7 @@ addWithEnvFile({
     script:
       "/data/data/com.termux/files/home/scripts/pm2_scripts/nonroot/proot-wrapper.sh",
     cwd: "/data/data/com.termux/files/home/",
-    args: "alpine /root/.local/bin/uv --directory nameless-discord-bot/ run python bootstrapper.py",
+    args: "ubuntu /root/.local/bin/uv --directory /root/nameless-discord-bot run python bootstrapper.py",
     exec_mode: "fork",
     autorestart: true,
   },
